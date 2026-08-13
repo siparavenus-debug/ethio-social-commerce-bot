@@ -40,6 +40,8 @@ application before it causes a business action.
 
 ---
 
+
+
 ## 3. Payment Security
 
 The platform must separate:
@@ -67,6 +69,8 @@ rather than making an uncertain automatic decision.
 
 ---
 
+
+
 ## 4. Sensitive Payment Information
 
 The platform must never request or store:
@@ -83,6 +87,8 @@ Customers should only provide information required to complete and verify
 their order.
 
 ---
+
+
 
 ## 5. Secrets Management
 
@@ -105,6 +111,8 @@ but never real credentials.
 
 ---
 
+
+
 ## 6. Authentication
 
 Protected merchant functionality must require authentication.
@@ -121,6 +129,8 @@ Sessions or authentication tokens must be:
 Authentication errors must not reveal sensitive information.
 
 ---
+
+
 
 ## 7. Authorization
 
@@ -141,6 +151,8 @@ The backend must never trust a client-provided `merchant_id` as proof of
 ownership.
 
 ---
+
+
 
 ## 8. Multi-Tenant Data Isolation
 
@@ -163,6 +175,8 @@ by changing an ID in a request.
 
 ---
 
+
+
 ## 9. Webhook Security
 
 External webhook requests must be validated before being trusted.
@@ -181,6 +195,8 @@ The same external event must not create duplicate:
 - conversations
 
 ---
+
+
 
 ## 10. Input Validation
 
@@ -201,6 +217,8 @@ The backend must validate input before processing it.
 
 ---
 
+
+
 ## 11. File Upload Security
 
 Receipt uploads must be handled defensively.
@@ -218,6 +236,8 @@ Uploaded files must not be executed as programs.
 
 ---
 
+
+
 ## 12. AI Prompt Injection Protection
 
 Customer messages must be treated as untrusted content.
@@ -234,6 +254,8 @@ A customer must not be able to use a message to:
 AI tools must use explicit permissions and structured inputs.
 
 ---
+
+
 
 ## 13. Rate Limiting and Abuse Protection
 
@@ -253,6 +275,8 @@ cost or service disruption.
 
 ---
 
+
+
 ## 14. Logging and Auditability
 
 Important security and business events should be logged.
@@ -271,6 +295,8 @@ Examples:
 Logs must not contain secrets or unnecessary sensitive customer information.
 
 ---
+
+
 
 ## 15. Failure-Safe Behavior
 
@@ -296,6 +322,8 @@ The system must safely deduplicate it.
 
 ---
 
+
+
 ## 16. Customer Privacy
 
 Only information required to operate the service should be collected.
@@ -310,6 +338,8 @@ The system should minimize:
 Data retention requirements should be defined before production launch.
 
 ---
+
+
 
 ## 17. Security Testing
 
@@ -331,6 +361,8 @@ Before production launch, the system must test:
 
 ---
 
+
+
 ## 18. Security Review Status
 
 Status:
@@ -340,3 +372,47 @@ Initial security policy
 Last updated:
 
 2026-08-12
+
+
+
+## Environment and Secret Management
+
+The application must never store real credentials or secrets in Git.
+
+### Local development
+
+Developers use:
+
+- `.env` for local secret/configuration values.
+
+- `.env.example` as the safe template committed to Git.
+
+The `.env` file is ignored by Git.
+
+### Required rule
+
+Never commit:
+
+- AI provider API keys
+
+- Telegram bot tokens
+
+- TikTok client secrets
+
+- webhook secrets
+
+- database credentials
+
+- session secrets
+
+- payment-provider credentials
+
+- private keys
+
+### Verification
+
+The repository must remain safe when a developer runs:
+
+```bash
+
+git add .
