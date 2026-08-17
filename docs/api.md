@@ -420,6 +420,12 @@ The endpoint should:
 
 Webhook processing must be idempotent.
 
+Current local route: `POST /webhooks/telegram`. Configure `TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_MERCHANT_ID`; Telegram must send the
+secret in the `X-Telegram-Bot-Api-Secret-Token` header. Text messages create or
+update the Telegram customer and conversation, persist inbound/outbound messages,
+and receive a default acknowledgement. Non-text updates are acknowledged and ignored.
+
 ---
 
 # 11. TikTok Webhook API

@@ -13,5 +13,8 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
-  apiPort: port
+  apiPort: port,
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
+  telegramMerchantId: process.env.TELEGRAM_MERCHANT_ID
 } as const;

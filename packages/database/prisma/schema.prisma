@@ -1,0 +1,265 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MerchantUserRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
+enum ProductStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum OrderStatus {
+  DRAFT
+  PENDING_PAYMENT
+  PAYMENT_REVIEW
+  PAID
+  FULFILLING
+  FULFILLED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  REVIEW_REQUIRED
+  VERIFIED
+  REJECTED
+  DUPLICATE
+}
+
+enum PaymentProvider {
+  TELEBIRR
+  CBE_BIRR
+  OTHER
+}
+
+enum PaymentMethodStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ConversationChannel {
+  TELEGRAM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model Merchant {
+  id        String         @id @default(cuid())
+  name      String
+  currency  String         @default("ETB") @db.VarChar(3)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  users          MerchantUser[]
+  customers      Customer[]
+  products       Product[]
+  orders         Order[]
+  payments       Payment[]
+  paymentMethods PaymentMethod[]
+  conversations  Conversation[]
+  webhookEvents  WebhookEvent[]
+  auditLogs      AuditLog[]
+}
+
+model MerchantUser {
+  id           String           @id @default(cuid())
+  merchantId   String
+  email        String           @unique
+  displayName  String?
+  role         MerchantUserRole @default(OWNER)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model Customer {
+  id              String   @id @default(cuid())
+  merchantId      String
+  name            String?
+  phone           String?
+  telegramChatId  String?
+  telegramUserId  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  merchant      Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orders        Order[]
+  conversations Conversation[]
+
+  @@unique([merchantId, telegramChatId])
+  @@unique([merchantId, telegramUserId])
+  @@index([merchantId, phone])
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  merchantId  String
+  name        String
+  description String?
+  price       Decimal       @db.Decimal(12, 2)
+  currency    String        @default("ETB") @db.VarChar(3)
+  stock       Int           @default(0)
+  status      ProductStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  merchant   Merchant    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@index([merchantId, status])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  merchantId  String
+  customerId  String?
+  orderNumber String
+  status      OrderStatus @default(DRAFT)
+  currency    String      @default("ETB") @db.VarChar(3)
+  subtotal    Decimal     @db.Decimal(12, 2)
+  total       Decimal     @db.Decimal(12, 2)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  merchant Merchant   @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer Customer?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items    OrderItem[]
+  payments Payment[]
+
+  @@unique([merchantId, orderNumber])
+  @@index([merchantId, status, createdAt])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  productId   String?
+  productName String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(12, 2)
+  lineTotal   Decimal @db.Decimal(12, 2)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id                   String          @id @default(cuid())
+  merchantId           String
+  orderId              String
+  provider             PaymentProvider
+  status               PaymentStatus   @default(PENDING)
+  amount               Decimal         @db.Decimal(12, 2)
+  currency             String          @default("ETB") @db.VarChar(3)
+  transactionReference String?
+  receiptUrl           String?
+  reviewNote           String?
+  verifiedAt           DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, transactionReference])
+  @@index([merchantId, status, createdAt])
+  @@index([orderId])
+}
+
+model PaymentMethod {
+  id            String              @id @default(cuid())
+  merchantId    String
+  provider      PaymentProvider
+  accountName   String
+  accountNumber String
+  status        PaymentMethodStatus @default(ACTIVE)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, provider])
+  @@index([merchantId, status])
+}
+
+model Conversation {
+  id           String              @id @default(cuid())
+  merchantId   String
+  customerId   String?
+  channel      ConversationChannel
+  externalId   String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@unique([merchantId, channel, externalId])
+  @@index([customerId])
+}
+
+model Message {
+  id             String           @id @default(cuid())
+  conversationId String
+  direction      MessageDirection
+  externalId     String?
+  content        String?
+  createdAt      DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, externalId])
+  @@index([conversationId, createdAt])
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  merchantId  String?
+  provider    String
+  eventId     String
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, eventId])
+  @@index([merchantId, receivedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  merchantId String
+  actorUserId String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId, entityType, entityId])
+}
