@@ -1,14 +1,31 @@
+import type { AIMessage } from "../ai/ai-provider.js";
+
 export type ShoppingState = {
   productId?: string;
   productName?: string;
   quantity?: number;
+
   awaitingQuantity?: boolean;
   awaitingConfirmation?: boolean;
   awaitingPayment?: boolean;
   pendingOrderId?: string;
+
+  lastUserMessage?: string;
+
+  lastIntent?:
+    | "SEARCH_PRODUCT"
+    | "GET_PRODUCT"
+    | "CHECK_STOCK"
+    | "CREATE_ORDER"
+    | "GET_ORDER_STATUS"
+    | "GET_PAYMENT_INSTRUCTIONS"
+    | "GENERAL";
+
+  history?: AIMessage[];
 };
 
-const stateStore = new Map<string, ShoppingState>();
+const stateStore =
+  new Map<string, ShoppingState>();
 
 export function getConversationState(
   chatId: string
@@ -21,6 +38,23 @@ export function setConversationState(
   state: ShoppingState
 ): void {
   stateStore.set(chatId, state);
+}
+
+export function updateConversationState(
+  chatId: string,
+  update: Partial<ShoppingState>
+): ShoppingState {
+  const current =
+    getConversationState(chatId);
+
+  const next = {
+    ...current,
+    ...update
+  };
+
+  stateStore.set(chatId, next);
+
+  return next;
 }
 
 export function clearConversationState(

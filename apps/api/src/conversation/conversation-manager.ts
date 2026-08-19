@@ -11,6 +11,10 @@ import {
 } from "./conversation-state.js";
 
 import {
+  runAIConversation
+} from "../ai/ai-orchestrator.js";
+
+import {
   searchProducts,
   getProduct,
   checkStock
@@ -470,50 +474,152 @@ export async function handleConversation(
   }
 
   /*
-   * STEP 5: Product search
+   * STEP 5: AI natural-language conversation
+   *
+   * Payment submission, payment review, and order
+   * confirmation remain deterministic above.
+   *
+   * Everything else can be understood naturally by AI.
    */
-  const products = await searchProducts(
-    merchantId,
-    text
-  );
 
-  if (products.length === 0) {
-    return {
-      reply:
-        `I couldn't find a product matching "${text}".\n\n` +
-        "Please try another product name."
-    };
-  }
+  const aiResult =
+    await runAIConversation(
+      {
+        text,
+        state: currentState,
+        merchantName
+      },
+      {
+        merchantId,
+        customerId
+      }
+    );
 
-  if (products.length === 1) {
-    const product = products[0];
+  const aiResponse =
+    aiResult.response;
 
-    if (product.stock <= 0) {
-      return {
-        reply:
-          `${product.name} is currently out of stock.\n\n` +
-          "Please ask about another product."
-      };
+  const nextState = {
+    ...currentState,
+    lastUserMessage: text,
+    lastIntent: aiResponse.intent
+  };
+
+  for (const toolResult of aiResult.toolResults) {
+    if (
+      toolResult.tool === "searchProducts" &&
+      Array.isArray(toolResult.result)
+    ) {
+      const products =
+        toolResult.result as Array<{
+          id: string;
+          name: string;
+          description: string | null;
+          price: number;
+          currency: string;
+          stock: number;
+        }>;
+
+      if (products.length === 1) {
+        const product = products[0];
+
+        if (product.stock > 0) {
+          nextState.productId =
+            product.id;
+
+          nextState.productName =
+            product.name;
+
+          nextState.awaitingQuantity =
+            true;
+        }
+      }
     }
 
-    setConversationState(chatId, {
-      productId: product.id,
-      productName: product.name,
-      awaitingQuantity: true
-    });
+    if (
+      toolResult.tool === "getProduct" &&
+      toolResult.result
+    ) {
+      const product =
+        toolResult.result as {
+          id: string;
+          name: string;
+          price: number;
+          currency: string;
+          stock: number;
+        };
 
-    return {
-      reply:
-        `${product.name}\n` +
-        `Price: ${product.price} ${product.currency}\n` +
-        `Available: ${product.stock}\n\n` +
-        "How many would you like?"
-    };
+      nextState.productId =
+        product.id;
+
+      nextState.productName =
+        product.name;
+    }
+
+    if (
+      toolResult.tool === "checkStock" &&
+      toolResult.result
+    ) {
+      const stock =
+        toolResult.result as {
+          available: boolean;
+          stock: number;
+        };
+
+      if (stock.available) {
+        nextState.awaitingConfirmation =
+          true;
+      }
+    }
+
+    if (
+      toolResult.tool === "createOrder" &&
+      toolResult.result
+    ) {
+      const order =
+        toolResult.result as {
+          id: string;
+          orderNumber: string;
+          total: number;
+          currency: string;
+        };
+
+      nextState.awaitingPayment =
+        true;
+
+      nextState.pendingOrderId =
+        order.id;
+
+      nextState.awaitingConfirmation =
+        false;
+
+      nextState.awaitingQuantity =
+        false;
+    }
   }
 
+  const history =
+    currentState.history ?? [];
+
+  history.push(
+    {
+      role: "user",
+      content: text
+    },
+    {
+      role: "assistant",
+      content: aiResponse.message
+    }
+  );
+
+  nextState.history =
+    history.slice(-10);
+
+  setConversationState(
+    chatId,
+    nextState
+  );
+
   return {
-    reply:
-      formatProductSearchResults(products) ??
-      `I couldn't find a product matching "${text}".`
+    reply: aiResponse.message
   };
 }
