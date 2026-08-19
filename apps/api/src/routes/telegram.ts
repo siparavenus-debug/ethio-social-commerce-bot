@@ -1,4 +1,5 @@
 import { Router } from "express";
+
 import {
   prisma,
   PaymentProvider,
@@ -41,11 +42,8 @@ type TelegramUpdate = {
 
   message?: {
     message_id?: number;
-
     text?: string;
-
     caption?: string;
-
     photo?: TelegramPhotoSize[];
 
     chat?: {
@@ -100,14 +98,23 @@ async function sendAndSaveMessage(
       text
     );
 
-  await prisma.message.create({
-    data: {
-      conversationId,
-      direction: "OUTBOUND",
-      externalId,
-      content: text
-    }
-  });
+    await prisma.message.upsert({
+      where: {
+        conversationId_externalId: {
+          conversationId,
+          externalId
+        }
+      },
+    
+      create: {
+        conversationId,
+        direction: "OUTBOUND",
+        externalId,
+        content: text
+      },
+    
+      update: {}
+    });
 }
 
 /**
@@ -259,7 +266,16 @@ router.post(
       }
 
       const merchantId =
-        env.telegramMerchantId!;
+        env.telegramMerchantId;
+
+      if (!merchantId) {
+        res.status(503).json({
+          error:
+            "Telegram merchant is not configured"
+        });
+
+        return;
+      }
 
       /*
        * ---------------------------------------------
@@ -381,52 +397,82 @@ router.post(
           }
         );
 
-      /*
-       * ---------------------------------------------
-       * SAVE WEBHOOK EVENT + INBOUND MESSAGE
-       * ---------------------------------------------
-       */
-      if (!existingEvent) {
-        await prisma.$transaction(
-          [
-            prisma.webhookEvent.create(
-              {
-                data: {
-                  merchantId,
+    
+/*
+ * ---------------------------------------------
+ * SAVE WEBHOOK EVENT + INBOUND MESSAGE
+ * ---------------------------------------------
+ *
+ * Telegram may retry the same update.
+ *
+ * Message has a unique constraint on:
+ *
+ *   conversationId + externalId
+ *
+ * Therefore inbound messages must be persisted
+ * idempotently. A duplicate Telegram delivery must
+ * NEVER cause the webhook to return HTTP 500.
+ */
+if (!existingEvent) {
+  await prisma.webhookEvent.create({
+    data: {
+      merchantId,
 
-                  provider:
-                    "TELEGRAM",
+      provider:
+        "TELEGRAM",
 
-                  eventId,
+      eventId,
 
-                  payload:
-                    update as object
-                }
-              }
-            ),
+      payload:
+        update as object
+    }
+  });
+}
 
-            prisma.message.create({
-              data: {
-                conversationId:
-                  conversation.id,
+/*
+ * ---------------------------------------------
+ * IDEMPOTENT INBOUND MESSAGE
+ * ---------------------------------------------
+ *
+ * Telegram message_id is used as externalId.
+ *
+ * If Telegram retries the same message, update the
+ * existing record instead of attempting a duplicate
+ * insert.
+ */
+await prisma.message.upsert({
+  where: {
+    conversationId_externalId: {
+      conversationId:
+        conversation.id,
 
-                direction:
-                  "INBOUND",
+      externalId:
+        String(
+          message.message_id
+        )
+    }
+  },
 
-                externalId:
-                  String(
-                    message.message_id
-                  ),
+  create: {
+    conversationId:
+      conversation.id,
 
-                content:
-                  text ??
-                  message.caption ??
-                  "[Receipt image]"
-              }
-            })
-          ]
-        );
-      }
+    direction:
+      "INBOUND",
+
+    externalId:
+      String(
+        message.message_id
+      ),
+
+    content:
+      text ??
+      message.caption ??
+      "[Receipt image]"
+  },
+
+  update: {}
+});
 
       /*
        * =================================================
@@ -487,7 +533,7 @@ router.post(
            * FIND EXISTING PAYMENT
            * ---------------------------------------------
            *
-           * This supports the original flow where the
+           * Supports the original flow where the
            * customer first typed a transaction reference.
            */
           let pendingPayment =
@@ -539,12 +585,8 @@ router.post(
            * FIND THE CUSTOMER'S LATEST PENDING ORDER
            * ---------------------------------------------
            *
-           * This is the bug fix.
-           *
-           * A customer is allowed to send the receipt
-           * directly without first typing the reference.
-           *
-           * We create the payment as REVIEW_REQUIRED.
+           * A customer may send the receipt directly
+           * without first typing the transaction reference.
            */
           if (!pendingPayment) {
             const pendingOrder =
@@ -583,8 +625,9 @@ router.post(
                 );
 
               /*
-               * Protect against an already-submitted
-               * transaction reference.
+               * ---------------------------------------------
+               * DUPLICATE TRANSACTION REFERENCE PROTECTION
+               * ---------------------------------------------
                */
               if (
                 receipt.transactionReference
@@ -596,6 +639,7 @@ router.post(
                         provider_transactionReference:
                           {
                             provider,
+
                             transactionReference:
                               receipt.transactionReference
                           }
@@ -607,54 +651,56 @@ router.post(
                   duplicateReference
                 ) {
                   /*
-                   * Do not attach a duplicate transaction
-                   * reference to another order.
-                   *
-                   * Keep the existing payment untouched.
+                   * Do not attach a duplicate reference
+                   * to another order.
                    */
                   console.warn(
                     "Duplicate receipt transaction reference detected",
                     {
                       provider,
+
                       transactionReference:
                         receipt.transactionReference,
+
                       existingPaymentId:
                         duplicateReference.id
                     }
                   );
 
+                  /*
+                   * Only use the duplicate payment if it
+                   * belongs to this merchant and customer.
+                   */
                   pendingPayment =
-                    duplicateReference.id ===
-                      undefined
-                      ? null
-                      : await prisma.payment.findFirst(
-                          {
-                            where: {
-                              id:
-                                duplicateReference.id,
+                    await prisma.payment.findFirst(
+                      {
+                        where: {
+                          id:
+                            duplicateReference.id,
 
-                              merchantId,
+                          merchantId,
 
-                              order: {
-                                customerId:
-                                  customer.id
-                              }
-                            },
+                          order: {
+                            customerId:
+                              customer.id
+                          }
+                        },
 
-                            include: {
-                              order: {
-                                select: {
-                                  id: true,
-                                  orderNumber:
-                                    true,
-                                  total: true,
-                                  currency:
-                                    true
-                                }
-                              }
+                        include: {
+                          order: {
+                            select: {
+                              id: true,
+                              orderNumber:
+                                true,
+                              total:
+                                true,
+                              currency:
+                                true
                             }
                           }
-                        );
+                        }
+                      }
+                    );
                 } else {
                   /*
                    * Create the payment and move the order
@@ -705,7 +751,8 @@ router.post(
                                     id: true,
                                     orderNumber:
                                       true,
-                                    total: true,
+                                    total:
+                                      true,
                                     currency:
                                       true
                                   }
@@ -737,12 +784,14 @@ router.post(
                 }
               } else {
                 /*
-                 * No transaction reference was extracted.
+                 * ---------------------------------------------
+                 * NO TRANSACTION REFERENCE EXTRACTED
+                 * ---------------------------------------------
                  *
-                 * We STILL create REVIEW_REQUIRED.
+                 * Still create REVIEW_REQUIRED.
                  *
-                 * This is important: missing information
-                 * must go to merchant review, not disappear.
+                 * Missing information must go to merchant
+                 * review rather than silently disappearing.
                  */
                 const created =
                   await prisma.$transaction(
@@ -786,7 +835,8 @@ router.post(
                                   id: true,
                                   orderNumber:
                                     true,
-                                  total: true,
+                                  total:
+                                    true,
                                   currency:
                                     true
                                 }
@@ -823,6 +873,9 @@ router.post(
            * ---------------------------------------------
            * VALIDATE RECEIPT
            * ---------------------------------------------
+           *
+           * Validation NEVER verifies payment.
+           * The merchant must explicitly verify it.
            */
           let validation:
             | ReturnType<
@@ -856,8 +909,6 @@ router.post(
 
             /*
              * Store extraction and validation.
-             *
-             * NEVER verify here.
              */
             await prisma.payment.update(
               {
@@ -965,8 +1016,8 @@ router.post(
           );
 
           /*
-           * Mark event processed only after all
-           * receipt processing has completed.
+           * Mark event processed only after
+           * receipt processing completes.
            */
           await prisma.webhookEvent.update(
             {
@@ -988,11 +1039,15 @@ router.post(
 
           res.status(200).json({
             ok: true,
+
             receipt,
+
             validation,
+
             paymentId:
               pendingPayment?.id ??
               null,
+
             paymentStatus:
               pendingPayment?.status ??
               null
@@ -1034,6 +1089,7 @@ router.post(
            */
           res.status(200).json({
             ok: true,
+
             receiptProcessed:
               false
           });

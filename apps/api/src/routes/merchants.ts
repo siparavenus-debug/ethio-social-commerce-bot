@@ -1,16 +1,33 @@
 import { Router } from "express";
+
 import {
   prisma,
   PaymentStatus
 } from "@ethio-commerce/database";
+
 import { sendTelegramMessage } from "../services/telegram.js";
+
+import {
+  requireAuth,
+  requireMerchantAccess
+} from "../middleware/auth.js";
 
 const router = Router();
 
+router.use(
+  requireAuth,
+  requireMerchantAccess
+);
+
 /*
- * List payments requiring merchant review.
+ * =================================================
+ * LIST PAYMENT REVIEWS
+ * =================================================
  *
  * GET /:merchantId/payment-review
+ *
+ * Returns all payments currently waiting for
+ * merchant verification.
  */
 router.get(
   "/:merchantId/payment-review",
@@ -25,6 +42,7 @@ router.get(
             status:
               PaymentStatus.REVIEW_REQUIRED
           },
+
           include: {
             order: {
               include: {
@@ -33,6 +51,7 @@ router.get(
               }
             }
           },
+
           orderBy: {
             createdAt: "asc"
           }
@@ -54,7 +73,9 @@ router.get(
 );
 
 /*
- * Get one payment review.
+ * =================================================
+ * GET ONE PAYMENT REVIEW
+ * =================================================
  *
  * GET /:merchantId/payment-review/:paymentId
  */
@@ -73,6 +94,7 @@ router.get(
             id: paymentId,
             merchantId
           },
+
           include: {
             order: {
               include: {
@@ -107,12 +129,16 @@ router.get(
 );
 
 /*
- * Verify a payment.
+ * =================================================
+ * VERIFY PAYMENT
+ * =================================================
  *
  * POST /:merchantId/payment-review/:paymentId/verify
  *
  * IMPORTANT:
- * Payment verification is the inventory commitment point.
+ *
+ * Payment verification is the inventory commitment
+ * point.
  *
  * Stock is decremented ONLY when:
  *
@@ -121,7 +147,8 @@ router.get(
  * 3. Every order item has a valid product
  * 4. Every product has enough stock
  *
- * Everything happens inside ONE database transaction.
+ * Payment verification, order update and stock
+ * changes happen inside ONE database transaction.
  */
 router.post(
   "/:merchantId/payment-review/:paymentId/verify",
@@ -140,7 +167,9 @@ router.post(
         await prisma.$transaction(
           async (tx) => {
             /*
-             * Load the payment and complete order.
+             * -----------------------------------------
+             * LOAD PAYMENT
+             * -----------------------------------------
              */
             const payment =
               await tx.payment.findFirst({
@@ -148,6 +177,7 @@ router.post(
                   id: paymentId,
                   merchantId
                 },
+
                 include: {
                   order: {
                     include: {
@@ -165,7 +195,9 @@ router.post(
             }
 
             /*
-             * Prevent double verification.
+             * -----------------------------------------
+             * PREVENT DOUBLE VERIFICATION
+             * -----------------------------------------
              */
             if (
               payment.status !==
@@ -177,8 +209,9 @@ router.post(
             }
 
             /*
-             * Payment must belong to an order
-             * currently waiting for review.
+             * -----------------------------------------
+             * ORDER MUST BE IN PAYMENT REVIEW
+             * -----------------------------------------
              */
             if (
               payment.order.status !==
@@ -190,7 +223,9 @@ router.post(
             }
 
             /*
-             * Make sure the order actually has items.
+             * -----------------------------------------
+             * ORDER MUST CONTAIN ITEMS
+             * -----------------------------------------
              */
             if (
               payment.order.items.length === 0
@@ -205,6 +240,7 @@ router.post(
              * ATOMIC STOCK CHECK + DECREMENT
              * -----------------------------------------
              */
+
             const stockUpdates: {
               productId: string;
               quantity: number;
@@ -220,7 +256,9 @@ router.post(
             const quantityByProduct =
               new Map<string, number>();
 
-            for (const item of payment.order.items) {
+            for (
+              const item of payment.order.items
+            ) {
               if (!item.productId) {
                 throw new Error(
                   `Product information is missing for order item "${item.productName}"`
@@ -250,12 +288,14 @@ router.post(
             }
 
             /*
-             * Decrement each product atomically.
+             * Decrement every product atomically.
              */
-            for (const [
-              productId,
-              quantity
-            ] of quantityByProduct) {
+            for (
+              const [
+                productId,
+                quantity
+              ] of quantityByProduct
+            ) {
               const updated =
                 await tx.product.updateMany({
                   where: {
@@ -265,6 +305,7 @@ router.post(
                       gte: quantity
                     }
                   },
+
                   data: {
                     stock: {
                       decrement: quantity
@@ -279,13 +320,16 @@ router.post(
                * - product belongs to another merchant
                * - stock is insufficient
                */
-              if (updated.count !== 1) {
+              if (
+                updated.count !== 1
+              ) {
                 const product =
                   await tx.product.findFirst({
                     where: {
                       id: productId,
                       merchantId
                     },
+
                     select: {
                       name: true,
                       stock: true
@@ -312,6 +356,7 @@ router.post(
                     id: productId,
                     merchantId
                   },
+
                   select: {
                     id: true,
                     stock: true
@@ -325,8 +370,11 @@ router.post(
               }
 
               stockUpdates.push({
-                productId: product.id,
+                productId:
+                  product.id,
+
                 quantity,
+
                 remainingStock:
                   product.stock
               });
@@ -342,6 +390,7 @@ router.post(
                 where: {
                   id: payment.id
                 },
+
                 data: {
                   status:
                     PaymentStatus.VERIFIED,
@@ -369,6 +418,7 @@ router.post(
                 where: {
                   id: payment.orderId
                 },
+
                 data: {
                   status: "PAID"
                 }
@@ -391,27 +441,31 @@ router.post(
 
       /*
        * -----------------------------------------
-       * TELEGRAM VERIFICATION DEBUG
+       * VERIFICATION TELEGRAM DEBUG
        * -----------------------------------------
-       *
-       * This log belongs to the VERIFY flow.
-       * Previously this was incorrectly labeled
-       * "REJECTION TELEGRAM DEBUG".
        */
       console.log(
         "VERIFICATION TELEGRAM DEBUG:",
         {
           merchantId,
           paymentId,
+
           customerId:
-            result.customer?.id ?? null,
-          telegramChatId:
-            result.customer?.telegramChatId ??
+            result.customer?.id ??
             null,
+
+          telegramChatId:
+            result.customer
+              ?.telegramChatId ??
+            null,
+
           orderNumber:
             result.order.orderNumber,
+
           paymentReference:
-            result.payment.transactionReference,
+            result.payment
+              .transactionReference,
+
           paymentStatus:
             result.payment.status
         }
@@ -422,11 +476,15 @@ router.post(
        * TELEGRAM CONFIRMATION
        * -----------------------------------------
        *
-       * Telegram happens AFTER the database
-       * transaction has successfully committed.
+       * Telegram notification happens AFTER the
+       * database transaction has committed.
+       *
+       * Telegram failure therefore cannot roll back
+       * a successfully verified payment.
        */
       const chatId =
-        result.customer?.telegramChatId;
+        result.customer
+          ?.telegramChatId;
 
       if (
         chatId &&
@@ -444,9 +502,13 @@ router.post(
             "VERIFICATION TELEGRAM SEND:",
             {
               chatId,
+
               orderNumber:
-                result.order.orderNumber,
+                result.order
+                  .orderNumber,
+
               paymentId,
+
               paymentReference:
                 result.payment
                   .transactionReference
@@ -464,8 +526,10 @@ router.post(
             {
               chatId,
               externalId,
+
               orderNumber:
-                result.order.orderNumber
+                result.order
+                  .orderNumber
             }
           );
 
@@ -474,42 +538,80 @@ router.post(
               {
                 where: {
                   merchantId,
+
                   customerId:
                     result.customer.id,
+
                   channel:
                     "TELEGRAM",
+
                   externalId:
                     chatId
                 }
               }
             );
 
-          if (conversation) {
-            await prisma.message.create({
-              data: {
-                conversationId:
-                  conversation.id,
+if (conversation) {
+  /*
+   * ---------------------------------------------
+   * SAVE VERIFICATION TELEGRAM MESSAGE
+   * ---------------------------------------------
+   *
+   * Telegram message persistence is idempotent.
+   *
+   * The Message model has a unique constraint on:
+   *
+   *   conversationId + externalId
+   *
+   * The Telegram API message has already been sent
+   * successfully. Therefore, saving the same outbound
+   * message must never cause payment verification to
+   * fail with Prisma P2002.
+   *
+   * If the message already exists, update: {} leaves
+   * the existing record unchanged.
+   */
+  await prisma.message.upsert({
+    where: {
+      conversationId_externalId: {
+        conversationId:
+          conversation.id,
 
-                direction:
-                  "OUTBOUND",
+        externalId
+      }
+    },
 
-                externalId,
+    create: {
+      conversationId:
+        conversation.id,
 
-                content: message
-              }
-            });
-          } else {
-            console.warn(
-              "Verification Telegram message sent, but conversation was not found:",
-              {
-                merchantId,
-                customerId:
-                  result.customer.id,
-                chatId
-              }
-            );
-          }
-        } catch (telegramError) {
+      direction:
+        "OUTBOUND",
+
+      externalId,
+
+      content:
+        message
+    },
+
+    update: {}
+  });
+} else {
+  console.warn(
+    "Verification Telegram message sent, but conversation was not found:",
+    {
+      merchantId,
+
+      customerId:
+        result.customer.id,
+
+      chatId
+    }
+  );
+}
+        } catch (
+          telegramError
+        ) {
           /*
            * Payment and stock have already been
            * committed successfully.
@@ -528,10 +630,14 @@ router.post(
           {
             merchantId,
             paymentId,
+
             customerId:
-              result.customer?.id ?? null,
+              result.customer?.id ??
+              null,
+
             telegramChatId:
-              result.customer?.telegramChatId ??
+              result.customer
+                ?.telegramChatId ??
               null
           }
         );
@@ -540,6 +646,7 @@ router.post(
       res.json({
         message:
           "Payment verified successfully",
+
         ...result
       });
     } catch (error) {
@@ -572,11 +679,14 @@ router.post(
 );
 
 /*
- * Reject a payment.
+ * =================================================
+ * REJECT PAYMENT
+ * =================================================
  *
  * POST /:merchantId/payment-review/:paymentId/reject
  *
  * IMPORTANT:
+ *
  * Rejection NEVER changes product stock.
  *
  * The customer can submit another payment
@@ -595,10 +705,16 @@ router.post(
         reviewNote
       } = req.body;
 
+      /*
+       * -----------------------------------------
+       * REQUIRE REJECTION REASON
+       * -----------------------------------------
+       */
       if (
         typeof reviewNote !==
           "string" ||
-        reviewNote.trim().length === 0
+        reviewNote.trim()
+          .length === 0
       ) {
         res.status(400).json({
           error:
@@ -611,12 +727,18 @@ router.post(
       const result =
         await prisma.$transaction(
           async (tx) => {
+            /*
+             * -----------------------------------------
+             * LOAD PAYMENT
+             * -----------------------------------------
+             */
             const payment =
               await tx.payment.findFirst({
                 where: {
                   id: paymentId,
                   merchantId
                 },
+
                 include: {
                   order: {
                     include: {
@@ -632,6 +754,11 @@ router.post(
               );
             }
 
+            /*
+             * -----------------------------------------
+             * PREVENT DOUBLE REJECTION
+             * -----------------------------------------
+             */
             if (
               payment.status !==
               PaymentStatus.REVIEW_REQUIRED
@@ -641,6 +768,11 @@ router.post(
               );
             }
 
+            /*
+             * -----------------------------------------
+             * ORDER MUST BE IN PAYMENT REVIEW
+             * -----------------------------------------
+             */
             if (
               payment.order.status !==
               "PAYMENT_REVIEW"
@@ -651,7 +783,9 @@ router.post(
             }
 
             /*
-             * Reject the submitted payment.
+             * -----------------------------------------
+             * REJECT PAYMENT
+             * -----------------------------------------
              *
              * STOCK IS NOT TOUCHED HERE.
              */
@@ -660,6 +794,7 @@ router.post(
                 where: {
                   id: payment.id
                 },
+
                 data: {
                   status:
                     PaymentStatus.REJECTED,
@@ -670,13 +805,16 @@ router.post(
               });
 
             /*
-             * Return the order to payment pending.
+             * -----------------------------------------
+             * RETURN ORDER TO PAYMENT PENDING
+             * -----------------------------------------
              */
             const updatedOrder =
               await tx.order.update({
                 where: {
                   id: payment.orderId
                 },
+
                 data: {
                   status:
                     "PENDING_PAYMENT"
@@ -698,7 +836,7 @@ router.post(
 
       /*
        * -----------------------------------------
-       * TELEGRAM REJECTION DEBUG
+       * REJECTION TELEGRAM DEBUG
        * -----------------------------------------
        */
       console.log(
@@ -706,18 +844,26 @@ router.post(
         {
           merchantId,
           paymentId,
+
           customerId:
-            result.customer?.id ?? null,
-          telegramChatId:
-            result.customer?.telegramChatId ??
+            result.customer?.id ??
             null,
+
+          telegramChatId:
+            result.customer
+              ?.telegramChatId ??
+            null,
+
           orderNumber:
             result.order.orderNumber,
+
           paymentReference:
             result.payment
               .transactionReference,
+
           paymentStatus:
             result.payment.status,
+
           reviewNote:
             result.payment.reviewNote
         }
@@ -729,7 +875,8 @@ router.post(
        * -----------------------------------------
        */
       const chatId =
-        result.customer?.telegramChatId;
+        result.customer
+          ?.telegramChatId;
 
       if (
         chatId &&
@@ -748,9 +895,13 @@ router.post(
             "REJECTION TELEGRAM SEND:",
             {
               chatId,
+
               orderNumber:
-                result.order.orderNumber,
+                result.order
+                  .orderNumber,
+
               paymentId,
+
               paymentReference:
                 result.payment
                   .transactionReference
@@ -768,8 +919,10 @@ router.post(
             {
               chatId,
               externalId,
+
               orderNumber:
-                result.order.orderNumber
+                result.order
+                  .orderNumber
             }
           );
 
@@ -778,10 +931,13 @@ router.post(
               {
                 where: {
                   merchantId,
+
                   customerId:
                     result.customer.id,
+
                   channel:
                     "TELEGRAM",
+
                   externalId:
                     chatId
                 }
@@ -799,7 +955,8 @@ router.post(
 
                 externalId,
 
-                content: message
+                content:
+                  message
               }
             });
           } else {
@@ -807,13 +964,24 @@ router.post(
               "Rejection Telegram message sent, but conversation was not found:",
               {
                 merchantId,
+
                 customerId:
                   result.customer.id,
+
                 chatId
               }
             );
           }
-        } catch (telegramError) {
+        } catch (
+          telegramError
+        ) {
+          /*
+           * Payment rejection has already been
+           * committed successfully.
+           *
+           * Telegram failure must NOT roll back
+           * the rejection.
+           */
           console.error(
             "Payment rejected, but Telegram notification failed:",
             telegramError
@@ -825,10 +993,14 @@ router.post(
           {
             merchantId,
             paymentId,
+
             customerId:
-              result.customer?.id ?? null,
+              result.customer?.id ??
+              null,
+
             telegramChatId:
-              result.customer?.telegramChatId ??
+              result.customer
+                ?.telegramChatId ??
               null
           }
         );
@@ -837,6 +1009,7 @@ router.post(
       res.json({
         message:
           "Payment rejected",
+
         ...result
       });
     } catch (error) {
