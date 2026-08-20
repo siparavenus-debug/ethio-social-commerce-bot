@@ -2,7 +2,17 @@ import { Router } from "express";
 import { prisma } from "@ethio-commerce/database";
 import { sendTelegramMessage } from "../services/telegram.js";
 
+import {
+  requireAuth,
+  requireMerchantAccess
+} from "../middleware/auth.js";
+
 const router = Router();
+
+router.use(
+  requireAuth,
+  requireMerchantAccess
+);
 
 /**
  * List merchant orders.

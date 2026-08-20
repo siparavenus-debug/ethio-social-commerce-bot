@@ -6,7 +6,17 @@ import {
   PaymentMethodStatus
 } from "@ethio-commerce/database";
 
+import {
+  requireAuth,
+  requireMerchantAccess
+} from "../middleware/auth.js";
+
 const router = Router();
+
+router.use(
+  requireAuth,
+  requireMerchantAccess
+);
 
 router.get("/:merchantId/payment-methods", async (req, res) => {
   try {

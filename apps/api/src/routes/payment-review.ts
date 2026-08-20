@@ -16,7 +16,17 @@ import {
   type ReceiptValidationResult
 } from "../services/receipt-validation.js";
 
+import {
+  requireAuth,
+  requireMerchantAccess
+} from "../middleware/auth.js";
+
 const router = Router();
+
+router.use(
+  requireAuth,
+  requireMerchantAccess
+);
 
 type TelegramPhotoSize = {
   file_id: string;

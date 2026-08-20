@@ -41,6 +41,8 @@ export type ConversationResult = {
   reply: string;
 };
 
+const MAX_AI_MESSAGE_LENGTH = 4000;
+
 function isGreeting(text: string) {
   return /^(hello|hi|hey|start|\/start|good morning|good afternoon|good evening)$/i.test(
     text.trim()
@@ -481,6 +483,22 @@ export async function handleConversation(
    *
    * Everything else can be understood naturally by AI.
    */
+
+  /*
+   * AI input security:
+   *
+   * Prevent unusually large customer messages from
+   * being forwarded to the AI provider.
+   *
+   * This protects provider usage/cost while keeping
+   * normal customer conversations unaffected.
+   */
+  if (text.length > MAX_AI_MESSAGE_LENGTH) {
+    return {
+      reply:
+        "Your message is too long. Please shorten it and try again."
+    };
+  }
 
   const aiResult =
     await runAIConversation(

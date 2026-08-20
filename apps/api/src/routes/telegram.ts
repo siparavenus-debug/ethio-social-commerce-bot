@@ -499,29 +499,78 @@ await prisma.message.upsert({
           }
 
           /*
+           * ---------------------------------------------
+           * AI RECEIPT IMAGE SECURITY
+           * ---------------------------------------------
+           *
+           * Do not download or send oversized images to
+           * Gemini. This protects against unnecessary
+           * memory usage and AI-provider abuse.
+           */
+          const MAX_RECEIPT_IMAGE_BYTES =
+            5 * 1024 * 1024;
+
+          if (
+            largestPhoto.file_size !== undefined &&
+            largestPhoto.file_size >
+              MAX_RECEIPT_IMAGE_BYTES
+          ) {
+            throw new Error(
+              "Telegram receipt image exceeds the maximum allowed size"
+            );
+          }
+
+          /*
            * Resolve Telegram file ID.
            */
           const filePath =
             await getTelegramFilePath(
               largestPhoto.file_id
             );
+                        /*
+ * Download image.
+ */
+const image =
+await downloadTelegramFile(
+  filePath
+);
 
-          /*
-           * Download image.
-           */
-          const image =
-            await downloadTelegramFile(
-              filePath
-            );
+/*
+* Verify the actual downloaded payload too.
+*
+* The Telegram metadata is not sufficient by itself.
+*/
+if (
+image.length === 0
+) {
+throw new Error(
+  "Telegram receipt image is empty"
+);
+}
 
-          /*
-           * Gemini Vision extraction.
-           */
-          const receipt =
-            await extractReceipt(
-              image,
-              "image/jpeg"
-            );
+if (
+image.length >
+MAX_RECEIPT_IMAGE_BYTES
+) {
+throw new Error(
+  "Downloaded receipt image exceeds the maximum allowed size"
+);
+}
+
+/*
+* Gemini Vision extraction.
+*
+* The current Telegram photo flow provides the
+* image as JPEG to the existing receipt-vision
+* service. MIME validation is additionally enforced
+* inside extractReceipt().
+*/
+const receipt =
+await extractReceipt(
+  image,
+  "image/jpeg"
+);
+
 
           console.log(
             "Receipt extracted:",

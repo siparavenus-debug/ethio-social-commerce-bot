@@ -1,4 +1,20 @@
-ï»¿import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState
+} from "react";
+
+type AuthUser = {
+  id: string;
+  merchantId: string;
+  email: string;
+  displayName: string | null;
+  role: string;
+};
+
+type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
 
 type PaymentReview = {
   id: string;
@@ -75,82 +91,347 @@ type Product = {
   updatedAt: string;
 };
 
-const API_BASE_URL = "http://localhost:3000";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:3000";
 
 const MERCHANT_ID =
   import.meta.env.VITE_MERCHANT_ID ||
   "cmsrm4og20000q8578gy73r86";
 
-type Tab = "payments" | "orders" | "inventory";
+const AUTH_STORAGE_KEY =
+  "ethio-commerce-auth";
+
+type Tab =
+  | "payments"
+  | "orders"
+  | "inventory";
 
 export default function App() {
-  const [activeTab, setActiveTab] =
-    useState<Tab>("payments");
+  const [
+    auth,
+    setAuth
+  ] = useState<LoginResponse | null>(
+    () => {
+      try {
+        const stored =
+          localStorage.getItem(
+            AUTH_STORAGE_KEY
+          );
 
-  const [reviews, setReviews] =
-    useState<PaymentReview[]>([]);
+        if (!stored) {
+          return null;
+        }
 
-  const [orders, setOrders] =
-    useState<Order[]>([]);
+        return JSON.parse(
+          stored
+        ) as LoginResponse;
+      } catch {
+        localStorage.removeItem(
+          AUTH_STORAGE_KEY
+        );
 
-  const [products, setProducts] =
-    useState<Product[]>([]);
+        return null;
+      }
+    }
+  );
 
-  const [loadingReviews, setLoadingReviews] =
-    useState(true);
+  const [
+    loginEmail,
+    setLoginEmail
+  ] = useState("");
 
-  const [loadingOrders, setLoadingOrders] =
-    useState(true);
+  const [
+    loginPassword,
+    setLoginPassword
+  ] = useState("");
 
-  const [loadingProducts, setLoadingProducts] =
-    useState(true);
+  const [
+    loginLoading,
+    setLoginLoading
+  ] = useState(false);
 
-  const [actionId, setActionId] =
-    useState<string | null>(null);
+  const [
+    activeTab,
+    setActiveTab
+  ] = useState<Tab>("payments");
 
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [
+    reviews,
+    setReviews
+  ] = useState<PaymentReview[]>(
+    []
+  );
+
+  const [
+    orders,
+    setOrders
+  ] = useState<Order[]>([]);
+
+  const [
+    products,
+    setProducts
+  ] = useState<Product[]>([]);
+
+  const [
+    loadingReviews,
+    setLoadingReviews
+  ] = useState(true);
+
+  const [
+    loadingOrders,
+    setLoadingOrders
+  ] = useState(true);
+
+  const [
+    loadingProducts,
+    setLoadingProducts
+  ] = useState(true);
+
+  const [
+    actionId,
+    setActionId
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    error,
+    setError
+  ] = useState("");
+
+  const [
+    success,
+    setSuccess
+  ] = useState("");
 
   const [
     rejectingPaymentId,
     setRejectingPaymentId
-  ] = useState<string | null>(null);
+  ] = useState<string | null>(
+    null
+  );
 
-  const [rejectNote, setRejectNote] =
-    useState("");
+  const [
+    rejectNote,
+    setRejectNote
+  ] = useState("");
 
   const [
     restockingProductId,
     setRestockingProductId
-  ] = useState<string | null>(null);
+  ] = useState<string | null>(
+    null
+  );
 
-  const [restockQuantity, setRestockQuantity] =
-    useState("");
+  const [
+    restockQuantity,
+    setRestockQuantity
+  ] = useState("");
 
-  const [restockNote, setRestockNote] =
-    useState("");
+  const [
+    restockNote,
+    setRestockNote
+  ] = useState("");
+
+  function saveAuth(
+    value: LoginResponse
+  ) {
+    localStorage.setItem(
+      AUTH_STORAGE_KEY,
+      JSON.stringify(value)
+    );
+
+    setAuth(value);
+  }
+
+  function logout() {
+    localStorage.removeItem(
+      AUTH_STORAGE_KEY
+    );
+
+    setAuth(null);
+
+    setReviews([]);
+    setOrders([]);
+    setProducts([]);
+
+    setError("");
+    setSuccess("");
+    setActionId(null);
+    setRejectingPaymentId(null);
+    setRestockingProductId(null);
+  }
+
+  async function login() {
+    const email =
+      loginEmail.trim();
+
+    if (!email) {
+      setError(
+        "Please enter your email."
+      );
+      return;
+    }
+
+    if (!loginPassword) {
+      setError(
+        "Please enter your password."
+      );
+      return;
+    }
+
+    try {
+      setLoginLoading(true);
+      setError("");
+      setSuccess("");
+
+      const response =
+  await fetch(
+    `${API_BASE_URL}/auth/login`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email: loginEmail,
+        password: loginPassword
+      })
+    }
+  );
+
+    console.log(
+      "API RESPONSE:",
+      response.status,
+      response.url
+    );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+            "Login failed"
+        );
+      }
+
+      if (
+        !data?.token ||
+        !data?.user
+      ) {
+        throw new Error(
+          "Login response was invalid."
+        );
+      }
+
+      saveAuth(data);
+
+      setLoginPassword("");
+      setSuccess(
+        "Signed in successfully."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Login failed"
+      );
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function apiFetch(
+    path: string,
+    options: RequestInit = {}
+  ) {
+    if (!auth?.token) {
+      throw new Error(
+        "Authentication required"
+      );
+    }
+
+    const headers =
+      new Headers(
+        options.headers
+      );
+
+    headers.set(
+      "Authorization",
+      `Bearer ${auth.token}`
+    );
+
+    if (
+      options.body &&
+      !headers.has(
+        "Content-Type"
+      )
+    ) {
+      headers.set(
+        "Content-Type",
+        "application/json"
+      );
+    }
+
+    const response =
+      await fetch(
+        `${API_BASE_URL}${path}`,
+        {
+          ...options,
+          headers
+        }
+      );
+
+    if (
+      response.status === 401
+    ) {
+      logout();
+
+      throw new Error(
+        "Your session has expired. Please sign in again."
+      );
+    }
+
+    return response;
+  }
 
   async function loadReviews() {
+    if (!auth?.token) {
+      return;
+    }
+
     try {
       setLoadingReviews(true);
       setError("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/payment-review`
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/payment-review`
+        );
 
       if (!response.ok) {
+        const data =
+          await response.json().catch(
+            () => null
+          );
+
         throw new Error(
-          `Failed to load payment reviews (${response.status})`
+          data?.error ||
+            `Failed to load payment reviews (${response.status})`
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       setReviews(
         Array.isArray(data)
           ? data
-          : Array.isArray(data?.value)
+          : Array.isArray(
+                data?.value
+              )
             ? data.value
             : []
       );
@@ -166,26 +447,40 @@ export default function App() {
   }
 
   async function loadOrders() {
+    if (!auth?.token) {
+      return;
+    }
+
     try {
       setLoadingOrders(true);
       setError("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/orders`
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/orders`
+        );
 
       if (!response.ok) {
+        const data =
+          await response.json().catch(
+            () => null
+          );
+
         throw new Error(
-          `Failed to load orders (${response.status})`
+          data?.error ||
+            `Failed to load orders (${response.status})`
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       setOrders(
         Array.isArray(data)
           ? data
-          : Array.isArray(data?.value)
+          : Array.isArray(
+                data?.value
+              )
             ? data.value
             : []
       );
@@ -201,26 +496,40 @@ export default function App() {
   }
 
   async function loadProducts() {
+    if (!auth?.token) {
+      return;
+    }
+
     try {
       setLoadingProducts(true);
       setError("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/products`
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/products`
+        );
 
       if (!response.ok) {
+        const data =
+          await response.json().catch(
+            () => null
+          );
+
         throw new Error(
-          `Failed to load products (${response.status})`
+          data?.error ||
+            `Failed to load products (${response.status})`
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       setProducts(
         Array.isArray(data)
           ? data
-          : Array.isArray(data?.value)
+          : Array.isArray(
+                data?.value
+              )
             ? data.value
             : []
       );
@@ -236,6 +545,10 @@ export default function App() {
   }
 
   async function refreshDashboard() {
+    if (!auth?.token) {
+      return;
+    }
+
     setError("");
     setSuccess("");
 
@@ -254,21 +567,20 @@ export default function App() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/payment-review/${paymentId}/verify`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            reviewNote:
-              "Verified from merchant dashboard"
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/payment-review/${paymentId}/verify`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              reviewNote:
+                "Verified from merchant dashboard"
+            })
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -283,7 +595,8 @@ export default function App() {
 
       await Promise.all([
         loadReviews(),
-        loadOrders()
+        loadOrders(),
+        loadProducts()
       ]);
     } catch (err) {
       setError(
@@ -296,8 +609,12 @@ export default function App() {
     }
   }
 
-  function openRejectForm(paymentId: string) {
-    setRejectingPaymentId(paymentId);
+  function openRejectForm(
+    paymentId: string
+  ) {
+    setRejectingPaymentId(
+      paymentId
+    );
     setRejectNote("");
     setError("");
     setSuccess("");
@@ -317,7 +634,8 @@ export default function App() {
     paymentId: string,
     reviewNote: string
   ) {
-    const trimmedNote = reviewNote.trim();
+    const trimmedNote =
+      reviewNote.trim();
 
     if (!trimmedNote) {
       setError(
@@ -331,20 +649,20 @@ export default function App() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/payment-review/${paymentId}/reject`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            reviewNote: trimmedNote
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/payment-review/${paymentId}/reject`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              reviewNote:
+                trimmedNote
+            })
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -353,7 +671,9 @@ export default function App() {
         );
       }
 
-      setRejectingPaymentId(null);
+      setRejectingPaymentId(
+        null
+      );
       setRejectNote("");
 
       setSuccess(
@@ -377,27 +697,28 @@ export default function App() {
 
   async function updateOrderStatus(
     orderId: string,
-    status: "FULFILLING" | "FULFILLED"
+    status:
+      | "FULFILLING"
+      | "FULFILLED"
   ) {
     try {
       setActionId(orderId);
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/orders/${orderId}/status`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            status
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/orders/${orderId}/status`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              status
+            })
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -406,7 +727,10 @@ export default function App() {
         );
       }
 
-      if (status === "FULFILLING") {
+      if (
+        status ===
+        "FULFILLING"
+      ) {
         setSuccess(
           `Order ${data.order.orderNumber} is now being prepared.`
         );
@@ -428,8 +752,12 @@ export default function App() {
     }
   }
 
-  function openRestockForm(productId: string) {
-    setRestockingProductId(productId);
+  function openRestockForm(
+    productId: string
+  ) {
+    setRestockingProductId(
+      productId
+    );
     setRestockQuantity("");
     setRestockNote("");
     setError("");
@@ -454,7 +782,9 @@ export default function App() {
       Number(restockQuantity);
 
     if (
-      !Number.isInteger(numericQuantity) ||
+      !Number.isInteger(
+        numericQuantity
+      ) ||
       numericQuantity <= 0
     ) {
       setError(
@@ -463,16 +793,21 @@ export default function App() {
       return;
     }
 
-    if (numericQuantity > 100000) {
+    if (
+      numericQuantity > 100000
+    ) {
       setError(
         "Restock quantity cannot exceed 100,000 units at once."
       );
       return;
     }
 
-    const product = products.find(
-      (item) => item.id === productId
-    );
+    const product =
+      products.find(
+        (item) =>
+          item.id ===
+          productId
+      );
 
     if (!product) {
       setError(
@@ -482,9 +817,13 @@ export default function App() {
     }
 
     const projectedStock =
-      product.stock + numericQuantity;
+      product.stock +
+      numericQuantity;
 
-    if (projectedStock > 1000000) {
+    if (
+      projectedStock >
+      1000000
+    ) {
       setError(
         "The resulting stock would exceed the safe inventory limit."
       );
@@ -496,23 +835,23 @@ export default function App() {
       setError("");
       setSuccess("");
 
-      const response = await fetch(
-        `${API_BASE_URL}/merchants/${MERCHANT_ID}/products/${productId}/restock`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            quantity: numericQuantity,
-            note:
-              restockNote.trim() ||
-              undefined
-          })
-        }
-      );
+      const response =
+        await apiFetch(
+          `/merchants/${MERCHANT_ID}/products/${productId}/restock`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              quantity:
+                numericQuantity,
+              note:
+                restockNote.trim() ||
+                undefined
+            })
+          }
+        );
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -524,7 +863,9 @@ export default function App() {
       const updatedProduct =
         data?.product;
 
-      setRestockingProductId(null);
+      setRestockingProductId(
+        null
+      );
       setRestockQuantity("");
       setRestockNote("");
 
@@ -551,23 +892,37 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!auth?.token) {
+      setLoadingReviews(false);
+      setLoadingOrders(false);
+      setLoadingProducts(false);
+      return;
+    }
+
     void refreshDashboard();
-  }, []);
+  }, [auth?.token]);
 
-  const reviewCount = reviews.length;
+  const reviewCount =
+    reviews.length;
 
-  const paidOrders = orders.filter(
-    (order) => order.status === "PAID"
-  ).length;
+  const paidOrders =
+    orders.filter(
+      (order) =>
+        order.status ===
+        "PAID"
+    ).length;
 
-  const fulfillingOrders = orders.filter(
-    (order) =>
-      order.status === "FULFILLING"
-  ).length;
+  const fulfillingOrders =
+    orders.filter(
+      (order) =>
+        order.status ===
+        "FULFILLING"
+    ).length;
 
   const outOfStockProducts =
     products.filter(
-      (product) => product.stock === 0
+      (product) =>
+        product.stock === 0
     ).length;
 
   const lowStockProducts =
@@ -577,99 +932,310 @@ export default function App() {
         product.stock <= 5
     ).length;
 
+  if (!auth?.token) {
+    return (
+      <main
+        style={styles.loginPage}
+      >
+        <section
+          style={styles.loginCard}
+        >
+          <div
+            style={
+              styles.loginHeader
+            }
+          >
+            <h1
+              style={
+                styles.loginTitle
+              }
+            >
+              Ethio Social Commerce
+            </h1>
+
+            <p
+              style={
+                styles.loginSubtitle
+              }
+            >
+              Merchant Dashboard
+            </p>
+          </div>
+
+          {error && (
+            <div
+              style={
+                styles.error
+              }
+            >
+              <strong>
+                Error:
+              </strong>{" "}
+              {error}
+            </div>
+          )}
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void login();
+            }}
+          >
+            <label
+              style={
+                styles.formLabel
+              }
+            >
+              Email
+            </label>
+
+            <input
+              type="email"
+              value={loginEmail}
+              onChange={(event) =>
+                setLoginEmail(
+                  event.target.value
+                )
+              }
+              placeholder="merchant@example.com"
+              autoComplete="email"
+              disabled={loginLoading}
+              style={
+                styles.loginInput
+              }
+            />
+
+            <label
+              style={
+                styles.formLabel
+              }
+            >
+              Password
+            </label>
+
+            <input
+              type="password"
+              value={loginPassword}
+              onChange={(event) =>
+                setLoginPassword(
+                  event.target.value
+                )
+              }
+              placeholder="Your password"
+              autoComplete="current-password"
+              disabled={loginLoading}
+              style={
+                styles.loginInput
+              }
+            />
+
+            <button
+              type="submit"
+              disabled={loginLoading}
+              style={
+                styles.loginButton
+              }
+            >
+              {loginLoading
+                ? "Signing in..."
+                : "Sign in"}
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main style={styles.page}>
-      <header style={styles.header}>
+      <header
+        style={styles.header}
+      >
         <div>
-          <h1 style={styles.title}>
+          <h1
+            style={styles.title}
+          >
             Ethio Social Commerce
           </h1>
 
-          <p style={styles.subtitle}>
+          <p
+            style={styles.subtitle}
+          >
             Merchant Dashboard
+          </p>
+
+          <p
+            style={
+              styles.signedInUser
+            }
+          >
+            Signed in as{" "}
+            <strong>
+              {auth.user.displayName ||
+                auth.user.email}
+            </strong>
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() =>
-            void refreshDashboard()
-          }
-          disabled={
-            loadingReviews ||
-            loadingOrders ||
-            loadingProducts ||
-            actionId !== null
-          }
-          style={styles.refreshButton}
+        <div
+          style={styles.headerActions}
         >
-          {loadingReviews ||
-          loadingOrders ||
-          loadingProducts
-            ? "Refreshing..."
-            : "Refresh"}
-        </button>
+          <button
+            type="button"
+            onClick={() =>
+              void refreshDashboard()
+            }
+            disabled={
+              loadingReviews ||
+              loadingOrders ||
+              loadingProducts ||
+              actionId !== null
+            }
+            style={
+              styles.refreshButton
+            }
+          >
+            {loadingReviews ||
+            loadingOrders ||
+            loadingProducts
+              ? "Refreshing..."
+              : "Refresh"}
+          </button>
+
+          <button
+            type="button"
+            onClick={logout}
+            disabled={
+              actionId !== null
+            }
+            style={
+              styles.logoutButton
+            }
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
-      <section style={styles.summary}>
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
+      <section
+        style={styles.summary}
+      >
+        <div
+          style={
+            styles.summaryCard
+          }
+        >
+          <span
+            style={
+              styles.summaryLabel
+            }
+          >
             Payments awaiting review
           </span>
 
-          <strong style={styles.summaryValue}>
+          <strong
+            style={
+              styles.summaryValue
+            }
+          >
             {reviewCount}
           </strong>
         </div>
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
+        <div
+          style={
+            styles.summaryCard
+          }
+        >
+          <span
+            style={
+              styles.summaryLabel
+            }
+          >
             Paid orders
           </span>
 
-          <strong style={styles.summaryValue}>
+          <strong
+            style={
+              styles.summaryValue
+            }
+          >
             {paidOrders}
           </strong>
         </div>
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
+        <div
+          style={
+            styles.summaryCard
+          }
+        >
+          <span
+            style={
+              styles.summaryLabel
+            }
+          >
             Orders being prepared
           </span>
 
-          <strong style={styles.summaryValue}>
+          <strong
+            style={
+              styles.summaryValue
+            }
+          >
             {fulfillingOrders}
           </strong>
         </div>
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
+        <div
+          style={
+            styles.summaryCard
+          }
+        >
+          <span
+            style={
+              styles.summaryLabel
+            }
+          >
             Inventory alerts
           </span>
 
-          <strong style={styles.summaryValue}>
+          <strong
+            style={
+              styles.summaryValue
+            }
+          >
             {outOfStockProducts +
               lowStockProducts}
           </strong>
 
-          <span style={styles.summaryHint}>
-            {outOfStockProducts} out of stock Â·{" "}
+          <span
+            style={
+              styles.summaryHint
+            }
+          >
+            {outOfStockProducts} out of stock
+            {" · "}
             {lowStockProducts} low stock
           </span>
         </div>
       </section>
 
-      <section style={styles.tabs}>
+      <section
+        style={styles.tabs}
+      >
         <button
           type="button"
           onClick={() => {
-            setActiveTab("payments");
+            setActiveTab(
+              "payments"
+            );
             setError("");
             setSuccess("");
           }}
           style={{
             ...styles.tab,
-            ...(activeTab === "payments"
+            ...(activeTab ===
+            "payments"
               ? styles.activeTab
               : {})
           }}
@@ -677,7 +1243,11 @@ export default function App() {
           Payment Review
 
           {reviewCount > 0 && (
-            <span style={styles.tabCount}>
+            <span
+              style={
+                styles.tabCount
+              }
+            >
               {reviewCount}
             </span>
           )}
@@ -692,7 +1262,8 @@ export default function App() {
           }}
           style={{
             ...styles.tab,
-            ...(activeTab === "orders"
+            ...(activeTab ===
+            "orders"
               ? styles.activeTab
               : {})
           }}
@@ -703,21 +1274,25 @@ export default function App() {
         <button
           type="button"
           onClick={() => {
-            setActiveTab("inventory");
+            setActiveTab(
+              "inventory"
+            );
             setError("");
             setSuccess("");
             void loadProducts();
           }}
           style={{
             ...styles.tab,
-            ...(activeTab === "inventory"
+            ...(activeTab ===
+            "inventory"
               ? styles.activeTab
               : {})
           }}
         >
           Inventory
 
-          {outOfStockProducts > 0 && (
+          {outOfStockProducts >
+            0 && (
             <span
               style={
                 styles.inventoryWarningCount
@@ -727,7 +1302,8 @@ export default function App() {
             </span>
           )}
 
-          {lowStockProducts > 0 && (
+          {lowStockProducts >
+            0 && (
             <span
               style={
                 styles.inventoryLowCount
@@ -740,26 +1316,48 @@ export default function App() {
       </section>
 
       {error && (
-        <div style={styles.error}>
-          <strong>Error:</strong> {error}
+        <div
+          style={styles.error}
+        >
+          <strong>
+            Error:
+          </strong>{" "}
+          {error}
         </div>
       )}
 
       {success && (
-        <div style={styles.success}>
+        <div
+          style={styles.success}
+        >
           {success}
         </div>
       )}
 
-      {activeTab === "payments" ? (
-        <section style={styles.section}>
-          <div style={styles.sectionHeader}>
+      {activeTab ===
+      "payments" ? (
+        <section
+          style={styles.section}
+        >
+          <div
+            style={
+              styles.sectionHeader
+            }
+          >
             <div>
-              <h2 style={styles.sectionTitle}>
+              <h2
+                style={
+                  styles.sectionTitle
+                }
+              >
                 Payment Review
               </h2>
 
-              <p style={styles.sectionDescription}>
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
                 Verify or reject customer payment
                 submissions.
               </p>
@@ -767,11 +1365,20 @@ export default function App() {
           </div>
 
           {loadingReviews ? (
-            <div style={styles.emptyState}>
+            <div
+              style={
+                styles.emptyState
+              }
+            >
               Loading payment reviews...
             </div>
-          ) : reviews.length === 0 ? (
-            <div style={styles.emptyState}>
+          ) : reviews.length ===
+            0 ? (
+            <div
+              style={
+                styles.emptyState
+              }
+            >
               <strong>
                 No payments awaiting review.
               </strong>
@@ -782,88 +1389,136 @@ export default function App() {
               </p>
             </div>
           ) : (
-            <div style={styles.reviewList}>
-              {reviews.map((review) => {
-                const customerName =
-                  review.order.customer?.name ||
-                  "Unknown customer";
+            <div
+              style={
+                styles.reviewList
+              }
+            >
+              {reviews.map(
+                (review) => {
+                  const customerName =
+                    review.order.customer
+                      ?.name ||
+                    "Unknown customer";
 
-                const product =
-                  review.order.items[0];
+                  const product =
+                    review.order
+                      .items[0];
 
-                const busy =
-                  actionId === review.id;
+                  const busy =
+                    actionId ===
+                    review.id;
 
-                const isRejecting =
-                  rejectingPaymentId ===
-                  review.id;
+                  const isRejecting =
+                    rejectingPaymentId ===
+                    review.id;
 
-                return (
-                  <article
-                    key={review.id}
-                    style={styles.reviewCard}
-                  >
-                    <div style={styles.cardTop}>
-                      <div>
-                        <span style={styles.orderLabel}>
-                          Order
+                  return (
+                    <article
+                      key={
+                        review.id
+                      }
+                      style={
+                        styles.reviewCard
+                      }
+                    >
+                      <div
+                        style={
+                          styles.cardTop
+                        }
+                      >
+                        <div>
+                          <span
+                            style={
+                              styles.orderLabel
+                            }
+                          >
+                            Order
+                          </span>
+
+                          <h3
+                            style={
+                              styles.orderNumber
+                            }
+                          >
+                            {
+                              review
+                                .order
+                                .orderNumber
+                            }
+                          </h3>
+                        </div>
+
+                        <span
+                          style={
+                            styles.badge
+                          }
+                        >
+                          {
+                            review.status
+                          }
                         </span>
-
-                        <h3 style={styles.orderNumber}>
-                          {review.order.orderNumber}
-                        </h3>
                       </div>
 
-                      <span style={styles.badge}>
-                        {review.status}
-                      </span>
-                    </div>
-
-                    <div style={styles.details}>
-                      <Detail
-                        label="Customer"
-                        value={customerName}
-                      />
-
-                      <Detail
-                        label="Product"
-                        value={
-                          product?.productName ||
-                          "Unknown product"
+                      <div
+                        style={
+                          styles.details
                         }
-                      />
+                      >
+                        <Detail
+                          label="Customer"
+                          value={
+                            customerName
+                          }
+                        />
 
-                      <Detail
-                        label="Quantity"
-                        value={
-                          product?.quantity ?? "-"
-                        }
-                      />
+                        <Detail
+                          label="Product"
+                          value={
+                            product?.productName ||
+                            "Unknown product"
+                          }
+                        />
 
-                      <Detail
-                        label="Amount"
-                        value={`${review.amount} ${review.currency}`}
-                      />
+                        <Detail
+                          label="Quantity"
+                          value={
+                            product?.quantity ??
+                            "-"
+                          }
+                        />
 
-                      <Detail
-                        label="Provider"
-                        value={review.provider}
-                      />
+                        <Detail
+                          label="Amount"
+                          value={`${review.amount} ${review.currency}`}
+                        />
 
-                      <Detail
-                        label="Transaction reference"
-                        value={
-                          review.transactionReference ||
-                          "Not provided"
-                        }
-                      />
-                    </div>
+                        <Detail
+                          label="Provider"
+                          value={
+                            review.provider
+                          }
+                        />
 
-                    {isRejecting && (
-                      <div style={styles.rejectPanel}>
-                        <div>
+                        <Detail
+                          label="Transaction reference"
+                          value={
+                            review.transactionReference ||
+                            "Not provided"
+                          }
+                        />
+                      </div>
+
+                      {isRejecting && (
+                        <div
+                          style={
+                            styles.rejectPanel
+                          }
+                        >
                           <strong
-                            style={styles.rejectTitle}
+                            style={
+                              styles.rejectTitle
+                            }
                           >
                             Reject payment
                           </strong>
@@ -878,339 +1533,487 @@ export default function App() {
                             will receive this reason on
                             Telegram.
                           </p>
-                        </div>
 
-                        <textarea
-                          value={rejectNote}
-                          onChange={(event) =>
-                            setRejectNote(
-                              event.target.value
-                            )
+                          <textarea
+                            value={
+                              rejectNote
+                            }
+                            onChange={(
+                              event
+                            ) =>
+                              setRejectNote(
+                                event
+                                  .target
+                                  .value
+                              )
+                            }
+                            placeholder="Example: Transaction reference could not be verified."
+                            disabled={
+                              busy
+                            }
+                            rows={4}
+                            style={
+                              styles.rejectTextarea
+                            }
+                          />
+
+                          <div
+                            style={
+                              styles.rejectActions
+                            }
+                          >
+                            <button
+                              type="button"
+                              disabled={
+                                busy
+                              }
+                              onClick={
+                                cancelReject
+                              }
+                              style={
+                                styles.cancelButton
+                              }
+                            >
+                              Cancel
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                !rejectNote.trim()
+                              }
+                              onClick={() =>
+                                void rejectPayment(
+                                  review.id,
+                                  rejectNote
+                                )
+                              }
+                              style={
+                                styles.confirmRejectButton
+                              }
+                            >
+                              {busy
+                                ? "Rejecting..."
+                                : "Confirm Rejection"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div
+                        style={
+                          styles.cardFooter
+                        }
+                      >
+                        <span
+                          style={
+                            styles.date
                           }
-                          placeholder="Example: Transaction reference could not be verified."
-                          disabled={busy}
-                          rows={4}
-                          style={styles.rejectTextarea}
-                        />
+                        >
+                          Submitted{" "}
+                          {new Date(
+                            review.createdAt
+                          ).toLocaleString()}
+                        </span>
 
                         <div
                           style={
-                            styles.rejectActions
+                            styles.actions
                           }
                         >
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={cancelReject}
-                            style={
-                              styles.cancelButton
-                            }
-                          >
-                            Cancel
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={
-                              busy ||
-                              !rejectNote.trim()
-                            }
-                            onClick={() =>
-                              void rejectPayment(
-                                review.id,
-                                rejectNote
-                              )
-                            }
-                            style={
-                              styles.confirmRejectButton
-                            }
-                          >
-                            {busy
-                              ? "Rejecting..."
-                              : "Confirm Rejection"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    <div style={styles.cardFooter}>
-                      <span style={styles.date}>
-                        Submitted{" "}
-                        {new Date(
-                          review.createdAt
-                        ).toLocaleString()}
-                      </span>
-
-                      <div style={styles.actions}>
-                        <button
-                          type="button"
-                          disabled={
-                            busy ||
-                            rejectingPaymentId !==
-                              null ||
-                            actionId !== null
-                          }
-                          onClick={() =>
-                            void verifyPayment(
-                              review.id
-                            )
-                          }
-                          style={styles.verifyButton}
-                        >
-                          {busy
-                            ? "Processing..."
-                            : "Verify Payment"}
-                        </button>
-
-                        {!isRejecting && (
                           <button
                             type="button"
                             disabled={
                               busy ||
                               rejectingPaymentId !==
                                 null ||
-                              actionId !== null
+                              actionId !==
+                                null
                             }
                             onClick={() =>
-                              openRejectForm(
+                              void verifyPayment(
                                 review.id
                               )
                             }
-                            style={styles.rejectButton}
+                            style={
+                              styles.verifyButton
+                            }
                           >
-                            Reject
+                            {busy
+                              ? "Processing..."
+                              : "Verify Payment"}
                           </button>
-                        )}
+
+                          {!isRejecting && (
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                rejectingPaymentId !==
+                                  null ||
+                                actionId !==
+                                  null
+                              }
+                              onClick={() =>
+                                openRejectForm(
+                                  review.id
+                                )
+                              }
+                              style={
+                                styles.rejectButton
+                              }
+                            >
+                              Reject
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </article>
-                );
-              })}
+                    </article>
+                  );
+                }
+              )}
             </div>
           )}
         </section>
-      ) : activeTab === "orders" ? (
-        <section style={styles.section}>
-          <div style={styles.sectionHeader}>
+      ) : activeTab ===
+        "orders" ? (
+        <section
+          style={styles.section}
+        >
+          <div
+            style={
+              styles.sectionHeader
+            }
+          >
             <div>
-              <h2 style={styles.sectionTitle}>
+              <h2
+                style={
+                  styles.sectionTitle
+                }
+              >
                 Orders
               </h2>
 
-              <p style={styles.sectionDescription}>
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
                 Manage paid orders and fulfillment.
               </p>
             </div>
           </div>
 
           {loadingOrders ? (
-            <div style={styles.emptyState}>
+            <div
+              style={
+                styles.emptyState
+              }
+            >
               Loading orders...
             </div>
-          ) : orders.length === 0 ? (
-            <div style={styles.emptyState}>
-              <strong>No orders yet.</strong>
+          ) : orders.length ===
+            0 ? (
+            <div
+              style={
+                styles.emptyState
+              }
+            >
+              <strong>
+                No orders yet.
+              </strong>
 
               <p>
                 Customer orders will appear here.
               </p>
             </div>
           ) : (
-            <div style={styles.reviewList}>
-              {orders.map((order) => {
-                const busy =
-                  actionId === order.id;
+            <div
+              style={
+                styles.reviewList
+              }
+            >
+              {orders.map(
+                (order) => {
+                  const busy =
+                    actionId ===
+                    order.id;
 
-                const payment =
-                  order.payments
-                    .filter(
-                      (item) =>
-                        item.status ===
-                        "VERIFIED"
-                    )
-                    .at(-1) ||
-                  order.payments.at(-1);
+                  const payment =
+                    order.payments
+                      .filter(
+                        (item) =>
+                          item.status ===
+                          "VERIFIED"
+                      )
+                      .at(-1) ||
+                    order.payments.at(
+                      -1
+                    );
 
-                return (
-                  <article
-                    key={order.id}
-                    style={styles.reviewCard}
-                  >
-                    <div style={styles.cardTop}>
-                      <div>
-                        <span style={styles.orderLabel}>
-                          Order
-                        </span>
-
-                        <h3 style={styles.orderNumber}>
-                          {order.orderNumber}
-                        </h3>
-
-                        <span style={styles.customer}>
-                          {order.customer?.name ||
-                            "Unknown customer"}
-                        </span>
-                      </div>
-
-                      <span
-                        style={{
-                          ...styles.orderBadge,
-                          ...getStatusStyle(
-                            order.status
-                          )
-                        }}
+                  return (
+                    <article
+                      key={
+                        order.id
+                      }
+                      style={
+                        styles.reviewCard
+                      }
+                    >
+                      <div
+                        style={
+                          styles.cardTop
+                        }
                       >
-                        {order.status}
-                      </span>
-                    </div>
-
-                    <div style={styles.itemsBox}>
-                      {order.items.map((item) => (
-                        <div
-                          key={item.id}
-                          style={styles.itemRow}
-                        >
-                          <span>
-                            {item.productName} Ã—{" "}
-                            {item.quantity}
-                          </span>
-
-                          <strong>
-                            {item.lineTotal}{" "}
-                            {order.currency}
-                          </strong>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div style={styles.details}>
-                      <Detail
-                        label="Customer"
-                        value={
-                          order.customer?.name ||
-                          "Unknown customer"
-                        }
-                      />
-
-                      <Detail
-                        label="Total"
-                        value={`${order.total} ${order.currency}`}
-                      />
-
-                      <Detail
-                        label="Payment"
-                        value={
-                          payment?.status ||
-                          "No payment"
-                        }
-                      />
-
-                      <Detail
-                        label="Provider"
-                        value={
-                          payment?.provider || "-"
-                        }
-                      />
-
-                      <Detail
-                        label="Transaction reference"
-                        value={
-                          payment?.transactionReference ||
-                          "-"
-                        }
-                      />
-
-                      <Detail
-                        label="Created"
-                        value={new Date(
-                          order.createdAt
-                        ).toLocaleString()}
-                      />
-                    </div>
-
-                    <div style={styles.cardFooter}>
-                      <span style={styles.date}>
-                        Updated{" "}
-                        {new Date(
-                          order.updatedAt
-                        ).toLocaleString()}
-                      </span>
-
-                      <div style={styles.actions}>
-                        {order.status === "PAID" && (
-                          <button
-                            type="button"
-                            disabled={
-                              busy ||
-                              actionId !== null
-                            }
-                            onClick={() =>
-                              void updateOrderStatus(
-                                order.id,
-                                "FULFILLING"
-                              )
-                            }
-                            style={
-                              styles.fulfillButton
-                            }
-                          >
-                            {busy
-                              ? "Processing..."
-                              : "Start Fulfillment"}
-                          </button>
-                        )}
-
-                        {order.status ===
-                          "FULFILLING" && (
-                          <button
-                            type="button"
-                            disabled={
-                              busy ||
-                              actionId !== null
-                            }
-                            onClick={() =>
-                              void updateOrderStatus(
-                                order.id,
-                                "FULFILLED"
-                              )
-                            }
-                            style={
-                              styles.fulfillButton
-                            }
-                          >
-                            {busy
-                              ? "Processing..."
-                              : "Mark Fulfilled"}
-                          </button>
-                        )}
-
-                        {order.status ===
-                          "FULFILLED" && (
+                        <div>
                           <span
                             style={
-                              styles.completed
+                              styles.orderLabel
                             }
                           >
-                            Completed âœ“
+                            Order
                           </span>
+
+                          <h3
+                            style={
+                              styles.orderNumber
+                            }
+                          >
+                            {
+                              order.orderNumber
+                            }
+                          </h3>
+
+                          <span
+                            style={
+                              styles.customer
+                            }
+                          >
+                            {order
+                              .customer
+                              ?.name ||
+                              "Unknown customer"}
+                          </span>
+                        </div>
+
+                        <span
+                          style={{
+                            ...styles.orderBadge,
+                            ...getStatusStyle(
+                              order.status
+                            )
+                          }}
+                        >
+                          {
+                            order.status
+                          }
+                        </span>
+                      </div>
+
+                      <div
+                        style={
+                          styles.itemsBox
+                        }
+                      >
+                        {order.items.map(
+                          (item) => (
+                            <div
+                              key={
+                                item.id
+                              }
+                              style={
+                                styles.itemRow
+                              }
+                            >
+                              <span>
+                                {
+                                  item.productName
+                                }{" "}
+                                ×{" "}
+                                {
+                                  item.quantity
+                                }
+                              </span>
+
+                              <strong>
+                                {
+                                  item.lineTotal
+                                }{" "}
+                                {
+                                  order.currency
+                                }
+                              </strong>
+                            </div>
+                          )
                         )}
                       </div>
-                    </div>
-                  </article>
-                );
-              })}
+
+                      <div
+                        style={
+                          styles.details
+                        }
+                      >
+                        <Detail
+                          label="Customer"
+                          value={
+                            order
+                              .customer
+                              ?.name ||
+                            "Unknown customer"
+                          }
+                        />
+
+                        <Detail
+                          label="Total"
+                          value={`${order.total} ${order.currency}`}
+                        />
+
+                        <Detail
+                          label="Payment"
+                          value={
+                            payment?.status ||
+                            "No payment"
+                          }
+                        />
+
+                        <Detail
+                          label="Provider"
+                          value={
+                            payment?.provider ||
+                            "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Transaction reference"
+                          value={
+                            payment?.transactionReference ||
+                            "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Created"
+                          value={new Date(
+                            order.createdAt
+                          ).toLocaleString()}
+                        />
+                      </div>
+
+                      <div
+                        style={
+                          styles.cardFooter
+                        }
+                      >
+                        <span
+                          style={
+                            styles.date
+                          }
+                        >
+                          Updated{" "}
+                          {new Date(
+                            order.updatedAt
+                          ).toLocaleString()}
+                        </span>
+
+                        <div
+                          style={
+                            styles.actions
+                          }
+                        >
+                          {order.status ===
+                            "PAID" && (
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !==
+                                  null
+                              }
+                              onClick={() =>
+                                void updateOrderStatus(
+                                  order.id,
+                                  "FULFILLING"
+                                )
+                              }
+                              style={
+                                styles.fulfillButton
+                              }
+                            >
+                              {busy
+                                ? "Processing..."
+                                : "Start Fulfillment"}
+                            </button>
+                          )}
+
+                          {order.status ===
+                            "FULFILLING" && (
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !==
+                                  null
+                              }
+                              onClick={() =>
+                                void updateOrderStatus(
+                                  order.id,
+                                  "FULFILLED"
+                                )
+                              }
+                              style={
+                                styles.fulfillButton
+                              }
+                            >
+                              {busy
+                                ? "Processing..."
+                                : "Mark Fulfilled"}
+                            </button>
+                          )}
+
+                          {order.status ===
+                            "FULFILLED" && (
+                            <span
+                              style={
+                                styles.completed
+                              }
+                            >
+                              Completed ?
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </article>
+                  );
+                }
+              )}
             </div>
           )}
         </section>
       ) : (
-        <section style={styles.section}>
-          <div style={styles.sectionHeader}>
+        <section
+          style={styles.section}
+        >
+          <div
+            style={
+              styles.sectionHeader
+            }
+          >
             <div>
-              <h2 style={styles.sectionTitle}>
+              <h2
+                style={
+                  styles.sectionTitle
+                }
+              >
                 Inventory
               </h2>
 
-              <p style={styles.sectionDescription}>
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
                 Monitor product stock and replenish
                 inventory when new stock arrives.
               </p>
@@ -1218,12 +2021,16 @@ export default function App() {
 
             <button
               type="button"
-              onClick={() => void loadProducts()}
+              onClick={() =>
+                void loadProducts()
+              }
               disabled={
                 loadingProducts ||
                 actionId !== null
               }
-              style={styles.inventoryRefreshButton}
+              style={
+                styles.inventoryRefreshButton
+              }
             >
               {loadingProducts
                 ? "Loading..."
@@ -1231,25 +2038,35 @@ export default function App() {
             </button>
           </div>
 
-          {(outOfStockProducts > 0 ||
-            lowStockProducts > 0) && (
-            <div style={styles.inventoryAlert}>
+          {(outOfStockProducts >
+            0 ||
+            lowStockProducts >
+              0) && (
+            <div
+              style={
+                styles.inventoryAlert
+              }
+            >
               <strong>
                 Inventory attention needed
               </strong>
 
               <span>
-                {outOfStockProducts > 0
+                {outOfStockProducts >
+                0
                   ? `${outOfStockProducts} product${
-                      outOfStockProducts === 1
+                      outOfStockProducts ===
+                      1
                         ? ""
                         : "s"
                     } out of stock`
                   : "No products are out of stock"}
-                {" Â· "}
-                {lowStockProducts > 0
+                {" · "}
+                {lowStockProducts >
+                0
                   ? `${lowStockProducts} low-stock product${
-                      lowStockProducts === 1
+                      lowStockProducts ===
+                      1
                         ? ""
                         : "s"
                     }`
@@ -1259,12 +2076,23 @@ export default function App() {
           )}
 
           {loadingProducts ? (
-            <div style={styles.emptyState}>
+            <div
+              style={
+                styles.emptyState
+              }
+            >
               Loading inventory...
             </div>
-          ) : products.length === 0 ? (
-            <div style={styles.emptyState}>
-              <strong>No products found.</strong>
+          ) : products.length ===
+            0 ? (
+            <div
+              style={
+                styles.emptyState
+              }
+            >
+              <strong>
+                No products found.
+              </strong>
 
               <p>
                 Products created for this merchant
@@ -1272,358 +2100,424 @@ export default function App() {
               </p>
             </div>
           ) : (
-            <div style={styles.productGrid}>
-              {products.map((product) => {
-                const busy =
-                  actionId === product.id;
+            <div
+              style={
+                styles.productGrid
+              }
+            >
+              {products.map(
+                (product) => {
+                  const busy =
+                    actionId ===
+                    product.id;
 
-                const isRestocking =
-                  restockingProductId ===
-                  product.id;
+                  const isRestocking =
+                    restockingProductId ===
+                    product.id;
 
-                const isOutOfStock =
-                  product.stock === 0;
+                  const isOutOfStock =
+                    product.stock ===
+                    0;
 
-                const isLowStock =
-                  product.stock > 0 &&
-                  product.stock <= 5;
+                  const isLowStock =
+                    product.stock >
+                      0 &&
+                    product.stock <=
+                      5;
 
-                const quantityNumber =
-                  Number(restockQuantity);
+                  const quantityNumber =
+                    Number(
+                      restockQuantity
+                    );
 
-                const validQuantity =
-                  Number.isInteger(
-                    quantityNumber
-                  ) &&
-                  quantityNumber > 0;
-
-                const projectedStock =
-                  validQuantity
-                    ? product.stock +
+                  const validQuantity =
+                    Number.isInteger(
                       quantityNumber
-                    : product.stock;
+                    ) &&
+                    quantityNumber >
+                      0;
 
-                const exceedsQuantityLimit =
-                  validQuantity &&
-                  quantityNumber > 100000;
+                  const projectedStock =
+                    validQuantity
+                      ? product.stock +
+                        quantityNumber
+                      : product.stock;
 
-                const exceedsStockLimit =
-                  validQuantity &&
-                  projectedStock > 1000000;
+                  const exceedsQuantityLimit =
+                    validQuantity &&
+                    quantityNumber >
+                      100000;
 
-                return (
-                  <article
-                    key={product.id}
-                    style={{
-                      ...styles.productCard,
-                      ...(isOutOfStock
-                        ? styles.outOfStockCard
-                        : isLowStock
-                          ? styles.lowStockCard
-                          : {})
-                    }}
-                  >
-                    <div style={styles.productTop}>
-                      <div>
-                        <span
-                          style={
-                            styles.productStatusLabel
-                          }
-                        >
-                          {product.status}
-                        </span>
+                  const exceedsStockLimit =
+                    validQuantity &&
+                    projectedStock >
+                      1000000;
 
-                        <h3
-                          style={
-                            styles.productName
-                          }
-                        >
-                          {product.name}
-                        </h3>
-                      </div>
-
-                      <span
-                        style={{
-                          ...styles.stockBadge,
-                          ...(isOutOfStock
-                            ? styles.stockBadgeOut
-                            : isLowStock
-                              ? styles.stockBadgeLow
-                              : styles.stockBadgeGood)
-                        }}
-                      >
-                        {isOutOfStock
-                          ? "OUT OF STOCK"
+                  return (
+                    <article
+                      key={
+                        product.id
+                      }
+                      style={{
+                        ...styles.productCard,
+                        ...(isOutOfStock
+                          ? styles.outOfStockCard
                           : isLowStock
-                            ? "LOW STOCK"
-                            : "IN STOCK"}
-                      </span>
-                    </div>
-
-                    {product.description && (
-                      <p
-                        style={
-                          styles.productDescription
-                        }
-                      >
-                        {product.description}
-                      </p>
-                    )}
-
-                    <div style={styles.productStats}>
-                      <div>
-                        <span
-                          style={
-                            styles.productStatLabel
-                          }
-                        >
-                          Price
-                        </span>
-
-                        <strong
-                          style={
-                            styles.productStatValue
-                          }
-                        >
-                          {product.price}{" "}
-                          {product.currency}
-                        </strong>
-                      </div>
-
-                      <div>
-                        <span
-                          style={
-                            styles.productStatLabel
-                          }
-                        >
-                          Current stock
-                        </span>
-
-                        <strong
-                          style={{
-                            ...styles.productStatValue,
-                            ...(isOutOfStock
-                              ? styles.stockNumberOut
-                              : isLowStock
-                                ? styles.stockNumberLow
-                                : {})
-                          }}
-                        >
-                          {product.stock}
-                        </strong>
-                      </div>
-                    </div>
-
-                    {isRestocking ? (
+                            ? styles.lowStockCard
+                            : {})
+                      }}
+                    >
                       <div
                         style={
-                          styles.restockPanel
+                          styles.productTop
                         }
                       >
-                        <strong
-                          style={
-                            styles.restockTitle
-                          }
-                        >
-                          Restock {product.name}
-                        </strong>
-
-                        <p
-                          style={
-                            styles.restockCurrentStock
-                          }
-                        >
-                          Current stock:{" "}
-                          <strong>
-                            {product.stock}
-                          </strong>
-                        </p>
-
-                        <label
-                          style={
-                            styles.formLabel
-                          }
-                        >
-                          Quantity to add
-                        </label>
-
-                        <input
-                          type="number"
-                          min="1"
-                          max="100000"
-                          step="1"
-                          value={restockQuantity}
-                          onChange={(event) =>
-                            setRestockQuantity(
-                              event.target.value
-                            )
-                          }
-                          placeholder="Example: 10"
-                          disabled={busy}
-                          style={
-                            styles.formInput
-                          }
-                        />
-
-                        {validQuantity && (
-                          <div
-                            style={
-                              styles.projectedStock
-                            }
-                          >
-                            <span>
-                              New stock after restock
-                            </span>
-
-                            <strong>
-                              {projectedStock}
-                            </strong>
-                          </div>
-                        )}
-
-                        {exceedsQuantityLimit && (
-                          <p
-                            style={
-                              styles.formWarning
-                            }
-                          >
-                            Maximum restock quantity
-                            is 100,000 units.
-                          </p>
-                        )}
-
-                        {exceedsStockLimit && (
-                          <p
-                            style={
-                              styles.formWarning
-                            }
-                          >
-                            Resulting stock cannot
-                            exceed 1,000,000 units.
-                          </p>
-                        )}
-
-                        <label
-                          style={
-                            styles.formLabel
-                          }
-                        >
-                          Note{" "}
+                        <div>
                           <span
                             style={
-                              styles.optionalLabel
+                              styles.productStatusLabel
                             }
                           >
-                            (optional)
+                            {
+                              product.status
+                            }
                           </span>
-                        </label>
 
-                        <textarea
-                          value={restockNote}
-                          onChange={(event) =>
-                            setRestockNote(
-                              event.target.value
-                            )
-                          }
-                          placeholder="Example: New shipment received"
-                          disabled={busy}
-                          rows={3}
-                          maxLength={500}
-                          style={
-                            styles.formTextarea
-                          }
-                        />
+                          <h3
+                            style={
+                              styles.productName
+                            }
+                          >
+                            {
+                              product.name
+                            }
+                          </h3>
+                        </div>
 
                         <span
-                          style={
-                            styles.characterCount
-                          }
+                          style={{
+                            ...styles.stockBadge,
+                            ...(isOutOfStock
+                              ? styles.stockBadgeOut
+                              : isLowStock
+                                ? styles.stockBadgeLow
+                                : styles.stockBadgeGood)
+                          }}
                         >
-                          {restockNote.length}/500
+                          {isOutOfStock
+                            ? "OUT OF STOCK"
+                            : isLowStock
+                              ? "LOW STOCK"
+                              : "IN STOCK"}
                         </span>
+                      </div>
 
-                        <div
+                      {product.description && (
+                        <p
                           style={
-                            styles.restockActions
+                            styles.productDescription
                           }
                         >
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={
-                              cancelRestock
-                            }
+                          {
+                            product.description
+                          }
+                        </p>
+                      )}
+
+                      <div
+                        style={
+                          styles.productStats
+                        }
+                      >
+                        <div>
+                          <span
                             style={
-                              styles.cancelButton
+                              styles.productStatLabel
                             }
                           >
-                            Cancel
-                          </button>
+                            Price
+                          </span>
+
+                          <strong
+                            style={
+                              styles.productStatValue
+                            }
+                          >
+                            {
+                              product.price
+                            }{" "}
+                            {
+                              product.currency
+                            }
+                          </strong>
+                        </div>
+
+                        <div>
+                          <span
+                            style={
+                              styles.productStatLabel
+                            }
+                          >
+                            Current stock
+                          </span>
+
+                          <strong
+                            style={{
+                              ...styles.productStatValue,
+                              ...(isOutOfStock
+                                ? styles.stockNumberOut
+                                : isLowStock
+                                  ? styles.stockNumberLow
+                                  : {})
+                            }}
+                          >
+                            {
+                              product.stock
+                            }
+                          </strong>
+                        </div>
+                      </div>
+
+                      {isRestocking ? (
+                        <div
+                          style={
+                            styles.restockPanel
+                          }
+                        >
+                          <strong
+                            style={
+                              styles.restockTitle
+                            }
+                          >
+                            Restock{" "}
+                            {
+                              product.name
+                            }
+                          </strong>
+
+                          <p
+                            style={
+                              styles.restockCurrentStock
+                            }
+                          >
+                            Current stock:{" "}
+                            <strong>
+                              {
+                                product.stock
+                              }
+                            </strong>
+                          </p>
+
+                          <label
+                            style={
+                              styles.formLabel
+                            }
+                          >
+                            Quantity to add
+                          </label>
+
+                          <input
+                            type="number"
+                            min="1"
+                            max="100000"
+                            step="1"
+                            value={
+                              restockQuantity
+                            }
+                            onChange={(
+                              event
+                            ) =>
+                              setRestockQuantity(
+                                event
+                                  .target
+                                  .value
+                              )
+                            }
+                            placeholder="Example: 10"
+                            disabled={
+                              busy
+                            }
+                            style={
+                              styles.formInput
+                            }
+                          />
+
+                          {validQuantity && (
+                            <div
+                              style={
+                                styles.projectedStock
+                              }
+                            >
+                              <span>
+                                New stock after restock
+                              </span>
+
+                              <strong>
+                                {
+                                  projectedStock
+                                }
+                              </strong>
+                            </div>
+                          )}
+
+                          {exceedsQuantityLimit && (
+                            <p
+                              style={
+                                styles.formWarning
+                              }
+                            >
+                              Maximum restock quantity
+                              is 100,000 units.
+                            </p>
+                          )}
+
+                          {exceedsStockLimit && (
+                            <p
+                              style={
+                                styles.formWarning
+                              }
+                            >
+                              Resulting stock cannot
+                              exceed 1,000,000 units.
+                            </p>
+                          )}
+
+                          <label
+                            style={
+                              styles.formLabel
+                            }
+                          >
+                            Note{" "}
+                            <span
+                              style={
+                                styles.optionalLabel
+                              }
+                            >
+                              (optional)
+                            </span>
+                          </label>
+
+                          <textarea
+                            value={
+                              restockNote
+                            }
+                            onChange={(
+                              event
+                            ) =>
+                              setRestockNote(
+                                event
+                                  .target
+                                  .value
+                              )
+                            }
+                            placeholder="Example: New shipment received"
+                            disabled={
+                              busy
+                            }
+                            rows={3}
+                            maxLength={500}
+                            style={
+                              styles.formTextarea
+                            }
+                          />
+
+                          <span
+                            style={
+                              styles.characterCount
+                            }
+                          >
+                            {
+                              restockNote.length
+                            }
+                            /500
+                          </span>
+
+                          <div
+                            style={
+                              styles.restockActions
+                            }
+                          >
+                            <button
+                              type="button"
+                              disabled={
+                                busy
+                              }
+                              onClick={
+                                cancelRestock
+                              }
+                              style={
+                                styles.cancelButton
+                              }
+                            >
+                              Cancel
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                !validQuantity ||
+                                exceedsQuantityLimit ||
+                                exceedsStockLimit
+                              }
+                              onClick={() =>
+                                void restockProduct(
+                                  product.id
+                                )
+                              }
+                              style={
+                                styles.confirmRestockButton
+                              }
+                            >
+                              {busy
+                                ? "Adding Stock..."
+                                : `Add ${validQuantity ? quantityNumber : ""} Stock`}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          style={
+                            styles.productFooter
+                          }
+                        >
+                          <span
+                            style={
+                              styles.productUpdated
+                            }
+                          >
+                            Updated{" "}
+                            {new Date(
+                              product.updatedAt
+                            ).toLocaleString()}
+                          </span>
 
                           <button
                             type="button"
                             disabled={
                               busy ||
-                              !validQuantity ||
-                              exceedsQuantityLimit ||
-                              exceedsStockLimit
+                              restockingProductId !==
+                                null ||
+                              actionId !==
+                                null
                             }
                             onClick={() =>
-                              void restockProduct(
+                              openRestockForm(
                                 product.id
                               )
                             }
                             style={
-                              styles.confirmRestockButton
+                              styles.restockButton
                             }
                           >
-                            {busy
-                              ? "Adding Stock..."
-                              : `Add ${validQuantity ? quantityNumber : ""} Stock`}
+                            Restock
                           </button>
                         </div>
-                      </div>
-                    ) : (
-                      <div
-                        style={
-                          styles.productFooter
-                        }
-                      >
-                        <span
-                          style={
-                            styles.productUpdated
-                          }
-                        >
-                          Updated{" "}
-                          {new Date(
-                            product.updatedAt
-                          ).toLocaleString()}
-                        </span>
-
-                        <button
-                          type="button"
-                          disabled={
-                            busy ||
-                            restockingProductId !==
-                              null ||
-                            actionId !== null
-                          }
-                          onClick={() =>
-                            openRestockForm(
-                              product.id
-                            )
-                          }
-                          style={
-                            styles.restockButton
-                          }
-                        >
-                          Restock
-                        </button>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
+                      )}
+                    </article>
+                  );
+                }
+              )}
             </div>
           )}
         </section>
@@ -1641,16 +2535,24 @@ function Detail({
 }) {
   return (
     <div>
-      <span style={styles.detailLabel}>
+      <span
+        style={
+          styles.detailLabel
+        }
+      >
         {label}
       </span>
 
-      <strong>{value}</strong>
+      <strong>
+        {value}
+      </strong>
     </div>
   );
 }
 
-function getStatusStyle(status: string) {
+function getStatusStyle(
+  status: string
+) {
   if (status === "PAID") {
     return {
       background: "#ecfdf3",
@@ -1658,28 +2560,36 @@ function getStatusStyle(status: string) {
     };
   }
 
-  if (status === "FULFILLING") {
+  if (
+    status === "FULFILLING"
+  ) {
     return {
       background: "#eff8ff",
       color: "#175cd3"
     };
   }
 
-  if (status === "FULFILLED") {
+  if (
+    status === "FULFILLED"
+  ) {
     return {
       background: "#f2f4f7",
       color: "#344054"
     };
   }
 
-  if (status === "PAYMENT_REVIEW") {
+  if (
+    status === "PAYMENT_REVIEW"
+  ) {
     return {
       background: "#fff4e5",
       color: "#b54708"
     };
   }
 
-  if (status === "PENDING_PAYMENT") {
+  if (
+    status === "PENDING_PAYMENT"
+  ) {
     return {
       background: "#fef3f2",
       color: "#b42318"
@@ -1706,6 +2616,77 @@ const styles: Record<
     boxSizing: "border-box"
   },
 
+  loginPage: {
+    minHeight: "100vh",
+    background: "#f5f7fb",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "24px",
+    boxSizing: "border-box",
+    fontFamily:
+      "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+  },
+
+  loginCard: {
+    width: "100%",
+    maxWidth: "420px",
+    background: "#ffffff",
+    border: "1px solid #e4e7ec",
+    borderRadius: "16px",
+    padding: "32px",
+    boxShadow:
+      "0 10px 30px rgba(16, 24, 40, 0.08)",
+    boxSizing: "border-box"
+  },
+
+  loginHeader: {
+    textAlign: "center",
+    marginBottom: "28px"
+  },
+
+  loginTitle: {
+    margin: 0,
+    fontSize: "26px"
+  },
+
+  loginSubtitle: {
+    margin: "8px 0 0",
+    color: "#667085"
+  },
+
+  loginInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    border: "1px solid #d0d5dd",
+    borderRadius: "8px",
+    padding: "12px",
+    fontFamily: "inherit",
+    fontSize: "14px",
+    background: "#ffffff",
+    outline: "none",
+    marginBottom: "4px"
+  },
+
+  loginButton: {
+    width: "100%",
+    border: "none",
+    background: "#175cd3",
+    color: "#ffffff",
+    padding: "12px 16px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "15px",
+    marginTop: "18px"
+  },
+
+  signedInUser: {
+    margin: "6px 0 0",
+    color: "#667085",
+    fontSize: "13px"
+  },
+
   header: {
     maxWidth: "1200px",
     margin: "0 auto 28px",
@@ -1713,6 +2694,12 @@ const styles: Record<
     justifyContent: "space-between",
     alignItems: "center",
     gap: "20px"
+  },
+
+  headerActions: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center"
   },
 
   title: {
@@ -1735,6 +2722,16 @@ const styles: Record<
     borderRadius: "8px",
     cursor: "pointer",
     fontWeight: 600
+  },
+
+  logoutButton: {
+    border: "1px solid #f04438",
+    background: "#ffffff",
+    color: "#b42318",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    cursor: "pointer",
+    fontWeight: 700
   },
 
   summary: {
@@ -1778,7 +2775,8 @@ const styles: Record<
     margin: "0 auto 24px",
     display: "flex",
     gap: "4px",
-    borderBottom: "1px solid #d0d5dd"
+    borderBottom:
+      "1px solid #d0d5dd"
   },
 
   tab: {
@@ -1789,7 +2787,8 @@ const styles: Record<
     cursor: "pointer",
     fontWeight: 700,
     fontSize: "14px",
-    borderBottom: "3px solid transparent",
+    borderBottom:
+      "3px solid transparent",
     display: "flex",
     alignItems: "center",
     gap: "8px"
@@ -1797,7 +2796,8 @@ const styles: Record<
 
   activeTab: {
     color: "#172033",
-    borderBottomColor: "#172033"
+    borderBottomColor:
+      "#172033"
   },
 
   tabCount: {
@@ -1842,7 +2842,8 @@ const styles: Record<
     padding: "14px 16px",
     borderRadius: "8px",
     background: "#fef3f2",
-    border: "1px solid #fecdca",
+    border:
+      "1px solid #fecdca",
     color: "#b42318"
   },
 
@@ -1852,7 +2853,8 @@ const styles: Record<
     padding: "14px 16px",
     borderRadius: "8px",
     background: "#ecfdf3",
-    border: "1px solid #abefc6",
+    border:
+      "1px solid #abefc6",
     color: "#067647"
   },
 
@@ -1864,7 +2866,8 @@ const styles: Record<
   sectionHeader: {
     marginBottom: "16px",
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "flex-start",
     gap: "16px",
     flexWrap: "wrap"
@@ -1899,7 +2902,8 @@ const styles: Record<
     padding: "14px 16px",
     borderRadius: "10px",
     background: "#fffaeb",
-    border: "1px solid #fedf89",
+    border:
+      "1px solid #fedf89",
     color: "#93370d"
   },
 
@@ -1910,7 +2914,8 @@ const styles: Record<
 
   reviewCard: {
     background: "#ffffff",
-    border: "1px solid #e4e7ec",
+    border:
+      "1px solid #e4e7ec",
     borderRadius: "12px",
     padding: "22px",
     boxShadow:
@@ -1919,7 +2924,8 @@ const styles: Record<
 
   cardTop: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "flex-start",
     gap: "16px",
     marginBottom: "20px"
@@ -1967,8 +2973,10 @@ const styles: Record<
       "repeat(auto-fit, minmax(180px, 1fr))",
     gap: "18px",
     padding: "18px 0",
-    borderTop: "1px solid #eaecf0",
-    borderBottom: "1px solid #eaecf0"
+    borderTop:
+      "1px solid #eaecf0",
+    borderBottom:
+      "1px solid #eaecf0"
   },
 
   detailLabel: {
@@ -1980,7 +2988,8 @@ const styles: Record<
 
   itemsBox: {
     background: "#f9fafb",
-    border: "1px solid #eaecf0",
+    border:
+      "1px solid #eaecf0",
     borderRadius: "8px",
     padding: "12px 14px",
     marginBottom: "4px"
@@ -1988,7 +2997,8 @@ const styles: Record<
 
   itemRow: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     gap: "16px",
     padding: "7px 0",
     fontSize: "14px"
@@ -1998,7 +3008,8 @@ const styles: Record<
     marginTop: "18px",
     padding: "18px",
     background: "#fff7f6",
-    border: "1px solid #fecdca",
+    border:
+      "1px solid #fecdca",
     borderRadius: "10px"
   },
 
@@ -2019,7 +3030,8 @@ const styles: Record<
   rejectTextarea: {
     width: "100%",
     boxSizing: "border-box",
-    border: "1px solid #d0d5dd",
+    border:
+      "1px solid #d0d5dd",
     borderRadius: "8px",
     padding: "12px",
     fontFamily: "inherit",
@@ -2032,13 +3044,15 @@ const styles: Record<
 
   rejectActions: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent:
+      "flex-end",
     gap: "10px",
     marginTop: "12px"
   },
 
   cancelButton: {
-    border: "1px solid #d0d5dd",
+    border:
+      "1px solid #d0d5dd",
     background: "#ffffff",
     color: "#344054",
     padding: "10px 16px",
@@ -2059,7 +3073,8 @@ const styles: Record<
 
   cardFooter: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: "16px",
     flexWrap: "wrap",
@@ -2088,7 +3103,8 @@ const styles: Record<
   },
 
   rejectButton: {
-    border: "1px solid #f04438",
+    border:
+      "1px solid #f04438",
     background: "#ffffff",
     color: "#b42318",
     padding: "10px 16px",
@@ -2122,7 +3138,8 @@ const styles: Record<
 
   productCard: {
     background: "#ffffff",
-    border: "1px solid #e4e7ec",
+    border:
+      "1px solid #e4e7ec",
     borderRadius: "12px",
     padding: "20px",
     boxShadow:
@@ -2130,16 +3147,19 @@ const styles: Record<
   },
 
   outOfStockCard: {
-    border: "1px solid #fecdca"
+    border:
+      "1px solid #fecdca"
   },
 
   lowStockCard: {
-    border: "1px solid #fedf89"
+    border:
+      "1px solid #fedf89"
   },
 
   productTop: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "flex-start",
     gap: "12px",
     marginBottom: "14px"
@@ -2192,11 +3212,14 @@ const styles: Record<
 
   productStats: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns:
+      "1fr 1fr",
     gap: "12px",
     padding: "16px 0",
-    borderTop: "1px solid #eaecf0",
-    borderBottom: "1px solid #eaecf0"
+    borderTop:
+      "1px solid #eaecf0",
+    borderBottom:
+      "1px solid #eaecf0"
   },
 
   productStatLabel: {
@@ -2220,7 +3243,8 @@ const styles: Record<
 
   productFooter: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: "12px",
     paddingTop: "16px"
@@ -2245,7 +3269,8 @@ const styles: Record<
     marginTop: "16px",
     padding: "16px",
     background: "#f9fafb",
-    border: "1px solid #eaecf0",
+    border:
+      "1px solid #eaecf0",
     borderRadius: "10px"
   },
 
@@ -2278,7 +3303,8 @@ const styles: Record<
   formInput: {
     width: "100%",
     boxSizing: "border-box",
-    border: "1px solid #d0d5dd",
+    border:
+      "1px solid #d0d5dd",
     borderRadius: "8px",
     padding: "10px 12px",
     fontFamily: "inherit",
@@ -2290,7 +3316,8 @@ const styles: Record<
   formTextarea: {
     width: "100%",
     boxSizing: "border-box",
-    border: "1px solid #d0d5dd",
+    border:
+      "1px solid #d0d5dd",
     borderRadius: "8px",
     padding: "10px 12px",
     fontFamily: "inherit",
@@ -2303,14 +3330,16 @@ const styles: Record<
 
   projectedStock: {
     display: "flex",
-    justifyContent: "space-between",
+    justifyContent:
+      "space-between",
     alignItems: "center",
     gap: "12px",
     marginTop: "10px",
     padding: "10px 12px",
     borderRadius: "8px",
     background: "#ecfdf3",
-    border: "1px solid #abefc6",
+    border:
+      "1px solid #abefc6",
     color: "#067647",
     fontSize: "13px"
   },
@@ -2332,7 +3361,8 @@ const styles: Record<
 
   restockActions: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent:
+      "flex-end",
     gap: "10px",
     marginTop: "16px"
   },
@@ -2349,7 +3379,8 @@ const styles: Record<
 
   emptyState: {
     background: "#ffffff",
-    border: "1px solid #e4e7ec",
+    border:
+      "1px solid #e4e7ec",
     borderRadius: "12px",
     padding: "48px 24px",
     textAlign: "center",

@@ -43,11 +43,37 @@ router.get(
               PaymentStatus.REVIEW_REQUIRED
           },
 
-          include: {
+          select: {
+            id: true,
+            merchantId: true,
+            orderId: true,
+            provider: true,
+            status: true,
+            amount: true,
+            currency: true,
+            transactionReference: true,
+            reviewNote: true,
+            createdAt: true,
             order: {
-              include: {
-                customer: true,
-                items: true
+              select: {
+                orderNumber: true,
+                status: true,
+                total: true,
+                customer: {
+                  select: {
+                    name: true,
+                    phone: true,
+                    telegramChatId: true
+                  }
+                },
+                items: {
+                  select: {
+                    productName: true,
+                    quantity: true,
+                    unitPrice: true,
+                    lineTotal: true
+                  }
+                }
               }
             }
           },
