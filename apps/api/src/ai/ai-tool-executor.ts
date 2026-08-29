@@ -66,10 +66,13 @@ export async function executeAITool(
   switch (toolCall.tool) {
     case "searchProducts": {
       const query =
-        requireString(
-          args.query,
-          "query"
-        );
+        typeof args.query === "string"
+          ? args.query.trim()
+          : (() => {
+              throw new Error(
+                'AI tool argument "query" must be a string.'
+              );
+            })();
 
       const result =
         await searchProducts(

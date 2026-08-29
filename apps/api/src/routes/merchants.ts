@@ -12,12 +12,147 @@ import {
   requireMerchantAccess
 } from "../middleware/auth.js";
 
+import multer from "multer";
+
+import {
+  getMaxImageSizeBytes,
+  isAllowedImageType,
+  uploadProductImage
+} from "../services/storage.js";
+
+import { env } from "../config/env";
+
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: getMaxImageSizeBytes(),
+    files: 1
+  },
+  fileFilter: (_req, file, cb) => {
+    if (!isAllowedImageType(file.mimetype)) {
+      cb(
+        new Error(
+          "Only JPEG, PNG, and WebP images are allowed."
+        )
+      );
+      return;
+    }
+
+    cb(null, true);
+  }
+});
+
+  if (
+    !env.r2AccountId ||
+    !env.r2AccessKeyId ||
+    !env.r2SecretAccessKey ||
+    !env.r2BucketName ||
+    !env.r2PublicBaseUrl
+  ) {
+    throw new Error(
+      "R2 storage configuration is incomplete."
+    );
+  }
+
+  router.use(
+    requireAuth,
+    requireMerchantAccess
+  );
+
+  router.post(
+    "/:merchantId/products/:productId/images/upload",
+    upload.single("image"),
+    async (req, res) => {
+      try {
+        const merchantId =
+          req.params.merchantId as string;
+
+        const productId =
+          req.params.productId as string;
+
+        if (!req.file) {
+          res.status(400).json({
+            error: "Image file is required"
+          });
+          return;
+        }
+
+        const product =
+          await prisma.product.findFirst({
+            where: {
+              id: productId,
+              merchantId
+            }
+          });
+
+        if (!product) {
+          res.status(404).json({
+            error: "Product not found"
+          });
+          return;
+        }
+
+        const extension =
+          req.file.mimetype === "image/jpeg"
+            ? "jpg"
+            : req.file.mimetype === "image/png"
+              ? "png"
+              : "webp";
+
+        const objectKey =
+          `merchants/${merchantId}/products/${productId}/${crypto.randomUUID()}.${extension}`;
+
+        const imageType = req.file.mimetype as
+          | "image/jpeg"
+          | "image/png"
+          | "image/webp";
+
+        const imageUrl =
+          await uploadProductImage(
+            objectKey,
+            req.file.buffer,
+            imageType
+          );
+
+        const existingImageCount =
+          await prisma.productImage.count({
+            where: {
+              productId
+            }
+          });
+
+        const productImage =
+          await prisma.productImage.create({
+            data: {
+              productId,
+              url: imageUrl,
+              altText: product.name,
+              sortOrder: existingImageCount,
+              isPrimary:
+                existingImageCount === 0
+            }
+          });
+
+        res.status(201).json({
+          message:
+            "Product image uploaded successfully",
+          image: productImage
+        });
+      } catch (error) {
+        console.error(
+          "Failed to upload product image:",
+          error
+        );
+
+        res.status(500).json({
+          error:
+            "Failed to upload product image"
+        });
+      }
+    }
+  );
 
 /*
  * =================================================
@@ -52,6 +187,8 @@ router.get(
             amount: true,
             currency: true,
             transactionReference: true,
+            receiptUrl: true,
+            receiptMetadata: true,
             reviewNote: true,
             createdAt: true,
             order: {

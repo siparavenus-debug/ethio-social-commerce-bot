@@ -186,7 +186,7 @@ export async function handleConversation(
     merchantName
   } = context;
 
-  const currentState =
+  let currentState =
     getConversationState(chatId);
 
   /*
@@ -206,12 +206,48 @@ export async function handleConversation(
 
   /*
    * STEP 2: Customer submits payment reference
+   *
+   * IMPORTANT:
+   * A payment that is already in PAYMENT_REVIEW belongs to the
+   * completed payment flow. It must not block the customer from
+   * starting another purchase. Only an order that is still
+   * PENDING_PAYMENT should consume the next text message as a
+   * transaction reference.
    */
   if (
     currentState.awaitingPayment &&
     currentState.pendingOrderId
   ) {
-    const transactionReference = text.trim();
+    const pendingOrder = await getOrderStatus(
+      merchantId,
+      customerId,
+      currentState.pendingOrderId
+    );
+
+    if (!pendingOrder) {
+      clearConversationState(chatId);
+      currentState = {};
+    } else if (pendingOrder.status === "PAYMENT_REVIEW") {
+      /*
+       * The previous order has already received a payment
+       * submission. Release the payment lock so a new product
+       * request starts a new order instead of being interpreted
+       * as another payment reference for the old order.
+       */
+      currentState = {
+        ...currentState,
+        awaitingPayment: false,
+        pendingOrderId: undefined,
+        awaitingQuantity: false,
+        awaitingConfirmation: false,
+        productId: undefined,
+        productName: undefined,
+        quantity: undefined
+      };
+
+      setConversationState(chatId, currentState);
+    } else if (pendingOrder.status === "PENDING_PAYMENT") {
+      const transactionReference = text.trim();
 
     if (!looksLikePaymentReference(transactionReference)) {
       return {
@@ -222,33 +258,7 @@ export async function handleConversation(
       };
     }
 
-    const order = await getOrderStatus(
-      merchantId,
-      customerId,
-      currentState.pendingOrderId
-    );
-
-    if (!order) {
-      clearConversationState(chatId);
-
-      return {
-        reply:
-          "Sorry, I couldn't find your pending order.\n\n" +
-          "Please start a new order."
-      };
-    }
-
-    if (
-      order.status !== "PENDING_PAYMENT" &&
-      order.status !== "PAYMENT_REVIEW"
-    ) {
-      clearConversationState(chatId);
-
-      return {
-        reply:
-          `Your order ${order.orderNumber} is no longer awaiting payment.`
-      };
-    }
+    const order = pendingOrder;
 
     const paymentMethods =
       await getPaymentInstructions(merchantId);
@@ -309,8 +319,8 @@ export async function handleConversation(
         "Your payment is now waiting for merchant review.\n\n" +
         "Please wait for payment confirmation."
     };
+    }
   }
-
   /*
    * STEP 3: Customer enters quantity
    */

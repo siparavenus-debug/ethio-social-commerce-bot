@@ -62,6 +62,9 @@ Important rules:
    when the customer refers to it indirectly.
 
 7. If the customer asks for a product search, use searchProducts.
+   If the customer asks to see all available products, asks what products
+   are available, asks what the store sells, or makes a general catalog
+   request, use searchProducts with an empty string query.
 
 8. If the customer asks for stock availability, use checkStock when a specific
    product and quantity are known.
@@ -88,6 +91,9 @@ Important rules:
 12. Do not use Markdown code fences around the JSON.
 
 13. Do not include explanations before or after the JSON.
+
+14. Never invent a placeholder search term such as "all", "products", or
+    "available" for a broad catalog request. Use an empty query ("") instead.
 
 If no tool is needed, return an empty toolCalls array.
 `;

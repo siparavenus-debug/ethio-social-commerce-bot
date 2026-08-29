@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useState
 } from "react";
 
@@ -22,11 +23,40 @@ type PaymentReview = {
   orderId: string;
   provider: string;
   status: string;
-  amount: string;
+  amount: string | number;
   currency: string;
   transactionReference: string | null;
+
+  receiptUrl: string | null;
+
+  receiptMetadata: {
+    extracted?: {
+      provider?: string | null;
+      transactionReference?: string | null;
+      amount?: number | null;
+      currency?: string | null;
+      transactionDate?: string | null;
+      transactionTime?: string | null;
+      senderName?: string | null;
+      senderAccount?: string | null;
+      confidence?: number;
+    };
+
+    validation?: {
+      status?: string;
+      amountMatches?: boolean;
+      currencyMatches?: boolean;
+      providerMatches?: boolean;
+      referencePresent?: boolean;
+      reasons?: string[];
+    };
+
+    processedAt?: string;
+  } | null;
+
   reviewNote: string | null;
   createdAt: string;
+
   order: {
     orderNumber: string;
     status: string;
@@ -44,6 +74,22 @@ type PaymentReview = {
     }[];
   };
 };
+
+function formatPaymentProvider(provider: string): string {
+  switch (provider) {
+    case "TELEBIRR":
+      return "Telebirr";
+
+    case "CBE_BIRR":
+      return "CBE Birr";
+
+    case "OTHER":
+      return "Other";
+
+    default:
+      return provider;
+  }
+}
 
 type Order = {
   id: string;
@@ -78,9 +124,30 @@ type Order = {
   }[];
 };
 
+type ProductCategory = {
+  id: string;
+  merchantId: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { products: number };
+};
+
+type ProductImage = {
+  id: string;
+  productId: string;
+  url: string;
+  altText: string | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Product = {
   id: string;
   merchantId: string;
+  categoryId: string | null;
   name: string;
   description: string | null;
   price: string | number;
@@ -89,6 +156,8 @@ type Product = {
   status: string;
   createdAt: string;
   updatedAt: string;
+  category?: ProductCategory | null;
+  images?: ProductImage[];
 };
 
 const API_BASE_URL =
@@ -163,6 +232,43 @@ export default function App() {
     []
   );
 
+
+  type ReviewSort =
+    | "newest"
+    | "oldest"
+    | "amount-high"
+    | "amount-low"
+    | "provider-az"
+    | "provider-za"
+    | "customer-az"
+    | "customer-za";
+
+  const [
+    reviewSort,
+    setReviewSort
+  ] = useState<ReviewSort>("newest");
+
+  const [
+    expandedPaymentIds,
+    setExpandedPaymentIds
+  ] = useState<Set<string>>(
+    new Set()
+  );
+
+  function togglePaymentReview(reviewId: string) {
+    setExpandedPaymentIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(reviewId)) {
+        next.delete(reviewId);
+      } else {
+        next.add(reviewId);
+      }
+
+      return next;
+    });
+  }
+
   const [
     orders,
     setOrders
@@ -172,6 +278,82 @@ export default function App() {
     products,
     setProducts
   ] = useState<Product[]>([]);
+  const [
+    categories,
+    setCategories
+  ] = useState<ProductCategory[]>([]);
+
+  const [
+    loadingCategories,
+    setLoadingCategories
+  ] = useState(false);
+
+  const [
+    productFormOpen,
+    setProductFormOpen
+  ] = useState(false);
+
+  const [
+    editingProductId,
+    setEditingProductId
+  ] = useState<string | null>(null);
+
+  const [
+    productName,
+    setProductName
+  ] = useState("");
+
+  const [
+    productDescription,
+    setProductDescription
+  ] = useState("");
+
+  const [
+    productPrice,
+    setProductPrice
+  ] = useState("");
+
+  const [
+    productCurrency,
+    setProductCurrency
+  ] = useState("ETB");
+
+  const [
+    productStock,
+    setProductStock
+  ] = useState("0");
+
+  const [
+    productStatus,
+    setProductStatus
+  ] = useState("DRAFT");
+
+  const [
+    productCategoryId,
+    setProductCategoryId
+  ] = useState("");
+
+  const [
+    categoryName,
+    setCategoryName
+  ] = useState("");
+
+  const [
+    imageProductId,
+    setImageProductId
+  ] = useState<string | null>(null);
+
+  const [
+    imageUrl,
+    setImageUrl
+  ] = useState("");
+
+  const [
+    imageAltText,
+    setImageAltText
+  ] = useState("");
+
+
 
   const [
     loadingReviews,
@@ -255,6 +437,11 @@ export default function App() {
     setReviews([]);
     setOrders([]);
     setProducts([]);
+    setCategories([]);
+
+    setProductFormOpen(false);
+    setEditingProductId(null);
+    setImageProductId(null);
 
     setError("");
     setSuccess("");
@@ -287,25 +474,25 @@ export default function App() {
       setSuccess("");
 
       const response =
-  await fetch(
-    `${API_BASE_URL}/auth/login`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        email: loginEmail,
-        password: loginPassword
-      })
-    }
-  );
+        await fetch(
+          `${API_BASE_URL}/auth/login`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              email: loginEmail,
+              password: loginPassword
+            })
+          }
+        );
 
-    console.log(
-      "API RESPONSE:",
-      response.status,
-      response.url
-    );
+      console.log(
+        "API RESPONSE:",
+        response.status,
+        response.url
+      );
 
       const data =
         await response.json();
@@ -313,7 +500,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-            "Login failed"
+          "Login failed"
         );
       }
 
@@ -419,7 +606,7 @@ export default function App() {
 
         throw new Error(
           data?.error ||
-            `Failed to load payment reviews (${response.status})`
+          `Failed to load payment reviews (${response.status})`
         );
       }
 
@@ -430,8 +617,8 @@ export default function App() {
         Array.isArray(data)
           ? data
           : Array.isArray(
-                data?.value
-              )
+            data?.value
+          )
             ? data.value
             : []
       );
@@ -468,7 +655,7 @@ export default function App() {
 
         throw new Error(
           data?.error ||
-            `Failed to load orders (${response.status})`
+          `Failed to load orders (${response.status})`
         );
       }
 
@@ -479,8 +666,8 @@ export default function App() {
         Array.isArray(data)
           ? data
           : Array.isArray(
-                data?.value
-              )
+            data?.value
+          )
             ? data.value
             : []
       );
@@ -517,7 +704,7 @@ export default function App() {
 
         throw new Error(
           data?.error ||
-            `Failed to load products (${response.status})`
+          `Failed to load products (${response.status})`
         );
       }
 
@@ -528,8 +715,8 @@ export default function App() {
         Array.isArray(data)
           ? data
           : Array.isArray(
-                data?.value
-              )
+            data?.value
+          )
             ? data.value
             : []
       );
@@ -544,6 +731,430 @@ export default function App() {
     }
   }
 
+  async function loadCategories() {
+    if (!auth?.token) return;
+
+    try {
+      setLoadingCategories(true);
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/categories`
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          `Failed to load categories (${response.status})`
+        );
+      }
+
+      setCategories(
+        Array.isArray(data) ? data : []
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load categories"
+      );
+    } finally {
+      setLoadingCategories(false);
+    }
+  }
+
+  function openNewProductForm() {
+    setEditingProductId(null);
+    setProductName("");
+    setProductDescription("");
+    setProductPrice("");
+    setProductCurrency("ETB");
+    setProductStock("0");
+    setProductStatus("DRAFT");
+    setProductCategoryId("");
+    setProductFormOpen(true);
+    setError("");
+    setSuccess("");
+  }
+
+  function openEditProductForm(product: Product) {
+    setEditingProductId(product.id);
+    setProductName(product.name);
+    setProductDescription(product.description || "");
+    setProductPrice(String(product.price));
+    setProductCurrency(product.currency);
+    setProductStock(String(product.stock));
+    setProductStatus(product.status);
+    setProductCategoryId(product.categoryId || "");
+    setProductFormOpen(true);
+    setError("");
+    setSuccess("");
+  }
+
+  function closeProductForm() {
+    if (actionId) return;
+    setProductFormOpen(false);
+    setEditingProductId(null);
+    setError("");
+  }
+
+  async function saveProduct() {
+    const name = productName.trim();
+    const description = productDescription.trim();
+    const numericPrice = Number(productPrice);
+    const numericStock = Number(productStock);
+    const currency = productCurrency.trim().toUpperCase();
+
+    if (!name) {
+      setError("Product name is required.");
+      return;
+    }
+    if (name.length > 200) {
+      setError("Product name cannot exceed 200 characters.");
+      return;
+    }
+    if (description.length > 5000) {
+      setError("Product description cannot exceed 5,000 characters.");
+      return;
+    }
+    if (!Number.isFinite(numericPrice) || numericPrice < 0) {
+      setError("Price must be a non-negative number.");
+      return;
+    }
+    if (!Number.isInteger(numericStock) || numericStock < 0) {
+      setError("Stock must be a non-negative whole number.");
+      return;
+    }
+    if (currency.length !== 3) {
+      setError("Currency must be a 3-letter code.");
+      return;
+    }
+
+    const currentId =
+      editingProductId || "new-product";
+
+    try {
+      setActionId(currentId);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        editingProductId
+          ? `/merchants/${MERCHANT_ID}/products/${editingProductId}`
+          : `/merchants/${MERCHANT_ID}/products`,
+        {
+          method: editingProductId ? "PATCH" : "POST",
+          body: JSON.stringify({
+            name,
+            description: description || null,
+            price: numericPrice,
+            currency,
+            stock: numericStock,
+            status: productStatus,
+            categoryId: productCategoryId || null
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error || "Failed to save product"
+        );
+      }
+
+      setProductFormOpen(false);
+      setEditingProductId(null);
+      setSuccess(
+        editingProductId
+          ? "Product updated successfully."
+          : "Product created successfully."
+      );
+
+      await Promise.all([
+        loadProducts(),
+        loadCategories()
+      ]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to save product"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function createCategory() {
+    const name = categoryName.trim();
+
+    if (!name) {
+      setError("Category name is required.");
+      return;
+    }
+    if (name.length > 100) {
+      setError("Category name cannot exceed 100 characters.");
+      return;
+    }
+
+    try {
+      setActionId("new-category");
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/categories`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error || "Failed to create category"
+        );
+      }
+
+      setCategoryName("");
+      setSuccess(
+        `Category "${data.name}" created successfully.`
+      );
+      await loadCategories();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create category"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function deleteCategory(
+    categoryId: string,
+    name: string
+  ) {
+    if (
+      !window.confirm(
+        `Delete category "${name}"? Products in this category will become uncategorized.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setActionId(categoryId);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/categories/${categoryId}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error || "Failed to delete category"
+        );
+      }
+
+      setSuccess("Category deleted successfully.");
+      await Promise.all([
+        loadCategories(),
+        loadProducts()
+      ]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete category"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function addProductImage(productId: string) {
+    const url = imageUrl.trim();
+    const altText = imageAltText.trim();
+
+    if (!url) {
+      setError("Image URL is required.");
+      return;
+    }
+
+    try {
+      setActionId(`image-${productId}`);
+      setError("");
+      setSuccess("");
+
+      const product =
+        products.find(
+          (item) => item.id === productId
+        );
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/${productId}/images`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            url,
+            altText: altText || null,
+            isPrimary:
+              (product?.images?.length || 0) === 0
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to add product image"
+        );
+      }
+
+      setImageUrl("");
+      setImageAltText("");
+      setSuccess("Product image added successfully.");
+      await loadProducts();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to add product image"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function setPrimaryImage(
+    productId: string,
+    imageId: string
+  ) {
+    try {
+      setActionId(`primary-${imageId}`);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/${productId}/images/${imageId}/primary`,
+        { method: "PATCH" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to set primary image"
+        );
+      }
+
+      setSuccess("Primary product image updated.");
+      await loadProducts();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to set primary image"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function deleteProductImage(
+    productId: string,
+    imageId: string
+  ) {
+    if (!window.confirm("Delete this product image?")) {
+      return;
+    }
+
+    try {
+      setActionId(`delete-image-${imageId}`);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/${productId}/images/${imageId}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to delete product image"
+        );
+      }
+
+      setSuccess("Product image deleted.");
+      await loadProducts();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete product image"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function deleteProduct(
+    productId: string,
+    name: string
+  ) {
+    if (
+      !window.confirm(
+        `Delete product "${name}"? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setActionId(productId);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${MERCHANT_ID}/products/${productId}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error || "Failed to delete product"
+        );
+      }
+
+      setSuccess("Product deleted successfully.");
+      await Promise.all([
+        loadProducts(),
+        loadCategories()
+      ]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete product"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
   async function refreshDashboard() {
     if (!auth?.token) {
       return;
@@ -555,7 +1166,8 @@ export default function App() {
     await Promise.all([
       loadReviews(),
       loadOrders(),
-      loadProducts()
+      loadProducts(),
+      loadCategories()
     ]);
   }
 
@@ -585,7 +1197,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-            "Failed to verify payment"
+          "Failed to verify payment"
         );
       }
 
@@ -667,7 +1279,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-            "Failed to reject payment"
+          "Failed to reject payment"
         );
       }
 
@@ -723,7 +1335,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-            "Failed to update order status"
+          "Failed to update order status"
         );
       }
 
@@ -856,7 +1468,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-            "Failed to restock product"
+          "Failed to restock product"
         );
       }
 
@@ -896,6 +1508,7 @@ export default function App() {
       setLoadingReviews(false);
       setLoadingOrders(false);
       setLoadingProducts(false);
+      setLoadingCategories(false);
       return;
     }
 
@@ -1046,6 +1659,73 @@ export default function App() {
     );
   }
 
+  const sortedReviews = useMemo(() => {
+    const next = [...reviews];
+
+    next.sort((a, b) => {
+      switch (reviewSort) {
+        case "oldest":
+          return (
+            new Date(a.createdAt).getTime() -
+            new Date(b.createdAt).getTime()
+          );
+
+        case "amount-high":
+          return (
+            Number(b.amount) -
+            Number(a.amount)
+          );
+
+        case "amount-low":
+          return (
+            Number(a.amount) -
+            Number(b.amount)
+          );
+
+        case "provider-az":
+          return (a.provider || "").localeCompare(
+            b.provider || ""
+          );
+
+        case "provider-za":
+          return (b.provider || "").localeCompare(
+            a.provider || ""
+          );
+
+        case "customer-az":
+          return (
+            (
+              a.order.customer?.name ||
+              "Unknown customer"
+            ).localeCompare(
+              b.order.customer?.name ||
+              "Unknown customer"
+            )
+          );
+
+        case "customer-za":
+          return (
+            (
+              b.order.customer?.name ||
+              "Unknown customer"
+            ).localeCompare(
+              a.order.customer?.name ||
+              "Unknown customer"
+            )
+          );
+
+        case "newest":
+        default:
+          return (
+            new Date(b.createdAt).getTime() -
+            new Date(a.createdAt).getTime()
+          );
+      }
+    });
+
+    return next;
+  }, [reviews, reviewSort]);
+
   return (
     <main style={styles.page}>
       <header
@@ -1096,8 +1776,8 @@ export default function App() {
             }
           >
             {loadingReviews ||
-            loadingOrders ||
-            loadingProducts
+              loadingOrders ||
+              loadingProducts
               ? "Refreshing..."
               : "Refresh"}
           </button>
@@ -1214,7 +1894,7 @@ export default function App() {
             }
           >
             {outOfStockProducts} out of stock
-            {" � "}
+            {" · "}
             {lowStockProducts} low stock
           </span>
         </div>
@@ -1235,7 +1915,7 @@ export default function App() {
           style={{
             ...styles.tab,
             ...(activeTab ===
-            "payments"
+              "payments"
               ? styles.activeTab
               : {})
           }}
@@ -1263,7 +1943,7 @@ export default function App() {
           style={{
             ...styles.tab,
             ...(activeTab ===
-            "orders"
+              "orders"
               ? styles.activeTab
               : {})
           }}
@@ -1284,7 +1964,7 @@ export default function App() {
           style={{
             ...styles.tab,
             ...(activeTab ===
-            "inventory"
+              "inventory"
               ? styles.activeTab
               : {})
           }}
@@ -1293,25 +1973,25 @@ export default function App() {
 
           {outOfStockProducts >
             0 && (
-            <span
-              style={
-                styles.inventoryWarningCount
-              }
-            >
-              {outOfStockProducts}
-            </span>
-          )}
+              <span
+                style={
+                  styles.inventoryWarningCount
+                }
+              >
+                {outOfStockProducts}
+              </span>
+            )}
 
           {lowStockProducts >
             0 && (
-            <span
-              style={
-                styles.inventoryLowCount
-              }
-            >
-              {lowStockProducts}
-            </span>
-          )}
+              <span
+                style={
+                  styles.inventoryLowCount
+                }
+              >
+                {lowStockProducts}
+              </span>
+            )}
         </button>
       </section>
 
@@ -1335,14 +2015,16 @@ export default function App() {
       )}
 
       {activeTab ===
-      "payments" ? (
+        "payments" ? (
         <section
           style={styles.section}
         >
+
           <div
-            style={
-              styles.sectionHeader
-            }
+            style={{
+              ...styles.sectionHeader,
+              alignItems: "flex-end",
+            }}
           >
             <div>
               <h2
@@ -1361,6 +2043,78 @@ export default function App() {
                 Verify or reject customer payment
                 submissions.
               </p>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                flexWrap: "wrap",
+              }}
+            >
+              <label
+                htmlFor="payment-review-sort"
+                style={{
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  color: "#475569",
+                }}
+              >
+                Sort by
+              </label>
+
+              <select
+                id="payment-review-sort"
+                value={reviewSort}
+                onChange={(event) =>
+                  setReviewSort(
+                    event.target.value as ReviewSort
+                  )
+                }
+                style={{
+                  padding: "9px 12px",
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  background: "#ffffff",
+                  color: "#0f172a",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                <option value="newest">
+                  Newest first
+                </option>
+
+                <option value="oldest">
+                  Oldest first
+                </option>
+
+                <option value="amount-high">
+                  Amount: highest first
+                </option>
+
+                <option value="amount-low">
+                  Amount: lowest first
+                </option>
+
+                <option value="provider-az">
+                  Bank / provider: A–Z
+                </option>
+
+                <option value="provider-za">
+                  Bank / provider: Z–A
+                </option>
+
+                <option value="customer-az">
+                  Customer: A–Z
+                </option>
+
+                <option value="customer-za">
+                  Customer: Z–A
+                </option>
+              </select>
             </div>
           </div>
 
@@ -1394,7 +2148,7 @@ export default function App() {
                 styles.reviewList
               }
             >
-              {reviews.map(
+              {sortedReviews.map(
                 (review) => {
                   const customerName =
                     review.order.customer
@@ -1413,103 +2167,774 @@ export default function App() {
                     rejectingPaymentId ===
                     review.id;
 
+                  const isExpanded =
+                    expandedPaymentIds.has(review.id);
+
+                  const extracted =
+                    review.receiptMetadata?.extracted;
+
+
+
+                  const expectedAmount = Number(review.amount);
+                  const extractedAmount =
+                    typeof extracted?.amount === "number"
+                      ? extracted.amount
+                      : null;
+
+                  const expectedProvider =
+                    review.provider || "Not specified";
+
+                  const extractedProvider =
+                    extracted?.provider || null;
+
+                  const normalizedExpectedProvider =
+                    expectedProvider
+                      .toLowerCase()
+                      .replace(/[\s_-]+/g, "");
+
+                  const normalizedExtractedProvider =
+                    extractedProvider
+                      ?.toLowerCase()
+                      .replace(/[\s_-]+/g, "") || "";
+
+                  const providerMatches =
+                    extractedProvider !== null &&
+                    (
+                      (
+                        normalizedExpectedProvider.includes("cbebirr") ||
+                        normalizedExpectedProvider === "cbe"
+                      ) &&
+                      (
+                        normalizedExtractedProvider.includes("cbebirr") ||
+                        normalizedExtractedProvider.includes("commercialbankofethiopia") ||
+                        normalizedExtractedProvider === "cbe"
+                      )
+                    ) ||
+                    (
+                      normalizedExpectedProvider.includes("telebirr") &&
+                      normalizedExtractedProvider.includes("telebirr")
+                    ) ||
+                    normalizedExpectedProvider ===
+                    normalizedExtractedProvider;
+
+                  const amountMatches =
+                    extractedAmount !== null &&
+                    Number.isFinite(expectedAmount) &&
+                    extractedAmount === expectedAmount;
+
+                  const expectedReference =
+                    review.transactionReference?.trim() || null;
+
+                  const extractedReference =
+                    extracted?.transactionReference?.trim() || null;
+
+                  const referenceMatches =
+                    expectedReference !== null &&
+                    extractedReference !== null &&
+                    expectedReference === extractedReference;
+
+                  const currencyMatches =
+                    !extracted?.currency ||
+                    extracted.currency.toUpperCase() ===
+                    review.currency.toUpperCase();
+
+                  const findings: Array<{
+                    label: string;
+                    expected: string;
+                    actual: string;
+                    status: "MATCH" | "MISMATCH" | "UNAVAILABLE";
+                  }> = [
+                      {
+                        label: "Amount",
+                        expected: `${review.amount} ${review.currency}`,
+                        actual:
+                          extractedAmount !== null
+                            ? `${extractedAmount} ${extracted?.currency || review.currency
+                            }`
+                            : "Not available",
+                        status:
+                          extractedAmount === null
+                            ? "UNAVAILABLE"
+                            : amountMatches
+                              ? "MATCH"
+                              : "MISMATCH",
+                      },
+                      {
+                        label: "Payment provider",
+                        expected: expectedProvider,
+                        actual:
+                          extractedProvider || "Not available",
+                        status:
+                          !extractedProvider
+                            ? "UNAVAILABLE"
+                            : providerMatches
+                              ? "MATCH"
+                              : "MISMATCH",
+                      },
+                      {
+                        label: "Transaction reference",
+                        expected:
+                          expectedReference || "Not available",
+                        actual:
+                          extractedReference || "Not available",
+                        status:
+                          !expectedReference || !extractedReference
+                            ? "UNAVAILABLE"
+                            : referenceMatches
+                              ? "MATCH"
+                              : "MISMATCH",
+                      },
+                      {
+                        label: "Currency",
+                        expected: review.currency,
+                        actual:
+                          extracted?.currency || "Not available",
+                        status:
+                          !extracted?.currency
+                            ? "UNAVAILABLE"
+                            : currencyMatches
+                              ? "MATCH"
+                              : "MISMATCH",
+                      },
+                    ];
+
+                  const mismatchCount =
+                    findings.filter(
+                      (finding) => finding.status === "MISMATCH"
+                    ).length;
+
                   return (
                     <article
-                      key={
-                        review.id
-                      }
-                      style={
-                        styles.reviewCard
-                      }
+                      key={review.id}
+                      style={styles.reviewCard}
                     >
-                      <div
-                        style={
-                          styles.cardTop
-                        }
-                      >
+                      <div style={styles.cardTop}>
                         <div>
-                          <span
-                            style={
-                              styles.orderLabel
-                            }
-                          >
+                          <span style={styles.orderLabel}>
                             Order
                           </span>
 
-                          <h3
-                            style={
-                              styles.orderNumber
-                            }
-                          >
-                            {
-                              review
-                                .order
-                                .orderNumber
-                            }
+                          <h3 style={styles.orderNumber}>
+                            {review.order.orderNumber}
                           </h3>
                         </div>
 
-                        <span
-                          style={
-                            styles.badge
-                          }
-                        >
-                          {
-                            review.status
-                          }
+                        <span style={styles.badge}>
+                          {review.status}
                         </span>
                       </div>
 
-                      <div
-                        style={
-                          styles.details
-                        }
+                      {/* ===================================================== */}
+                      {/* 1. MERCHANT / ORDER INFORMATION — EXPECTED           */}
+                      {/* ===================================================== */}
+
+                      <section
+                        style={{
+                          marginTop: "18px",
+                          padding: "18px",
+                          border: "1px solid #dbe3ee",
+                          borderRadius: "12px",
+                          background: "#ffffff",
+                        }}
                       >
-                        <Detail
-                          label="Customer"
-                          value={
-                            customerName
-                          }
-                        />
+                        <div style={{ marginBottom: "14px" }}>
+                          <h4
+                            style={{
+                              margin: 0,
+                              color: "#0f172a",
+                              fontSize: "17px",
+                            }}
+                          >
+                            Merchant / Order Information
+                          </h4>
 
-                        <Detail
-                          label="Product"
-                          value={
-                            product?.productName ||
-                            "Unknown product"
-                          }
-                        />
+                          <p
+                            style={{
+                              margin: "5px 0 0",
+                              color: "#64748b",
+                              fontSize: "13px",
+                            }}
+                          >
+                            Expected payment details from this order.
+                          </p>
+                        </div>
 
-                        <Detail
-                          label="Quantity"
-                          value={
-                            product?.quantity ??
-                            "-"
-                          }
-                        />
+                        <div style={styles.details}>
+                          <Detail
+                            label="Customer"
+                            value={customerName}
+                          />
 
-                        <Detail
-                          label="Amount"
-                          value={`${review.amount} ${review.currency}`}
-                        />
+                          <Detail
+                            label="Product"
+                            value={
+                              product?.productName ||
+                              "Unknown product"
+                            }
+                          />
 
-                        <Detail
-                          label="Provider"
-                          value={
-                            review.provider
-                          }
-                        />
+                          <Detail
+                            label="Quantity"
+                            value={
+                              product?.quantity ?? "-"
+                            }
+                          />
 
-                        <Detail
-                          label="Transaction reference"
-                          value={
-                            review.transactionReference ||
-                            "Not provided"
-                          }
-                        />
-                      </div>
+                          <Detail
+                            label="Order amount"
+                            value={`${review.amount} ${review.currency}`}
+                          />
+
+                          <Detail
+                            label="Expected provider"
+                            value={formatPaymentProvider(expectedProvider)}
+                          />
+
+                          <Detail
+                            label="Expected transaction reference"
+                            value={
+                              expectedReference ||
+                              "Not provided"
+                            }
+                          />
+                        </div>
+                      </section>
+
+                      {/* ===================================================== */}
+                      {/* 2. FINDINGS — COMPARISON / WARNING SECTION            */}
+                      {/* ===================================================== */}
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          togglePaymentReview(review.id)
+                        }
+                        style={{
+                          width: "100%",
+                          marginTop: "12px",
+                          padding: "11px 14px",
+                          borderRadius: "9px",
+                          border: "1px solid #cbd5e1",
+                          background: "#f8fafc",
+                          color: "#0f172a",
+                          fontWeight: 700,
+                          fontSize: "13px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {isExpanded
+                          ? "Collapse review details ▲"
+                          : "Expand review details ▼"}
+                      </button>
+
+                      {isExpanded && (
+                        <>
+
+                          <section
+                            style={{
+                              marginTop: "18px",
+                              padding: "18px",
+                              borderRadius: "12px",
+                              border:
+                                mismatchCount > 0
+                                  ? "1px solid #fecaca"
+                                  : "1px solid #bbf7d0",
+                              background:
+                                mismatchCount > 0
+                                  ? "#fff7f7"
+                                  : "#f0fdf4",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "12px",
+                                marginBottom: "14px",
+                              }}
+                            >
+                              <div>
+                                <h4
+                                  style={{
+                                    margin: 0,
+                                    color: "#0f172a",
+                                    fontSize: "17px",
+                                  }}
+                                >
+                                  Findings
+                                </h4>
+
+                                <p
+                                  style={{
+                                    margin: "5px 0 0",
+                                    color: "#64748b",
+                                    fontSize: "13px",
+                                  }}
+                                >
+                                  Compare the order information with
+                                  what was extracted from the receipt.
+                                </p>
+                              </div>
+
+                              <span
+                                style={{
+                                  padding: "6px 10px",
+                                  borderRadius: "999px",
+                                  fontSize: "12px",
+                                  fontWeight: 700,
+                                  background:
+                                    mismatchCount > 0
+                                      ? "#fee2e2"
+                                      : "#dcfce7",
+                                  color:
+                                    mismatchCount > 0
+                                      ? "#b91c1c"
+                                      : "#15803d",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {mismatchCount > 0
+                                  ? `${mismatchCount} issue${mismatchCount === 1 ? "" : "s"
+                                  } found`
+                                  : "No detected mismatches"}
+                              </span>
+                            </div>
+
+                            {mismatchCount > 0 && (
+                              <div
+                                style={{
+                                  marginBottom: "14px",
+                                  padding: "12px 14px",
+                                  borderRadius: "8px",
+                                  background: "#fef2f2",
+                                  color: "#991b1b",
+                                  fontSize: "13px",
+                                  lineHeight: 1.5,
+                                }}
+                              >
+                                <strong>Review carefully:</strong>{" "}
+                                the receipt information does not fully
+                                match the expected order information.
+                                Check the original receipt before
+                                verifying this payment.
+                              </div>
+                            )}
+
+                            <div
+                              style={{
+                                display: "grid",
+                                gap: "10px",
+                              }}
+                            >
+                              {findings.map((finding) => {
+                                const isMismatch =
+                                  finding.status === "MISMATCH";
+
+                                const isUnavailable =
+                                  finding.status === "UNAVAILABLE";
+
+                                return (
+                                  <div
+                                    key={finding.label}
+                                    style={{
+                                      padding: "13px",
+                                      borderRadius: "9px",
+                                      border: isMismatch
+                                        ? "1px solid #fecaca"
+                                        : "1px solid #e2e8f0",
+                                      background: "#ffffff",
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "space-between",
+                                        gap: "12px",
+                                        marginBottom: "8px",
+                                      }}
+                                    >
+                                      <strong
+                                        style={{
+                                          color: "#0f172a",
+                                          fontSize: "14px",
+                                        }}
+                                      >
+                                        {finding.label}
+                                      </strong>
+
+                                      <span
+                                        style={{
+                                          fontSize: "11px",
+                                          fontWeight: 700,
+                                          padding: "4px 8px",
+                                          borderRadius: "999px",
+                                          background: isMismatch
+                                            ? "#fee2e2"
+                                            : isUnavailable
+                                              ? "#f1f5f9"
+                                              : "#dcfce7",
+                                          color: isMismatch
+                                            ? "#b91c1c"
+                                            : isUnavailable
+                                              ? "#64748b"
+                                              : "#15803d",
+                                        }}
+                                      >
+                                        {finding.status}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      style={{
+                                        display: "grid",
+                                        gridTemplateColumns:
+                                          "minmax(0, 1fr) minmax(0, 1fr)",
+                                        gap: "12px",
+                                      }}
+                                    >
+                                      <div>
+                                        <div
+                                          style={{
+                                            fontSize: "11px",
+                                            color: "#64748b",
+                                            marginBottom: "3px",
+                                          }}
+                                        >
+                                          Expected
+                                        </div>
+
+                                        <div
+                                          style={{
+                                            fontWeight: 600,
+                                            color: "#0f172a",
+                                          }}
+                                        >
+                                          {finding.expected}
+                                        </div>
+                                      </div>
+
+                                      <div>
+                                        <div
+                                          style={{
+                                            fontSize: "11px",
+                                            color: "#64748b",
+                                            marginBottom: "3px",
+                                          }}
+                                        >
+                                          Receipt says
+                                        </div>
+
+                                        <div
+                                          style={{
+                                            fontWeight: 600,
+                                            color: isMismatch
+                                              ? "#b91c1c"
+                                              : "#0f172a",
+                                          }}
+                                        >
+                                          {finding.actual}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {isMismatch && (
+                                      <div
+                                        style={{
+                                          marginTop: "9px",
+                                          fontSize: "12px",
+                                          color: "#991b1b",
+                                        }}
+                                      >
+                                        Check this value against the
+                                        original receipt before verifying.
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </section>
+
+                          {/* ===================================================== */}
+                          {/* 3. RECEIPT EVIDENCE — IMAGE + EXTRACTED INFORMATION */}
+                          {/* ===================================================== */}
+
+                          <section
+                            style={{
+                              marginTop: "18px",
+                              padding: "18px",
+                              border: "1px solid #dbe3ee",
+                              borderRadius: "12px",
+                              background: "#ffffff",
+                            }}
+                          >
+                            <div style={{ marginBottom: "14px" }}>
+                              <h4
+                                style={{
+                                  margin: 0,
+                                  color: "#0f172a",
+                                  fontSize: "17px",
+                                }}
+                              >
+                                Receipt Evidence
+                              </h4>
+
+                              <p
+                                style={{
+                                  margin: "5px 0 0",
+                                  color: "#64748b",
+                                  fontSize: "13px",
+                                }}
+                              >
+                                Review the original receipt alongside the
+                                information extracted from it. Extracted
+                                information is evidence for merchant review,
+                                not an automatic verification decision.
+                              </p>
+                            </div>
+
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns:
+                                  "minmax(280px, 1fr) minmax(280px, 1fr)",
+                                gap: "18px",
+                                alignItems: "stretch",
+                              }}
+                            >
+                              {/* Receipt image */}
+                              <div
+                                style={{
+                                  height: "560px",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    color: "#475569",
+                                    marginBottom: "8px",
+                                  }}
+                                >
+                                  Original receipt
+                                </div>
+
+                                {review.receiptUrl ? (
+                                  <>
+                                    <div
+                                      style={{
+                                        flex: 1,
+                                        minHeight: 0,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        overflow: "hidden",
+                                        borderRadius: "8px",
+                                        border: "1px solid #cbd5e1",
+                                        background: "#f8fafc",
+                                      }}
+                                    >
+                                      <img
+                                        src={review.receiptUrl}
+                                        alt="Customer payment receipt"
+                                        style={{
+                                          display: "block",
+                                          width: "100%",
+                                          height: "100%",
+                                          objectFit: "contain",
+                                        }}
+                                      />
+                                    </div>
+
+                                    <a
+                                      href={review.receiptUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        alignSelf: "flex-start",
+                                        marginTop: "10px",
+                                        padding: "9px 13px",
+                                        borderRadius: "8px",
+                                        border: "1px solid #cbd5e1",
+                                        background: "#ffffff",
+                                        color: "#0f172a",
+                                        fontWeight: 600,
+                                        textDecoration: "none",
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Open Full Receipt
+                                    </a>
+                                  </>
+                                ) : (
+                                  <div
+                                    style={{
+                                      flex: 1,
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      padding: "24px",
+                                      borderRadius: "8px",
+                                      border: "1px dashed #cbd5e1",
+                                      background: "#f8fafc",
+                                      color: "#64748b",
+                                      fontSize: "13px",
+                                    }}
+                                  >
+                                    Receipt image is not available.
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Extracted receipt information */}
+                              <div
+                                style={{
+                                  padding: "16px",
+                                  borderRadius: "10px",
+                                  border: "1px solid #e2e8f0",
+                                  background: "#f8fafc",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    marginBottom: "12px",
+                                  }}
+                                >
+                                  <h5
+                                    style={{
+                                      margin: 0,
+                                      color: "#0f172a",
+                                      fontSize: "15px",
+                                    }}
+                                  >
+                                    Extracted from receipt
+                                  </h5>
+
+                                  <p
+                                    style={{
+                                      margin: "4px 0 0",
+                                      color: "#64748b",
+                                      fontSize: "12px",
+                                    }}
+                                  >
+                                    Values read from the uploaded receipt image.
+                                  </p>
+                                </div>
+
+                                <div
+                                  style={{
+                                    display: "grid",
+                                    gap: "10px",
+                                  }}
+                                >
+                                  <Detail
+                                    label="Amount"
+                                    value={
+                                      extractedAmount !== null
+                                        ? `${extractedAmount} ${extracted?.currency ||
+                                        review.currency
+                                        }`
+                                        : "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Bank / provider"
+                                    value={
+                                      extractedProvider ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Transaction reference"
+                                    value={
+                                      extractedReference ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Currency"
+                                    value={
+                                      extracted?.currency ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Transaction date"
+                                    value={
+                                      extracted?.transactionDate ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Transaction time"
+                                    value={
+                                      extracted?.transactionTime ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Sender name"
+                                    value={
+                                      extracted?.senderName ||
+                                      "Not available"
+                                    }
+                                  />
+
+                                  <Detail
+                                    label="Sender account"
+                                    value={
+                                      extracted?.senderAccount ||
+                                      "Not available"
+                                    }
+                                  />
+                                </div>
+
+                                {typeof extracted?.confidence === "number" && (
+                                  <div
+                                    style={{
+                                      marginTop: "12px",
+                                      paddingTop: "10px",
+                                      borderTop: "1px solid #e2e8f0",
+                                      fontSize: "11px",
+                                      color: "#64748b",
+                                    }}
+                                  >
+                                    Extraction confidence:{" "}
+                                    {Math.round(
+                                      extracted.confidence * 100
+                                    )}
+                                    %
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </section>
+                        </>
+                      )}
+
+                      <div
+                        style={{
+                          marginTop: "18px",
+                          paddingTop: "16px",
+                          borderTop: "1px solid #e2e8f0",
+                        }}
+                      />
 
                       {isRejecting && (
+
                         <div
                           style={
                             styles.rejectPanel
@@ -1627,9 +3052,9 @@ export default function App() {
                             disabled={
                               busy ||
                               rejectingPaymentId !==
-                                null ||
+                              null ||
                               actionId !==
-                                null
+                              null
                             }
                             onClick={() =>
                               void verifyPayment(
@@ -1651,9 +3076,9 @@ export default function App() {
                               disabled={
                                 busy ||
                                 rejectingPaymentId !==
-                                  null ||
+                                null ||
                                 actionId !==
-                                  null
+                                null
                               }
                               onClick={() =>
                                 openRejectForm(
@@ -1830,7 +3255,7 @@ export default function App() {
                                 {
                                   item.productName
                                 }{" "}
-                                �{" "}
+                                ×{" "}
                                 {
                                   item.quantity
                                 }
@@ -1924,64 +3349,64 @@ export default function App() {
                         >
                           {order.status ===
                             "PAID" && (
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !==
+                              <button
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  actionId !==
                                   null
-                              }
-                              onClick={() =>
-                                void updateOrderStatus(
-                                  order.id,
-                                  "FULFILLING"
-                                )
-                              }
-                              style={
-                                styles.fulfillButton
-                              }
-                            >
-                              {busy
-                                ? "Processing..."
-                                : "Start Fulfillment"}
-                            </button>
-                          )}
+                                }
+                                onClick={() =>
+                                  void updateOrderStatus(
+                                    order.id,
+                                    "FULFILLING"
+                                  )
+                                }
+                                style={
+                                  styles.fulfillButton
+                                }
+                              >
+                                {busy
+                                  ? "Processing..."
+                                  : "Start Fulfillment"}
+                              </button>
+                            )}
 
                           {order.status ===
                             "FULFILLING" && (
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !==
+                              <button
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  actionId !==
                                   null
-                              }
-                              onClick={() =>
-                                void updateOrderStatus(
-                                  order.id,
-                                  "FULFILLED"
-                                )
-                              }
-                              style={
-                                styles.fulfillButton
-                              }
-                            >
-                              {busy
-                                ? "Processing..."
-                                : "Mark Fulfilled"}
-                            </button>
-                          )}
+                                }
+                                onClick={() =>
+                                  void updateOrderStatus(
+                                    order.id,
+                                    "FULFILLED"
+                                  )
+                                }
+                                style={
+                                  styles.fulfillButton
+                                }
+                              >
+                                {busy
+                                  ? "Processing..."
+                                  : "Mark Fulfilled"}
+                              </button>
+                            )}
 
                           {order.status ===
                             "FULFILLED" && (
-                            <span
-                              style={
-                                styles.completed
-                              }
-                            >
-                              Completed ?
-                            </span>
-                          )}
+                              <span
+                                style={
+                                  styles.completed
+                                }
+                              >
+                                Completed ?
+                              </span>
+                            )}
                         </div>
                       </div>
                     </article>
@@ -2038,42 +3463,446 @@ export default function App() {
             </button>
           </div>
 
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "minmax(0, 1.5fr) minmax(280px, 1fr)",
+              gap: "16px",
+              marginBottom: "20px"
+            }}
+          >
+            <section
+              style={{
+                border: "1px solid #dbe3ee",
+                borderRadius: "14px",
+                padding: "18px",
+                background: "#ffffff"
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: "12px",
+                  marginBottom: "14px"
+                }}
+              >
+                <div>
+                  <strong>Product Catalog</strong>
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "13px",
+                      marginTop: "4px"
+                    }}
+                  >
+                    Create products and manage pricing,
+                    stock, status, and categories.
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openNewProductForm}
+                  disabled={actionId !== null}
+                  style={styles.restockButton}
+                >
+                  + Add Product
+                </button>
+              </div>
+
+              {productFormOpen && (
+                <div
+                  style={{
+                    borderTop: "1px solid #e2e8f0",
+                    paddingTop: "16px"
+                  }}
+                >
+                  <h3
+                    style={{
+                      margin: "0 0 14px",
+                      fontSize: "16px"
+                    }}
+                  >
+                    {editingProductId
+                      ? "Edit Product"
+                      : "Create Product"}
+                  </h3>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(2, minmax(0, 1fr))",
+                      gap: "12px"
+                    }}
+                  >
+                    <div>
+                      <label style={styles.formLabel}>
+                        Name
+                      </label>
+                      <input
+                        value={productName}
+                        maxLength={200}
+                        onChange={(event) =>
+                          setProductName(
+                            event.target.value
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                        placeholder="Product name"
+                      />
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Category
+                      </label>
+                      <select
+                        value={productCategoryId}
+                        onChange={(event) =>
+                          setProductCategoryId(
+                            event.target.value
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                      >
+                        <option value="">
+                          Uncategorized
+                        </option>
+                        {categories.map(
+                          (category) => (
+                            <option
+                              key={category.id}
+                              value={category.id}
+                            >
+                              {category.name}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Price
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={productPrice}
+                        onChange={(event) =>
+                          setProductPrice(
+                            event.target.value
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                        placeholder="0.00"
+                      />
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Currency
+                      </label>
+                      <input
+                        value={productCurrency}
+                        maxLength={3}
+                        onChange={(event) =>
+                          setProductCurrency(
+                            event.target.value.toUpperCase()
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Stock
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={productStock}
+                        onChange={(event) =>
+                          setProductStock(
+                            event.target.value
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={styles.formLabel}>
+                        Status
+                      </label>
+                      <select
+                        value={productStatus}
+                        onChange={(event) =>
+                          setProductStatus(
+                            event.target.value
+                          )
+                        }
+                        disabled={actionId !== null}
+                        style={styles.formInput}
+                      >
+                        <option value="DRAFT">
+                          DRAFT
+                        </option>
+                        <option value="ACTIVE">
+                          ACTIVE
+                        </option>
+                        <option value="ARCHIVED">
+                          ARCHIVED
+                        </option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <label style={styles.formLabel}>
+                    Description
+                  </label>
+                  <textarea
+                    value={productDescription}
+                    maxLength={5000}
+                    rows={4}
+                    onChange={(event) =>
+                      setProductDescription(
+                        event.target.value
+                      )
+                    }
+                    disabled={actionId !== null}
+                    style={styles.formTextarea}
+                    placeholder="Optional product description"
+                  />
+
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      gap: "8px",
+                      marginTop: "12px"
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={closeProductForm}
+                      disabled={actionId !== null}
+                      style={styles.cancelButton}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void saveProduct()}
+                      disabled={actionId !== null}
+                      style={styles.confirmRestockButton}
+                    >
+                      {actionId
+                        ? "Saving..."
+                        : editingProductId
+                          ? "Save Changes"
+                          : "Create Product"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section
+              style={{
+                border: "1px solid #dbe3ee",
+                borderRadius: "14px",
+                padding: "18px",
+                background: "#ffffff"
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: "12px"
+                }}
+              >
+                <strong>Categories</strong>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void loadCategories()
+                  }
+                  disabled={
+                    loadingCategories ||
+                    actionId !== null
+                  }
+                  style={{
+                    ...styles.cancelButton,
+                    padding: "7px 10px"
+                  }}
+                >
+                  {loadingCategories
+                    ? "Loading..."
+                    : "Refresh"}
+                </button>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "8px",
+                  marginBottom: "12px"
+                }}
+              >
+                <input
+                  value={categoryName}
+                  maxLength={100}
+                  onChange={(event) =>
+                    setCategoryName(
+                      event.target.value
+                    )
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void createCategory();
+                    }
+                  }}
+                  disabled={actionId !== null}
+                  style={{
+                    ...styles.formInput,
+                    margin: 0
+                  }}
+                  placeholder="New category"
+                />
+                <button
+                  type="button"
+                  onClick={() => void createCategory()}
+                  disabled={
+                    actionId !== null ||
+                    !categoryName.trim()
+                  }
+                  style={styles.confirmRestockButton}
+                >
+                  Add
+                </button>
+              </div>
+
+              {categories.length === 0 ? (
+                <div
+                  style={{
+                    color: "#64748b",
+                    fontSize: "13px"
+                  }}
+                >
+                  No categories yet.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "8px"
+                  }}
+                >
+                  {categories.map(
+                    (category) => (
+                      <div
+                        key={category.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "7px",
+                          border:
+                            "1px solid #dbe3ee",
+                          borderRadius: "999px",
+                          padding:
+                            "6px 8px 6px 10px",
+                          fontSize: "13px"
+                        }}
+                      >
+                        <span>
+                          {category.name}{" "}
+                          <span
+                            style={{
+                              color: "#64748b"
+                            }}
+                          >
+                            ({category._count?.products ?? 0})
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void deleteCategory(
+                              category.id,
+                              category.name
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            color: "#b91c1c",
+                            padding: "0 3px"
+                          }}
+                          title="Delete category"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    )
+                  )}
+                </div>
+              )}
+            </section>
+          </div>
+
           {(outOfStockProducts >
             0 ||
             lowStockProducts >
-              0) && (
-            <div
-              style={
-                styles.inventoryAlert
-              }
-            >
-              <strong>
-                Inventory attention needed
-              </strong>
+            0) && (
+              <div
+                style={
+                  styles.inventoryAlert
+                }
+              >
+                <strong>
+                  Inventory attention needed
+                </strong>
 
-              <span>
-                {outOfStockProducts >
-                0
-                  ? `${outOfStockProducts} product${
-                      outOfStockProducts ===
+                <span>
+                  {outOfStockProducts >
+                    0
+                    ? `${outOfStockProducts} product${outOfStockProducts ===
                       1
-                        ? ""
-                        : "s"
+                      ? ""
+                      : "s"
                     } out of stock`
-                  : "No products are out of stock"}
-                {" � "}
-                {lowStockProducts >
-                0
-                  ? `${lowStockProducts} low-stock product${
-                      lowStockProducts ===
+                    : "No products are out of stock"}
+                  {" · "}
+                  {lowStockProducts >
+                    0
+                    ? `${lowStockProducts} low-stock product${lowStockProducts ===
                       1
-                        ? ""
-                        : "s"
+                      ? ""
+                      : "s"
                     }`
-                  : "No other low-stock products"}
-              </span>
-            </div>
-          )}
+                    : "No other low-stock products"}
+                </span>
+              </div>
+            )}
 
           {loadingProducts ? (
             <div
@@ -2121,9 +3950,9 @@ export default function App() {
 
                   const isLowStock =
                     product.stock >
-                      0 &&
+                    0 &&
                     product.stock <=
-                      5;
+                    5;
 
                   const quantityNumber =
                     Number(
@@ -2135,23 +3964,23 @@ export default function App() {
                       quantityNumber
                     ) &&
                     quantityNumber >
-                      0;
+                    0;
 
                   const projectedStock =
                     validQuantity
                       ? product.stock +
-                        quantityNumber
+                      quantityNumber
                       : product.stock;
 
                   const exceedsQuantityLimit =
                     validQuantity &&
                     quantityNumber >
-                      100000;
+                    100000;
 
                   const exceedsStockLimit =
                     validQuantity &&
                     projectedStock >
-                      1000000;
+                    1000000;
 
                   return (
                     <article
@@ -2192,6 +4021,19 @@ export default function App() {
                               product.name
                             }
                           </h3>
+
+                          {product.category && (
+                            <span
+                              style={{
+                                display: "inline-block",
+                                marginTop: "4px",
+                                color: "#475569",
+                                fontSize: "12px"
+                              }}
+                            >
+                              {product.category.name}
+                            </span>
+                          )}
                         </div>
 
                         <span
@@ -2277,6 +4119,197 @@ export default function App() {
                           </strong>
                         </div>
                       </div>
+
+                      {imageProductId === product.id && (
+                        <div
+                          style={{
+                            borderTop: "1px solid #e2e8f0",
+                            paddingTop: "14px",
+                            marginTop: "14px"
+                          }}
+                        >
+                          <strong
+                            style={{
+                              display: "block",
+                              marginBottom: "10px"
+                            }}
+                          >
+                            Product Images
+                          </strong>
+
+                          {product.images &&
+                            product.images.length > 0 && (
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gridTemplateColumns:
+                                    "repeat(auto-fill, minmax(110px, 1fr))",
+                                  gap: "8px",
+                                  marginBottom: "12px"
+                                }}
+                              >
+                                {product.images.map(
+                                  (image) => (
+                                    <div
+                                      key={image.id}
+                                      style={{
+                                        border:
+                                          "1px solid #dbe3ee",
+                                        borderRadius: "10px",
+                                        padding: "6px"
+                                      }}
+                                    >
+                                      <img
+                                        src={image.url}
+                                        alt={
+                                          image.altText ||
+                                          product.name
+                                        }
+                                        style={{
+                                          width: "100%",
+                                          height: "80px",
+                                          objectFit: "cover",
+                                          borderRadius: "7px",
+                                          display: "block"
+                                        }}
+                                      />
+                                      <div
+                                        style={{
+                                          fontSize: "11px",
+                                          marginTop: "5px",
+                                          color: image.isPrimary
+                                            ? "#166534"
+                                            : "#64748b"
+                                        }}
+                                      >
+                                        {image.isPrimary
+                                          ? "Primary"
+                                          : "Image"}
+                                      </div>
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          gap: "4px",
+                                          marginTop: "5px",
+                                          flexWrap: "wrap"
+                                        }}
+                                      >
+                                        {!image.isPrimary && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              void setPrimaryImage(
+                                                product.id,
+                                                image.id
+                                              )
+                                            }
+                                            disabled={
+                                              actionId !== null
+                                            }
+                                            style={{
+                                              ...styles.cancelButton,
+                                              fontSize: "11px",
+                                              padding: "4px 6px"
+                                            }}
+                                          >
+                                            Primary
+                                          </button>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void deleteProductImage(
+                                              product.id,
+                                              image.id
+                                            )
+                                          }
+                                          disabled={
+                                            actionId !== null
+                                          }
+                                          style={{
+                                            ...styles.cancelButton,
+                                            color: "#b91c1c",
+                                            fontSize: "11px",
+                                            padding: "4px 6px"
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            )}
+
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns:
+                                "minmax(0, 2fr) minmax(0, 1fr) auto",
+                              gap: "8px",
+                              alignItems: "end"
+                            }}
+                          >
+                            <div>
+                              <label style={styles.formLabel}>
+                                Image URL
+                              </label>
+                              <input
+                                value={imageUrl}
+                                onChange={(event) =>
+                                  setImageUrl(
+                                    event.target.value
+                                  )
+                                }
+                                disabled={
+                                  actionId !== null
+                                }
+                                style={styles.formInput}
+                                placeholder="https://..."
+                              />
+                            </div>
+
+                            <div>
+                              <label style={styles.formLabel}>
+                                Alt text
+                              </label>
+                              <input
+                                value={imageAltText}
+                                maxLength={300}
+                                onChange={(event) =>
+                                  setImageAltText(
+                                    event.target.value
+                                  )
+                                }
+                                disabled={
+                                  actionId !== null
+                                }
+                                style={styles.formInput}
+                                placeholder="Optional"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void addProductImage(
+                                  product.id
+                                )
+                              }
+                              disabled={
+                                actionId !== null ||
+                                !imageUrl.trim()
+                              }
+                              style={
+                                styles.confirmRestockButton
+                              }
+                            >
+                              Add Image
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {isRestocking ? (
                         <div
@@ -2492,26 +4525,85 @@ export default function App() {
                             ).toLocaleString()}
                           </span>
 
-                          <button
-                            type="button"
-                            disabled={
-                              busy ||
-                              restockingProductId !==
-                                null ||
-                              actionId !==
-                                null
-                            }
-                            onClick={() =>
-                              openRestockForm(
-                                product.id
-                              )
-                            }
-                            style={
-                              styles.restockButton
-                            }
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "7px",
+                              flexWrap: "wrap",
+                              justifyContent: "flex-end"
+                            }}
                           >
-                            Restock
-                          </button>
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !== null
+                              }
+                              onClick={() =>
+                                openEditProductForm(product)
+                              }
+                              style={styles.cancelButton}
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !== null
+                              }
+                              onClick={() => {
+                                setImageProductId(
+                                  imageProductId === product.id
+                                    ? null
+                                    : product.id
+                                );
+                                setImageUrl("");
+                                setImageAltText("");
+                                setError("");
+                              }}
+                              style={styles.cancelButton}
+                            >
+                              {imageProductId === product.id
+                                ? "Hide Images"
+                                : "Images"}
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !== null
+                              }
+                              onClick={() =>
+                                openRestockForm(product.id)
+                              }
+                              style={styles.restockButton}
+                            >
+                              Restock
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                actionId !== null
+                              }
+                              onClick={() =>
+                                void deleteProduct(
+                                  product.id,
+                                  product.name
+                                )
+                              }
+                              style={{
+                                ...styles.cancelButton,
+                                color: "#b91c1c"
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
                         </div>
                       )}
                     </article>

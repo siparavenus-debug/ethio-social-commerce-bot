@@ -15,18 +15,18 @@ export async function searchProducts(
 ): Promise<ProductSearchResult[]> {
   const normalizedQuery = query.trim();
 
-  if (!normalizedQuery) {
-    return [];
-  }
-
   const products = await prisma.product.findMany({
     where: {
       merchantId,
       status: "ACTIVE",
-      name: {
-        contains: normalizedQuery,
-        mode: "insensitive"
-      }
+      ...(normalizedQuery
+        ? {
+            name: {
+              contains: normalizedQuery,
+              mode: "insensitive"
+            }
+          }
+        : {})
     },
     orderBy: {
       createdAt: "desc"

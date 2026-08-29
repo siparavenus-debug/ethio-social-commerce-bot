@@ -19,6 +19,10 @@ import {
 } from "../conversation/conversation-manager.js";
 
 import {
+  getConversationState
+} from "../conversation/conversation-state.js";
+
+import {
   extractReceipt
 } from "../services/receipt-vision.js";
 
@@ -26,6 +30,10 @@ import {
   validateReceipt,
   normalizeProvider
 } from "../services/receipt-validation.js";
+
+import {
+  uploadReceiptImage
+} from "../services/storage.js";
 
 const router = Router();
 
@@ -579,30 +587,86 @@ await extractReceipt(
 
           /*
            * ---------------------------------------------
-           * FIND EXISTING PAYMENT
+           * RESOLVE THE ORDER FOR THIS RECEIPT
            * ---------------------------------------------
            *
-           * Supports the original flow where the
-           * customer first typed a transaction reference.
+           * A Telegram chat can contain multiple orders.
+           * Never choose an old PAYMENT_REVIEW order merely
+           * because it is the latest payment record.
+           *
+           * Priority:
+           *   1. The customer's newest PENDING_PAYMENT order.
+           *   2. If there is no pending order, the conversation's
+           *      current order when it is already in PAYMENT_REVIEW.
+           *
+           * This makes a newly-created dress/shawl order the target
+           * for the next receipt instead of overwriting the receipt
+           * belonging to an older order.
            */
-          let pendingPayment =
-            await prisma.payment.findFirst(
-              {
+          const conversationState =
+            getConversationState(chatIdString);
+
+          const currentPendingOrderId =
+            conversationState.pendingOrderId;
+
+          const newestPendingOrder =
+            await prisma.order.findFirst({
+              where: {
+                merchantId,
+                customerId: customer.id,
+                status: "PENDING_PAYMENT"
+              },
+              select: {
+                id: true,
+                orderNumber: true,
+                total: true,
+                currency: true
+              },
+              orderBy: {
+                createdAt: "desc"
+              }
+            });
+
+          let targetOrder = newestPendingOrder;
+
+          /*
+           * If no new pending order exists, fall back to the
+           * conversation's current order. This supports the flow
+           * where the customer already submitted a transaction
+           * reference and that order is in PAYMENT_REVIEW.
+           */
+          if (!targetOrder && currentPendingOrderId) {
+            targetOrder =
+              await prisma.order.findFirst({
+                where: {
+                  id: currentPendingOrderId,
+                  merchantId,
+                  customerId: customer.id,
+                  status: "PAYMENT_REVIEW"
+                },
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  total: true,
+                  currency: true
+                }
+              });
+          }
+
+          let pendingPayment = null;
+
+          /*
+           * First find an existing payment belonging to the exact
+           * target order. We never search the customer's payments
+           * globally because that can attach a new receipt to an
+           * older order.
+           */
+          if (targetOrder) {
+            pendingPayment =
+              await prisma.payment.findFirst({
                 where: {
                   merchantId,
-
-                  order: {
-                    customerId:
-                      customer.id,
-
-                    status: {
-                      in: [
-                        "PENDING_PAYMENT",
-                        "PAYMENT_REVIEW"
-                      ]
-                    }
-                  },
-
+                  orderId: targetOrder.id,
                   status: {
                     in: [
                       "PENDING",
@@ -610,7 +674,6 @@ await extractReceipt(
                     ]
                   }
                 },
-
                 include: {
                   order: {
                     select: {
@@ -621,303 +684,200 @@ await extractReceipt(
                     }
                   }
                 },
-
                 orderBy: {
                   createdAt: "desc"
                 }
-              }
-            );
+              });
+          }
 
           /*
            * ---------------------------------------------
-           * IF NO PAYMENT EXISTS:
-           * FIND THE CUSTOMER'S LATEST PENDING ORDER
+           * CREATE PAYMENT FOR A NEW PENDING ORDER
            * ---------------------------------------------
-           *
-           * A customer may send the receipt directly
-           * without first typing the transaction reference.
            */
-          if (!pendingPayment) {
-            const pendingOrder =
-              await prisma.order.findFirst(
-                {
+          if (!pendingPayment && newestPendingOrder) {
+            const provider =
+              receiptProviderToEnum(
+                receipt.provider
+              );
+
+            const receiptObjectKey =
+              `receipts/${merchantId}/${newestPendingOrder.id}/${Date.now()}-${largestPhoto.file_id}.jpg`;
+
+            const receiptUrl =
+              await uploadReceiptImage(
+                receiptObjectKey,
+                image,
+                "image/jpeg"
+              );
+
+            let transactionReference =
+              receipt.transactionReference;
+
+            let duplicateReference = null;
+
+            if (transactionReference) {
+              duplicateReference =
+                await prisma.payment.findUnique({
                   where: {
-                    merchantId,
-
-                    customerId:
-                      customer.id,
-
-                    status:
-                      "PENDING_PAYMENT"
-                  },
-
-                  select: {
-                    id: true,
-                    orderNumber: true,
-                    total: true,
-                    currency: true
-                  },
-
-                  orderBy: {
-                    createdAt:
-                      "desc"
+                    provider_transactionReference: {
+                      provider,
+                      transactionReference
+                    }
                   }
+                });
+            }
+
+            /*
+             * A duplicate reference must NEVER overwrite or reuse
+             * another payment. Keep this new receipt as a separate
+             * review item with the extracted reference stored in
+             * receiptMetadata for the merchant to investigate.
+             */
+            if (duplicateReference) {
+              console.warn(
+                "Duplicate receipt transaction reference detected",
+                {
+                  provider,
+                  transactionReference,
+                  existingPaymentId:
+                    duplicateReference.id,
+                  newOrderId:
+                    newestPendingOrder.id
                 }
               );
 
-            if (
-              pendingOrder
-            ) {
-              const provider =
-                receiptProviderToEnum(
-                  receipt.provider
-                );
-
-              /*
-               * ---------------------------------------------
-               * DUPLICATE TRANSACTION REFERENCE PROTECTION
-               * ---------------------------------------------
-               */
-              if (
-                receipt.transactionReference
-              ) {
-                const duplicateReference =
-                  await prisma.payment.findUnique(
-                    {
-                      where: {
-                        provider_transactionReference:
-                          {
-                            provider,
-
-                            transactionReference:
-                              receipt.transactionReference
-                          }
-                      }
-                    }
-                  );
-
-                if (
-                  duplicateReference
-                ) {
-                  /*
-                   * Do not attach a duplicate reference
-                   * to another order.
-                   */
-                  console.warn(
-                    "Duplicate receipt transaction reference detected",
-                    {
-                      provider,
-
-                      transactionReference:
-                        receipt.transactionReference,
-
-                      existingPaymentId:
-                        duplicateReference.id
-                    }
-                  );
-
-                  /*
-                   * Only use the duplicate payment if it
-                   * belongs to this merchant and customer.
-                   */
-                  pendingPayment =
-                    await prisma.payment.findFirst(
-                      {
-                        where: {
-                          id:
-                            duplicateReference.id,
-
-                          merchantId,
-
-                          order: {
-                            customerId:
-                              customer.id
-                          }
-                        },
-
-                        include: {
-                          order: {
-                            select: {
-                              id: true,
-                              orderNumber:
-                                true,
-                              total:
-                                true,
-                              currency:
-                                true
-                            }
-                          }
-                        }
-                      }
-                    );
-                } else {
-                  /*
-                   * Create the payment and move the order
-                   * into merchant review atomically.
-                   */
-                  const created =
-                    await prisma.$transaction(
-                      async (tx) => {
-                        const payment =
-                          await tx.payment.create(
-                            {
-                              data: {
-                                merchantId,
-
-                                orderId:
-                                  pendingOrder.id,
-
-                                provider,
-
-                                status:
-                                  PaymentStatus.REVIEW_REQUIRED,
-
-                                amount:
-                                  pendingOrder.total,
-
-                                currency:
-                                  pendingOrder.currency,
-
-                                transactionReference:
-                                  receipt.transactionReference,
-
-                                receiptMetadata:
-                                  {
-                                    extracted:
-                                      receipt,
-
-                                    receivedVia:
-                                      "TELEGRAM_PHOTO",
-
-                                    processedAt:
-                                      new Date().toISOString()
-                                  }
-                              },
-
-                              include: {
-                                order: {
-                                  select: {
-                                    id: true,
-                                    orderNumber:
-                                      true,
-                                    total:
-                                      true,
-                                    currency:
-                                      true
-                                  }
-                                }
-                              }
-                            }
-                          );
-
-                        await tx.order.update(
-                          {
-                            where: {
-                              id:
-                                pendingOrder.id
-                            },
-
-                            data: {
-                              status:
-                                "PAYMENT_REVIEW"
-                            }
-                          }
-                        );
-
-                        return payment;
-                      }
-                    );
-
-                  pendingPayment =
-                    created;
-                }
-              } else {
-                /*
-                 * ---------------------------------------------
-                 * NO TRANSACTION REFERENCE EXTRACTED
-                 * ---------------------------------------------
-                 *
-                 * Still create REVIEW_REQUIRED.
-                 *
-                 * Missing information must go to merchant
-                 * review rather than silently disappearing.
-                 */
-                const created =
-                  await prisma.$transaction(
-                    async (tx) => {
-                      const payment =
-                        await tx.payment.create(
-                          {
-                            data: {
-                              merchantId,
-
-                              orderId:
-                                pendingOrder.id,
-
-                              provider,
-
-                              status:
-                                PaymentStatus.REVIEW_REQUIRED,
-
-                              amount:
-                                pendingOrder.total,
-
-                              currency:
-                                pendingOrder.currency,
-
-                              receiptMetadata:
-                                {
-                                  extracted:
-                                    receipt,
-
-                                  receivedVia:
-                                    "TELEGRAM_PHOTO",
-
-                                  processedAt:
-                                    new Date().toISOString()
-                                }
-                            },
-
-                            include: {
-                              order: {
-                                select: {
-                                  id: true,
-                                  orderNumber:
-                                    true,
-                                  total:
-                                    true,
-                                  currency:
-                                    true
-                                }
-                              }
-                            }
-                          }
-                        );
-
-                      await tx.order.update(
-                        {
-                          where: {
-                            id:
-                              pendingOrder.id
-                          },
-
-                          data: {
-                            status:
-                              "PAYMENT_REVIEW"
-                          }
-                        }
-                      );
-
-                      return payment;
-                    }
-                  );
-
-                pendingPayment =
-                  created;
-              }
+              transactionReference = null;
             }
+
+            const created =
+              await prisma.$transaction(
+                async (tx) => {
+                  const payment =
+                    await tx.payment.create({
+                      data: {
+                        merchantId,
+                        orderId:
+                          newestPendingOrder.id,
+                        provider,
+                        status:
+                          PaymentStatus.REVIEW_REQUIRED,
+                        amount:
+                          newestPendingOrder.total,
+                        currency:
+                          newestPendingOrder.currency,
+                        transactionReference,
+                        receiptUrl,
+                        receiptMetadata: {
+                          extracted: receipt,
+                          receivedVia:
+                            "TELEGRAM_PHOTO",
+                          processedAt:
+                            new Date().toISOString(),
+                          ...(duplicateReference
+                            ? {
+                                duplicateTransactionReference:
+                                  true,
+                                duplicatePaymentId:
+                                  duplicateReference.id
+                              }
+                            : {})
+                        }
+                      },
+                      include: {
+                        order: {
+                          select: {
+                            id: true,
+                            orderNumber: true,
+                            total: true,
+                            currency: true
+                          }
+                        }
+                      }
+                    });
+
+                  await tx.order.update({
+                    where: {
+                      id: newestPendingOrder.id
+                    },
+                    data: {
+                      status:
+                        "PAYMENT_REVIEW"
+                    }
+                  });
+
+                  return payment;
+                }
+              );
+
+            pendingPayment = created;
           }
 
+          /*
+           * ---------------------------------------------
+           * UPDATE AN EXISTING PAYMENT WITH THE NEW RECEIPT
+           * ---------------------------------------------
+           *
+           * This is the normal path when the customer first typed
+           * a transaction reference and then sends the receipt.
+           * The image is uploaded to a key containing the exact
+           * order ID, so receipts remain isolated per order.
+           */
+          if (pendingPayment) {
+            const receiptObjectKey =
+              `receipts/${merchantId}/${pendingPayment.orderId}/${Date.now()}-${largestPhoto.file_id}.jpg`;
+
+            const receiptUrl =
+              await uploadReceiptImage(
+                receiptObjectKey,
+                image,
+                "image/jpeg"
+              );
+
+            const existingMetadata =
+              pendingPayment.receiptMetadata &&
+              typeof pendingPayment.receiptMetadata ===
+                "object" &&
+              !Array.isArray(
+                pendingPayment.receiptMetadata
+              )
+                ? pendingPayment.receiptMetadata
+                : {};
+
+            await prisma.payment.update({
+              where: {
+                id: pendingPayment.id
+              },
+              data: {
+                receiptUrl,
+                receiptMetadata: {
+                  ...existingMetadata,
+                  extracted: receipt,
+                  receivedVia:
+                    "TELEGRAM_PHOTO",
+                  processedAt:
+                    new Date().toISOString()
+                }
+              }
+            });
+
+            pendingPayment =
+              await prisma.payment.findUnique({
+                where: {
+                  id: pendingPayment.id
+                },
+                include: {
+                  order: {
+                    select: {
+                      id: true,
+                      orderNumber: true,
+                      total: true,
+                      currency: true
+                    }
+                  }
+                }
+              });
+          }
           /*
            * ---------------------------------------------
            * VALIDATE RECEIPT

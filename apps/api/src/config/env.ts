@@ -5,7 +5,8 @@ dotenv.config({
   path: path.resolve(
     process.cwd(),
     ".env"
-  )
+  ),
+  override: true
 });
 
 const port = Number(
@@ -41,6 +42,20 @@ if (
   );
 }
 
+const r2AccountId = process.env.R2_ACCOUNT_ID?.trim();
+const r2AccessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+const r2SecretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+const r2BucketName = process.env.R2_BUCKET_NAME?.trim();
+const r2PublicBaseUrl = process.env.R2_PUBLIC_BASE_URL?.trim();
+
+const r2Configured = Boolean(
+  r2AccountId &&
+  r2AccessKeyId &&
+  r2SecretAccessKey &&
+  r2BucketName &&
+  r2PublicBaseUrl
+);
+
 export const env = {
   nodeEnv:
     process.env.NODE_ENV ??
@@ -65,5 +80,12 @@ export const env = {
 
   authSecret,
 
-  authTokenTtlSeconds
+  authTokenTtlSeconds,
+
+  r2AccountId,
+  r2AccessKeyId,
+  r2SecretAccessKey,
+  r2BucketName,
+  r2PublicBaseUrl,
+  r2Configured
 } as const;
