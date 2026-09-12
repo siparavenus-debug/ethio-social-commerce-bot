@@ -77,7 +77,8 @@ export async function requireAuth(
           merchantId: true,
           email: true,
           displayName: true,
-          role: true
+          role: true,
+          tokenVersion: true
         }
       });
 
@@ -114,14 +115,21 @@ export async function requireAuth(
       return;
     }
 
+    if (user.tokenVersion !== tokenPayload.tokenVersion) {
+      res.status(401).json({
+        error: "Authentication token is no longer valid"
+      });
+
+      return;
+    }
+
     req.auth = {
       id: user.id,
-      merchantId:
-        user.merchantId,
+      merchantId: user.merchantId,
       email: user.email,
-      displayName:
-        user.displayName,
-      role: user.role
+      displayName: user.displayName,
+      role: user.role,
+      tokenVersion: user.tokenVersion
     };
 
     next();
@@ -158,7 +166,7 @@ export function requireMerchantAccess(
   if (
     requestedMerchantId &&
     requestedMerchantId !==
-      req.auth.merchantId
+    req.auth.merchantId
   ) {
     res.status(403).json({
       error:

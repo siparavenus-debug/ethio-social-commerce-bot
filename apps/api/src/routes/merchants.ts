@@ -7,9 +7,12 @@ import {
 
 import { sendTelegramMessage } from "../services/telegram.js";
 
+import { accrueCommission } from "../services/commission.js";
+
 import {
   requireAuth,
-  requireMerchantAccess
+  requireMerchantAccess,
+  requireRole
 } from "../middleware/auth.js";
 
 import multer from "multer";
@@ -44,115 +47,113 @@ const upload = multer({
   }
 });
 
-  if (
-    !env.r2AccountId ||
-    !env.r2AccessKeyId ||
-    !env.r2SecretAccessKey ||
-    !env.r2BucketName ||
-    !env.r2PublicBaseUrl
-  ) {
-    throw new Error(
-      "R2 storage configuration is incomplete."
-    );
-  }
-
-  router.use(
-    requireAuth,
-    requireMerchantAccess
+if (
+  !env.r2AccountId ||
+  !env.r2AccessKeyId ||
+  !env.r2SecretAccessKey ||
+  !env.r2BucketName ||
+  !env.r2PublicBaseUrl
+) {
+  throw new Error(
+    "R2 storage configuration is incomplete."
   );
+}
 
-  router.post(
-    "/:merchantId/products/:productId/images/upload",
-    upload.single("image"),
-    async (req, res) => {
-      try {
-        const merchantId =
-          req.params.merchantId as string;
+router.use(requireAuth);
 
-        const productId =
-          req.params.productId as string;
+router.post(
+  "/:merchantId/products/:productId/images/upload",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN"),
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      const merchantId =
+        req.params.merchantId as string;
 
-        if (!req.file) {
-          res.status(400).json({
-            error: "Image file is required"
-          });
-          return;
-        }
+      const productId =
+        req.params.productId as string;
 
-        const product =
-          await prisma.product.findFirst({
-            where: {
-              id: productId,
-              merchantId
-            }
-          });
-
-        if (!product) {
-          res.status(404).json({
-            error: "Product not found"
-          });
-          return;
-        }
-
-        const extension =
-          req.file.mimetype === "image/jpeg"
-            ? "jpg"
-            : req.file.mimetype === "image/png"
-              ? "png"
-              : "webp";
-
-        const objectKey =
-          `merchants/${merchantId}/products/${productId}/${crypto.randomUUID()}.${extension}`;
-
-        const imageType = req.file.mimetype as
-          | "image/jpeg"
-          | "image/png"
-          | "image/webp";
-
-        const imageUrl =
-          await uploadProductImage(
-            objectKey,
-            req.file.buffer,
-            imageType
-          );
-
-        const existingImageCount =
-          await prisma.productImage.count({
-            where: {
-              productId
-            }
-          });
-
-        const productImage =
-          await prisma.productImage.create({
-            data: {
-              productId,
-              url: imageUrl,
-              altText: product.name,
-              sortOrder: existingImageCount,
-              isPrimary:
-                existingImageCount === 0
-            }
-          });
-
-        res.status(201).json({
-          message:
-            "Product image uploaded successfully",
-          image: productImage
+      if (!req.file) {
+        res.status(400).json({
+          error: "Image file is required"
         });
-      } catch (error) {
-        console.error(
-          "Failed to upload product image:",
-          error
+        return;
+      }
+
+      const product =
+        await prisma.product.findFirst({
+          where: {
+            id: productId,
+            merchantId
+          }
+        });
+
+      if (!product) {
+        res.status(404).json({
+          error: "Product not found"
+        });
+        return;
+      }
+
+      const extension =
+        req.file.mimetype === "image/jpeg"
+          ? "jpg"
+          : req.file.mimetype === "image/png"
+            ? "png"
+            : "webp";
+
+      const objectKey =
+        `merchants/${merchantId}/products/${productId}/${crypto.randomUUID()}.${extension}`;
+
+      const imageType = req.file.mimetype as
+        | "image/jpeg"
+        | "image/png"
+        | "image/webp";
+
+      const imageUrl =
+        await uploadProductImage(
+          objectKey,
+          req.file.buffer,
+          imageType
         );
 
-        res.status(500).json({
-          error:
-            "Failed to upload product image"
+      const existingImageCount =
+        await prisma.productImage.count({
+          where: {
+            productId
+          }
         });
-      }
+
+      const productImage =
+        await prisma.productImage.create({
+          data: {
+            productId,
+            url: imageUrl,
+            altText: product.name,
+            sortOrder: existingImageCount,
+            isPrimary:
+              existingImageCount === 0
+          }
+        });
+
+      res.status(201).json({
+        message:
+          "Product image uploaded successfully",
+        image: productImage
+      });
+    } catch (error) {
+      console.error(
+        "Failed to upload product image:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to upload product image"
+      });
     }
-  );
+  }
+);
 
 /*
  * =================================================
@@ -166,9 +167,10 @@ const upload = multer({
  */
 router.get(
   "/:merchantId/payment-review",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const payments =
         await prisma.payment.findMany({
@@ -244,12 +246,11 @@ router.get(
  */
 router.get(
   "/:merchantId/payment-review/:paymentId",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        paymentId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const paymentId = String(req.params.paymentId);
 
       const payment =
         await prisma.payment.findFirst({
@@ -315,12 +316,11 @@ router.get(
  */
 router.post(
   "/:merchantId/payment-review/:paymentId/verify",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        paymentId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const paymentId = String(req.params.paymentId);
 
       const {
         reviewNote
@@ -548,28 +548,73 @@ router.post(
              * VERIFY PAYMENT
              * -----------------------------------------
              */
-            const verifiedPayment =
-              await tx.payment.update({
+            const claimResult =
+              await tx.payment.updateMany({
                 where: {
-                  id: payment.id
+                  id: payment.id,
+                  merchantId,
+                  status: PaymentStatus.REVIEW_REQUIRED
                 },
 
                 data: {
-                  status:
-                    PaymentStatus.VERIFIED,
+                  status: PaymentStatus.VERIFIED,
 
-                  verifiedAt:
-                    new Date(),
+                  verifiedAt: new Date(),
 
                   reviewNote:
-                    typeof reviewNote ===
-                      "string" &&
-                    reviewNote.trim()
-                      .length > 0
+                    typeof reviewNote === "string" &&
+                      reviewNote.trim().length > 0
                       ? reviewNote.trim()
                       : null
                 }
               });
+
+            if (claimResult.count !== 1) {
+              throw new Error(
+                "Payment could not be claimed for verification because it was already reviewed"
+              );
+            }
+
+            const verifiedPayment =
+              await tx.payment.findUnique({
+                where: {
+                  id: payment.id
+                }
+              });
+
+            if (!verifiedPayment) {
+              throw new Error(
+                "Verified payment could not be loaded"
+              );
+            }
+
+            /*
+             * Commission accrual is enabled only after a merchant has an
+             * explicit commercial subscription. Existing merchants without
+             * one retain their established payment-verification flow until
+             * they are deliberately initialized; no pricing is inferred.
+             */
+            const subscription =
+              await tx.merchantSubscription.findUnique({
+                where: {
+                  merchantId
+                },
+
+                select: {
+                  id: true
+                }
+              });
+
+            if (subscription) {
+              await accrueCommission(
+                tx,
+                {
+                  merchantId,
+                  paymentId: verifiedPayment.id,
+                  actorUserId: req.auth!.id
+                }
+              );
+            }
 
             /*
              * -----------------------------------------
@@ -586,6 +631,29 @@ router.post(
                   status: "PAID"
                 }
               });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId: req.auth!.id,
+                action: "PAYMENT_VERIFIED",
+                entityType: "PAYMENT",
+                entityId: payment.id,
+                metadata: {
+                  orderId: payment.orderId,
+                  orderNumber: payment.order.orderNumber,
+                  amount: payment.amount,
+                  currency: payment.currency,
+                  transactionReference:
+                    payment.transactionReference,
+                  reviewNote:
+                    typeof reviewNote === "string" &&
+                      reviewNote.trim().length > 0
+                      ? reviewNote.trim()
+                      : null
+                }
+              }
+            });
 
             return {
               payment:
@@ -714,66 +782,66 @@ router.post(
               }
             );
 
-if (conversation) {
-  /*
-   * ---------------------------------------------
-   * SAVE VERIFICATION TELEGRAM MESSAGE
-   * ---------------------------------------------
-   *
-   * Telegram message persistence is idempotent.
-   *
-   * The Message model has a unique constraint on:
-   *
-   *   conversationId + externalId
-   *
-   * The Telegram API message has already been sent
-   * successfully. Therefore, saving the same outbound
-   * message must never cause payment verification to
-   * fail with Prisma P2002.
-   *
-   * If the message already exists, update: {} leaves
-   * the existing record unchanged.
-   */
-  await prisma.message.upsert({
-    where: {
-      conversationId_externalId: {
-        conversationId:
-          conversation.id,
+          if (conversation) {
+            /*
+             * ---------------------------------------------
+             * SAVE VERIFICATION TELEGRAM MESSAGE
+             * ---------------------------------------------
+             *
+             * Telegram message persistence is idempotent.
+             *
+             * The Message model has a unique constraint on:
+             *
+             *   conversationId + externalId
+             *
+             * The Telegram API message has already been sent
+             * successfully. Therefore, saving the same outbound
+             * message must never cause payment verification to
+             * fail with Prisma P2002.
+             *
+             * If the message already exists, update: {} leaves
+             * the existing record unchanged.
+             */
+            await prisma.message.upsert({
+              where: {
+                conversationId_externalId: {
+                  conversationId:
+                    conversation.id,
 
-        externalId
-      }
-    },
+                  externalId
+                }
+              },
 
-    create: {
-      conversationId:
-        conversation.id,
+              create: {
+                conversationId:
+                  conversation.id,
 
-      direction:
-        "OUTBOUND",
+                direction:
+                  "OUTBOUND",
 
-      externalId,
+                externalId,
 
-      content:
-        message
-    },
+                content:
+                  message
+              },
 
-    update: {}
-  });
-} else {
-  console.warn(
-    "Verification Telegram message sent, but conversation was not found:",
-    {
-      merchantId,
+              update: {}
+            });
+          } else {
+            console.warn(
+              "Verification Telegram message sent, but conversation was not found:",
+              {
+                merchantId,
 
-      customerId:
-        result.customer.id,
+                customerId:
+                  result.customer.id,
 
-      chatId
-    }
-  );
-}
+                chatId
+              }
+            );
+          }
         } catch (
-          telegramError
+        telegramError
         ) {
           /*
            * Payment and stock have already been
@@ -857,12 +925,11 @@ if (conversation) {
  */
 router.post(
   "/:merchantId/payment-review/:paymentId/reject",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        paymentId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const paymentId = String(req.params.paymentId);
 
       const {
         reviewNote
@@ -875,7 +942,7 @@ router.post(
        */
       if (
         typeof reviewNote !==
-          "string" ||
+        "string" ||
         reviewNote.trim()
           .length === 0
       ) {
@@ -983,6 +1050,26 @@ router.post(
                     "PENDING_PAYMENT"
                 }
               });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId: req.auth!.id,
+                action: "PAYMENT_REJECTED",
+                entityType: "PAYMENT",
+                entityId: payment.id,
+                metadata: {
+                  orderId: payment.orderId,
+                  orderNumber: payment.order.orderNumber,
+                  amount: payment.amount,
+                  currency: payment.currency,
+                  transactionReference:
+                    payment.transactionReference,
+                  reviewNote:
+                    reviewNote.trim()
+                }
+              }
+            });
 
             return {
               payment:
@@ -1136,7 +1223,7 @@ router.post(
             );
           }
         } catch (
-          telegramError
+        telegramError
         ) {
           /*
            * Payment rejection has already been

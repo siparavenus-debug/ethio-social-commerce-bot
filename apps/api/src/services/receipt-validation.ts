@@ -10,6 +10,7 @@ export type ReceiptValidationResult = {
   currencyMatches: boolean;
   providerMatches: boolean;
   referencePresent: boolean;
+  referenceMatches: boolean;
 
   reasons: string[];
 };
@@ -20,28 +21,25 @@ type ValidateReceiptInput = {
   expectedAmount: number;
   expectedCurrency: string;
   expectedProvider: string;
+  expectedReference: string | null;
 };
 
 /**
  * Normalize provider names coming from:
- *
  * - Prisma
  * - merchant payment methods
  * - Gemini receipt extraction
  *
  * Examples:
- *
  * Telebirr
  * TELEBIRR
  * telebirr
- *
  * -> TELEBIRR
  *
  * CBE Birr
  * CBE_BIRR
  * Commercial Bank of Ethiopia
  * Commercial Bank of Ethiopia Birr
- *
  * -> CBE_BIRR
  */
 export function normalizeProvider(
@@ -51,62 +49,63 @@ export function normalizeProvider(
     return null;
   }
 
-  const value =
-    provider
-      .trim()
-      .toUpperCase()
-      .replace(/[_-]+/g, " ")
-      .replace(/\s+/g, " ");
+  const value = provider
+    .trim()
+    .toUpperCase()
+    .replace(/[\_-]+/g, " ")
+    .replace(/\s+/g, " ");
 
-  /*
-   * Telebirr
-   */
-  if (
-    value.includes("TELEBIRR")
-  ) {
+  if (value.includes("TELEBIRR")) {
     return "TELEBIRR";
   }
 
-  /*
-   * Commercial Bank of Ethiopia /
-   * CBE / CBE Birr
-   */
   if (
-    value.includes(
-      "COMMERCIAL BANK OF ETHIOPIA"
-    ) ||
+    value.includes("COMMERCIAL BANK OF ETHIOPIA") ||
     value === "CBE" ||
     value.includes("CBE BIRR")
   ) {
     return "CBE_BIRR";
   }
 
-  /*
-   * Other is a valid configured
-   * payment provider.
-   */
   if (value === "OTHER") {
     return "OTHER";
   }
 
-  return value.replace(
-    /\s+/g,
-    "_"
-  );
+  return value.replace(/\s+/g, "_");
 }
 
 export function validateReceipt({
   receipt,
   expectedAmount,
   expectedCurrency,
-  expectedProvider
+  expectedProvider,
+  expectedReference
 }: ValidateReceiptInput): ReceiptValidationResult {
   const reasons: string[] = [];
 
-  /*
-   * ---------------------------------------------
+  /**
+   * -------------------------------------------------------
+   * TRANSACTION REFERENCE
+   * -------------------------------------------------------
+   */
+  const receiptReference =
+    receipt.transactionReference?.trim() ?? null;
+
+  const expectedReferenceValue =
+    expectedReference?.trim() ?? null;
+
+  const referencePresent =
+    Boolean(receiptReference);
+
+  const referenceMatches =
+    referencePresent &&
+    Boolean(expectedReferenceValue) &&
+    receiptReference === expectedReferenceValue;
+
+  /**
+   * -------------------------------------------------------
    * AMOUNT
-   * ---------------------------------------------
+   * -------------------------------------------------------
    */
   const amountMatches =
     receipt.amount !== null &&
@@ -116,10 +115,10 @@ export function validateReceipt({
       receipt.amount - expectedAmount
     ) < 0.01;
 
-  /*
-   * ---------------------------------------------
+  /**
+   * -------------------------------------------------------
    * CURRENCY
-   * ---------------------------------------------
+   * -------------------------------------------------------
    */
   const currencyMatches =
     receipt.currency !== null &&
@@ -127,20 +126,16 @@ export function validateReceipt({
     receipt.currency.trim().toUpperCase() ===
       expectedCurrency.trim().toUpperCase();
 
-  /*
-   * ---------------------------------------------
+  /**
+   * -------------------------------------------------------
    * PROVIDER
-   * ---------------------------------------------
+   * -------------------------------------------------------
    */
   const normalizedReceiptProvider =
-    normalizeProvider(
-      receipt.provider
-    );
+    normalizeProvider(receipt.provider);
 
   const normalizedExpectedProvider =
-    normalizeProvider(
-      expectedProvider
-    );
+    normalizeProvider(expectedProvider);
 
   const providerMatches =
     normalizedReceiptProvider !== null &&
@@ -148,36 +143,32 @@ export function validateReceipt({
     normalizedReceiptProvider ===
       normalizedExpectedProvider;
 
-  /*
-   * ---------------------------------------------
-   * TRANSACTION REFERENCE
-   * ---------------------------------------------
-   */
-  const referencePresent =
-    Boolean(
-      receipt.transactionReference?.trim()
-    );
-
-  /*
-   * ---------------------------------------------
+  /**
+   * -------------------------------------------------------
    * REASONS
-   * ---------------------------------------------
+   * -------------------------------------------------------
    */
   if (!amountMatches) {
     reasons.push(
-      `Amount mismatch: expected ${expectedAmount}, received ${receipt.amount ?? "unknown"}`
+      `Amount mismatch: expected ${expectedAmount}, received ${
+        receipt.amount ?? "unknown"
+      }`
     );
   }
 
   if (!currencyMatches) {
     reasons.push(
-      `Currency mismatch: expected ${expectedCurrency}, received ${receipt.currency ?? "unknown"}`
+      `Currency mismatch: expected ${expectedCurrency}, received ${
+        receipt.currency ?? "unknown"
+      }`
     );
   }
 
   if (!providerMatches) {
     reasons.push(
-      `Provider mismatch: expected ${expectedProvider}, received ${receipt.provider ?? "unknown"}`
+      `Provider mismatch: expected ${expectedProvider}, received ${
+        receipt.provider ?? "unknown"
+      }`
     );
   }
 
@@ -185,14 +176,48 @@ export function validateReceipt({
     reasons.push(
       "Transaction reference was not detected"
     );
+  } else if (!referenceMatches) {
+    reasons.push(
+      `Transaction reference mismatch: expected ${
+        expectedReferenceValue ?? "unknown"
+      }, received ${receiptReference}`
+    );
   }
 
-  /*
-   * ---------------------------------------------
-   * SAFE MATCH
-   * ---------------------------------------------
+    /**
+   * -------------------------------------------------------
+   * REVIEW REQUIRED
+   * -------------------------------------------------------
    *
-   * MATCH means the extracted evidence agrees
+   * Missing or uncertain information is never
+   * automatically treated as fraud or rejection.
+   */
+    if (
+      receipt.confidence < 0.8 ||
+      receipt.amount === null ||
+      receipt.amount === undefined ||
+      receipt.currency === null ||
+      receipt.provider === null ||
+      receipt.transactionReference === null ||
+      receipt.transactionReference === undefined
+    ) {
+      return {
+        status: "REVIEW_REQUIRED",
+        amountMatches,
+        currencyMatches,
+        providerMatches,
+        referencePresent,
+        referenceMatches,
+        reasons
+      };
+    }
+
+  /**
+   * -------------------------------------------------------
+   * SAFE MATCH
+   * -------------------------------------------------------
+   *
+   * MATCH means the extracted receipt evidence agrees
    * with the expected payment.
    *
    * It does NOT mean the payment is verified.
@@ -203,7 +228,7 @@ export function validateReceipt({
     amountMatches &&
     currencyMatches &&
     providerMatches &&
-    referencePresent
+    referenceMatches
   ) {
     return {
       status: "MATCH",
@@ -211,41 +236,17 @@ export function validateReceipt({
       currencyMatches,
       providerMatches,
       referencePresent,
+      referenceMatches,
       reasons
     };
   }
 
-  /*
-   * ---------------------------------------------
-   * REVIEW REQUIRED
-   * ---------------------------------------------
-   *
-   * Missing or uncertain information is never
-   * automatically treated as fraud or rejection.
-   */
-  if (
-    receipt.confidence < 0.8 ||
-    receipt.amount === null ||
-    receipt.amount === undefined ||
-    receipt.currency === null ||
-    receipt.provider === null ||
-    receipt.transactionReference === null ||
-    receipt.transactionReference === undefined
-  ) {
-    return {
-      status: "REVIEW_REQUIRED",
-      amountMatches,
-      currencyMatches,
-      providerMatches,
-      referencePresent,
-      reasons
-    };
-  }
 
-  /*
-   * ---------------------------------------------
+
+  /**
+   * -------------------------------------------------------
    * MISMATCH
-   * ---------------------------------------------
+   * -------------------------------------------------------
    */
   return {
     status: "MISMATCH",
@@ -253,6 +254,7 @@ export function validateReceipt({
     currencyMatches,
     providerMatches,
     referencePresent,
+    referenceMatches,
     reasons
   };
 }

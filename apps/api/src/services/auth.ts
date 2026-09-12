@@ -21,6 +21,7 @@ type AuthTokenPayload = {
   userId: string;
   merchantId: string;
   role: string;
+  tokenVersion: number;
   issuedAt: number;
   expiresAt: number;
 };
@@ -31,6 +32,7 @@ export type AuthenticatedUser = {
   email: string;
   displayName: string | null;
   role: string;
+  tokenVersion: number;
 };
 
 function base64UrlEncode(
@@ -187,7 +189,7 @@ export async function verifyPassword(
       blockSize <= 0 ||
       parallelization <= 0 ||
       expected.length !==
-        PASSWORD_KEY_LENGTH ||
+      PASSWORD_KEY_LENGTH ||
       salt.length === 0
     ) {
       return false;
@@ -223,6 +225,7 @@ export function createAuthToken(
     id: string;
     merchantId: string;
     role: string;
+    tokenVersion: number;
   }
 ): string {
   const issuedAt =
@@ -236,6 +239,7 @@ export function createAuthToken(
     userId: user.id,
     merchantId: user.merchantId,
     role: user.role,
+    tokenVersion: user.tokenVersion,
     issuedAt,
     expiresAt
   };
@@ -317,6 +321,9 @@ export function verifyAuthToken(
       !payload.merchantId ||
       !payload.role ||
       !Number.isInteger(
+        payload.tokenVersion
+      ) ||
+      !Number.isInteger(
         payload.issuedAt
       ) ||
       !Number.isInteger(
@@ -366,7 +373,8 @@ export async function authenticateUser(
         email: true,
         passwordHash: true,
         displayName: true,
-        role: true
+        role: true,
+        tokenVersion: true
       }
     });
 
@@ -390,6 +398,7 @@ export async function authenticateUser(
     email: user.email,
     displayName:
       user.displayName,
-    role: user.role
+    role: user.role,
+    tokenVersion: user.tokenVersion
   };
 }

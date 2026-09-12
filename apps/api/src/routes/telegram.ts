@@ -10,6 +10,7 @@ import { env } from "../config/env.js";
 
 import {
   sendTelegramMessage,
+  sendTelegramPhoto,
   getTelegramFilePath,
   downloadTelegramFile
 } from "../services/telegram.js";
@@ -90,39 +91,45 @@ function customerName(
 function requireTelegramConfiguration() {
   return Boolean(
     env.telegramBotToken &&
-      env.telegramWebhookSecret &&
-      env.telegramMerchantId
+    env.telegramWebhookSecret &&
+    env.telegramMerchantId
   );
 }
 
 async function sendAndSaveMessage(
   chatId: string,
   conversationId: string,
-  text: string
+  text: string,
+  imageUrl?: string
 ) {
-  const externalId =
-    await sendTelegramMessage(
+  const externalId = imageUrl
+    ? await sendTelegramPhoto(
+      chatId,
+      imageUrl,
+      text
+    )
+    : await sendTelegramMessage(
       chatId,
       text
     );
 
-    await prisma.message.upsert({
-      where: {
-        conversationId_externalId: {
-          conversationId,
-          externalId
-        }
-      },
-    
-      create: {
+  await prisma.message.upsert({
+    where: {
+      conversationId_externalId: {
         conversationId,
-        direction: "OUTBOUND",
-        externalId,
-        content: text
-      },
-    
-      update: {}
-    });
+        externalId
+      }
+    },
+
+    create: {
+      conversationId,
+      direction: "OUTBOUND",
+      externalId,
+      content: text
+    },
+
+    update: {}
+  });
 }
 
 /**
@@ -194,10 +201,10 @@ router.post(
 
     const eventId =
       typeof update.update_id ===
-      "number"
+        "number"
         ? String(
-            update.update_id
-          )
+          update.update_id
+        )
         : null;
 
     const message =
@@ -215,7 +222,7 @@ router.post(
 
     const hasText =
       typeof text ===
-        "string" &&
+      "string" &&
       text.length > 0;
 
     const chatId =
@@ -405,82 +412,82 @@ router.post(
           }
         );
 
-    
-/*
- * ---------------------------------------------
- * SAVE WEBHOOK EVENT + INBOUND MESSAGE
- * ---------------------------------------------
- *
- * Telegram may retry the same update.
- *
- * Message has a unique constraint on:
- *
- *   conversationId + externalId
- *
- * Therefore inbound messages must be persisted
- * idempotently. A duplicate Telegram delivery must
- * NEVER cause the webhook to return HTTP 500.
- */
-if (!existingEvent) {
-  await prisma.webhookEvent.create({
-    data: {
-      merchantId,
 
-      provider:
-        "TELEGRAM",
+      /*
+       * ---------------------------------------------
+       * SAVE WEBHOOK EVENT + INBOUND MESSAGE
+       * ---------------------------------------------
+       *
+       * Telegram may retry the same update.
+       *
+       * Message has a unique constraint on:
+       *
+       *   conversationId + externalId
+       *
+       * Therefore inbound messages must be persisted
+       * idempotently. A duplicate Telegram delivery must
+       * NEVER cause the webhook to return HTTP 500.
+       */
+      if (!existingEvent) {
+        await prisma.webhookEvent.create({
+          data: {
+            merchantId,
 
-      eventId,
+            provider:
+              "TELEGRAM",
 
-      payload:
-        update as object
-    }
-  });
-}
+            eventId,
 
-/*
- * ---------------------------------------------
- * IDEMPOTENT INBOUND MESSAGE
- * ---------------------------------------------
- *
- * Telegram message_id is used as externalId.
- *
- * If Telegram retries the same message, update the
- * existing record instead of attempting a duplicate
- * insert.
- */
-await prisma.message.upsert({
-  where: {
-    conversationId_externalId: {
-      conversationId:
-        conversation.id,
+            payload:
+              update as object
+          }
+        });
+      }
 
-      externalId:
-        String(
-          message.message_id
-        )
-    }
-  },
+      /*
+       * ---------------------------------------------
+       * IDEMPOTENT INBOUND MESSAGE
+       * ---------------------------------------------
+       *
+       * Telegram message_id is used as externalId.
+       *
+       * If Telegram retries the same message, update the
+       * existing record instead of attempting a duplicate
+       * insert.
+       */
+      await prisma.message.upsert({
+        where: {
+          conversationId_externalId: {
+            conversationId:
+              conversation.id,
 
-  create: {
-    conversationId:
-      conversation.id,
+            externalId:
+              String(
+                message.message_id
+              )
+          }
+        },
 
-    direction:
-      "INBOUND",
+        create: {
+          conversationId:
+            conversation.id,
 
-    externalId:
-      String(
-        message.message_id
-      ),
+          direction:
+            "INBOUND",
 
-    content:
-      text ??
-      message.caption ??
-      "[Receipt image]"
-  },
+          externalId:
+            String(
+              message.message_id
+            ),
 
-  update: {}
-});
+          content:
+            text ??
+            message.caption ??
+            "[Receipt image]"
+        },
+
+        update: {}
+      });
 
       /*
        * =================================================
@@ -495,7 +502,7 @@ await prisma.message.upsert({
            */
           const largestPhoto =
             photo[
-              photo.length - 1
+            photo.length - 1
             ];
 
           if (
@@ -521,7 +528,7 @@ await prisma.message.upsert({
           if (
             largestPhoto.file_size !== undefined &&
             largestPhoto.file_size >
-              MAX_RECEIPT_IMAGE_BYTES
+            MAX_RECEIPT_IMAGE_BYTES
           ) {
             throw new Error(
               "Telegram receipt image exceeds the maximum allowed size"
@@ -535,55 +542,72 @@ await prisma.message.upsert({
             await getTelegramFilePath(
               largestPhoto.file_id
             );
-                        /*
- * Download image.
- */
-const image =
-await downloadTelegramFile(
-  filePath
-);
-
-/*
-* Verify the actual downloaded payload too.
-*
-* The Telegram metadata is not sufficient by itself.
+          /*
+* Download image.
 */
-if (
-image.length === 0
-) {
-throw new Error(
-  "Telegram receipt image is empty"
-);
-}
+          const image =
+            await downloadTelegramFile(
+              filePath
+            );
 
-if (
-image.length >
-MAX_RECEIPT_IMAGE_BYTES
-) {
-throw new Error(
-  "Downloaded receipt image exceeds the maximum allowed size"
-);
-}
+          /*
+          * Verify the actual downloaded payload too.
+          *
+          * The Telegram metadata is not sufficient by itself.
+          */
+          if (
+            image.length === 0
+          ) {
+            throw new Error(
+              "Telegram receipt image is empty"
+            );
+          }
 
-/*
-* Gemini Vision extraction.
-*
-* The current Telegram photo flow provides the
-* image as JPEG to the existing receipt-vision
-* service. MIME validation is additionally enforced
-* inside extractReceipt().
-*/
-const receipt =
-await extractReceipt(
-  image,
-  "image/jpeg"
-);
+          if (
+            image.length >
+            MAX_RECEIPT_IMAGE_BYTES
+          ) {
+            throw new Error(
+              "Downloaded receipt image exceeds the maximum allowed size"
+            );
+          }
+
+          /*
+          * Gemini Vision extraction.
+          *
+          * The current Telegram photo flow provides the
+          * image as JPEG to the existing receipt-vision
+          * service. MIME validation is additionally enforced
+          * inside extractReceipt().
+          */
+          const receipt =
+            await extractReceipt(
+              image,
+              "image/jpeg"
+            );
 
 
-          console.log(
-            "Receipt extracted:",
-            receipt
-          );
+            console.log(
+              "Receipt extracted:",
+              {
+                provider: receipt.provider,
+                hasTransactionReference:
+                  Boolean(
+                    receipt.transactionReference
+                  ),
+                hasAmount:
+                  receipt.amount !== null &&
+                  receipt.amount !== undefined,
+                hasCurrency:
+                  Boolean(receipt.currency),
+                hasTransactionDate:
+                  Boolean(receipt.transactionDate),
+                hasTransactionTime:
+                  Boolean(receipt.transactionTime),
+                confidence:
+                  receipt.confidence
+              }
+            );
 
           /*
            * ---------------------------------------------
@@ -609,46 +633,72 @@ await extractReceipt(
           const currentPendingOrderId =
             conversationState.pendingOrderId;
 
-          const newestPendingOrder =
-            await prisma.order.findFirst({
-              where: {
-                merchantId,
-                customerId: customer.id,
-                status: "PENDING_PAYMENT"
-              },
-              select: {
-                id: true,
-                orderNumber: true,
-                total: true,
-                currency: true
-              },
-              orderBy: {
-                createdAt: "desc"
-              }
-            });
-
-          let targetOrder = newestPendingOrder;
+          let targetOrder = null;
 
           /*
-           * If no new pending order exists, fall back to the
-           * conversation's current order. This supports the flow
-           * where the customer already submitted a transaction
-           * reference and that order is in PAYMENT_REVIEW.
+           * ---------------------------------------------
+           * RESOLVE THE ORDER FOR THIS RECEIPT
+           * ---------------------------------------------
+           *
+           * Day 2 correlation rule:
+           *
+           * 1. If the conversation has an explicit pendingOrderId,
+           *    that exact order is authoritative.
+           *
+           * 2. The order must belong to this merchant AND customer.
+           *
+           * 3. The order must still be awaiting payment/review.
+           *
+           * 4. Only when there is no valid conversation order do
+           *    we fall back to the customer's newest pending order.
+           *
+           * This prevents a newer order from accidentally replacing
+           * the order currently associated with this conversation.
            */
-          if (!targetOrder && currentPendingOrderId) {
+
+          if (currentPendingOrderId) {
             targetOrder =
               await prisma.order.findFirst({
                 where: {
                   id: currentPendingOrderId,
                   merchantId,
                   customerId: customer.id,
-                  status: "PAYMENT_REVIEW"
+                  status: {
+                    in: [
+                      "PENDING_PAYMENT",
+                      "PAYMENT_REVIEW"
+                    ]
+                  }
                 },
                 select: {
                   id: true,
                   orderNumber: true,
                   total: true,
                   currency: true
+                }
+              });
+          }
+
+          /*
+           * Only fall back to the newest pending order when the
+           * conversation does not contain a valid current order.
+           */
+          if (!targetOrder) {
+            targetOrder =
+              await prisma.order.findFirst({
+                where: {
+                  merchantId,
+                  customerId: customer.id,
+                  status: "PENDING_PAYMENT"
+                },
+                select: {
+                  id: true,
+                  orderNumber: true,
+                  total: true,
+                  currency: true
+                },
+                orderBy: {
+                  createdAt: "desc"
                 }
               });
           }
@@ -695,14 +745,14 @@ await extractReceipt(
            * CREATE PAYMENT FOR A NEW PENDING ORDER
            * ---------------------------------------------
            */
-          if (!pendingPayment && newestPendingOrder) {
+          if (!pendingPayment && targetOrder) {
             const provider =
               receiptProviderToEnum(
                 receipt.provider
               );
 
             const receiptObjectKey =
-              `receipts/${merchantId}/${newestPendingOrder.id}/${Date.now()}-${largestPhoto.file_id}.jpg`;
+              `receipts/${merchantId}/${targetOrder.id}/${Date.now()}-${largestPhoto.file_id}.jpg`;
 
             const receiptUrl =
               await uploadReceiptImage(
@@ -743,7 +793,7 @@ await extractReceipt(
                   existingPaymentId:
                     duplicateReference.id,
                   newOrderId:
-                    newestPendingOrder.id
+                    targetOrder.id
                 }
               );
 
@@ -758,14 +808,14 @@ await extractReceipt(
                       data: {
                         merchantId,
                         orderId:
-                          newestPendingOrder.id,
+                          targetOrder.id,
                         provider,
                         status:
                           PaymentStatus.REVIEW_REQUIRED,
                         amount:
-                          newestPendingOrder.total,
+                          targetOrder.total,
                         currency:
-                          newestPendingOrder.currency,
+                          targetOrder.currency,
                         transactionReference,
                         receiptUrl,
                         receiptMetadata: {
@@ -776,11 +826,11 @@ await extractReceipt(
                             new Date().toISOString(),
                           ...(duplicateReference
                             ? {
-                                duplicateTransactionReference:
-                                  true,
-                                duplicatePaymentId:
-                                  duplicateReference.id
-                              }
+                              duplicateTransactionReference:
+                                true,
+                              duplicatePaymentId:
+                                duplicateReference.id
+                            }
                             : {})
                         }
                       },
@@ -798,7 +848,7 @@ await extractReceipt(
 
                   await tx.order.update({
                     where: {
-                      id: newestPendingOrder.id
+                      id: targetOrder.id
                     },
                     data: {
                       status:
@@ -836,11 +886,11 @@ await extractReceipt(
 
             const existingMetadata =
               pendingPayment.receiptMetadata &&
-              typeof pendingPayment.receiptMetadata ===
+                typeof pendingPayment.receiptMetadata ===
                 "object" &&
-              !Array.isArray(
-                pendingPayment.receiptMetadata
-              )
+                !Array.isArray(
+                  pendingPayment.receiptMetadata
+                )
                 ? pendingPayment.receiptMetadata
                 : {};
 
@@ -888,13 +938,14 @@ await extractReceipt(
            */
           let validation:
             | ReturnType<
-                typeof validateReceipt
-              >
+              typeof validateReceipt
+            >
             | null = null;
 
           if (
             pendingPayment
           ) {
+
             validation =
               validateReceipt({
                 receipt,
@@ -908,13 +959,28 @@ await extractReceipt(
                   pendingPayment.currency,
 
                 expectedProvider:
-                  pendingPayment.provider
+                  pendingPayment.provider,
+
+                expectedReference:
+                  pendingPayment.transactionReference
               });
 
-            console.log(
-              "Receipt validation:",
-              validation
-            );
+              console.log(
+                "Receipt validation:",
+                {
+                  status: validation.status,
+                  amountMatches:
+                    validation.amountMatches,
+                  currencyMatches:
+                    validation.currencyMatches,
+                  providerMatches:
+                    validation.providerMatches,
+                  referencePresent:
+                    validation.referencePresent,
+                  referenceMatches:
+                    validation.referenceMatches
+                }
+              );
 
             /*
              * Store extraction and validation.
@@ -928,18 +994,18 @@ await extractReceipt(
 
                 data: {
                   receiptMetadata:
-                    {
-                      extracted:
-                        receipt,
+                  {
+                    extracted:
+                      receipt,
 
-                      validation,
+                    validation,
 
-                      receivedVia:
-                        "TELEGRAM_PHOTO",
+                    receivedVia:
+                      "TELEGRAM_PHOTO",
 
-                      processedAt:
-                        new Date().toISOString()
-                    }
+                    processedAt:
+                      new Date().toISOString()
+                  }
                 }
               }
             );
@@ -953,41 +1019,7 @@ await extractReceipt(
           const receiptMessageParts = [
             "Receipt received. 📷",
             "",
-            `Provider: ${
-              receipt.provider ??
-              "Not detected"
-            }`,
-            `Transaction reference: ${
-              receipt.transactionReference ??
-              "Not detected"
-            }`,
-            `Amount: ${
-              receipt.amount !== null &&
-              receipt.amount !== undefined
-                ? `${receipt.amount} ${
-                    receipt.currency ??
-                    "ETB"
-                  }`
-                : "Not detected"
-            }`,
-            `Currency: ${
-              receipt.currency ??
-              "Not detected"
-            }`,
-            `Date: ${
-              receipt.transactionDate ??
-              "Not detected"
-            }`,
-            `Time: ${
-              receipt.transactionTime ??
-              "Not detected"
-            }`,
-            "",
-            `Extraction confidence: ${
-              Math.round(
-                receipt.confidence * 100
-              )
-            }%`
+            "Your payment receipt was received and is being processed.",
           ];
 
           if (
@@ -1048,15 +1080,9 @@ await extractReceipt(
 
           res.status(200).json({
             ok: true,
-
-            receipt,
-
-            validation,
-
             paymentId:
               pendingPayment?.id ??
               null,
-
             paymentStatus:
               pendingPayment?.status ??
               null
@@ -1064,7 +1090,7 @@ await extractReceipt(
 
           return;
         } catch (
-          receiptError
+        receiptError
         ) {
           console.error(
             "Failed to process Telegram receipt:",
@@ -1084,7 +1110,7 @@ await extractReceipt(
               ].join("\n")
             );
           } catch (
-            telegramError
+          telegramError
           ) {
             console.error(
               "Failed to send receipt error message:",
@@ -1141,7 +1167,8 @@ await extractReceipt(
       await sendAndSaveMessage(
         chatIdString,
         conversation.id,
-        result.reply
+        result.reply,
+        result.imageUrl
       );
 
       /*

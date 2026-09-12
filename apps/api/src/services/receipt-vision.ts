@@ -1,163 +1,199 @@
 import {
-    GoogleGenAI,
-    Type
-  } from "@google/genai";
+  GoogleGenAI,
+  Type
+} from "@google/genai";
 
-  import { env } from "../config/env.js";
+import { env } from "../config/env.js";
 
-  export type ReceiptExtraction = {
-    provider: string | null;
-    transactionReference: string | null;
-    amount: number | null;
-    currency: string | null;
-    transactionDate: string | null;
-    transactionTime: string | null;
-    senderName: string | null;
-    senderAccount: string | null;
-    confidence: number;
-  };
+export type ReceiptExtraction = {
+  provider: string | null;
+  transactionReference: string | null;
+  amount: number | null;
+  currency: string | null;
+  transactionDate: string | null;
+  transactionTime: string | null;
+  senderName: string | null;
+  senderAccount: string | null;
+  confidence: number;
+};
 
-  let geminiClient: GoogleGenAI | null = null;
+let geminiClient: GoogleGenAI | null = null;
 
-  const MAX_RECEIPT_IMAGE_BYTES =
-    5 * 1024 * 1024;
+const MAX_RECEIPT_IMAGE_BYTES =
+  5 * 1024 * 1024;
 
-  const ALLOWED_RECEIPT_MIME_TYPES =
-    new Set([
-      "image/jpeg",
-      "image/png",
-      "image/webp"
-    ]);
+const ALLOWED_RECEIPT_MIME_TYPES =
+  new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp"
+  ]);
 
-  function getGeminiClient(): GoogleGenAI {
-    if (!env.geminiApiKey) {
-      throw new Error(
-        "GEMINI_API_KEY is not configured"
-      );
-    }
-
-    if (!geminiClient) {
-      geminiClient = new GoogleGenAI({
-        apiKey: env.geminiApiKey
-      });
-    }
-
-    return geminiClient;
+function getGeminiClient(): GoogleGenAI {
+  if (!env.geminiApiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not configured"
+    );
   }
 
-  const receiptSchema = {
-    type: Type.OBJECT,
-    properties: {
-      provider: {
-        type: Type.STRING,
-        nullable: true
-      },
+  if (!geminiClient) {
+    geminiClient = new GoogleGenAI({
+      apiKey: env.geminiApiKey
+    });
+  }
 
-      transactionReference: {
-        type: Type.STRING,
-        nullable: true
-      },
+  return geminiClient;
+}
 
-      amount: {
-        type: Type.NUMBER,
-        nullable: true
-      },
-
-      currency: {
-        type: Type.STRING,
-        nullable: true
-      },
-
-      transactionDate: {
-        type: Type.STRING,
-        nullable: true
-      },
-
-      transactionTime: {
-        type: Type.STRING,
-        nullable: true
-      },
-
-      senderName: {
-        type: Type.STRING,
-        nullable: true
-      },
-
-      senderAccount: {
-        type: Type.STRING,
-        nullable: true
-      },
-
-      confidence: {
-        type: Type.NUMBER
-      }
+const receiptSchema = {
+  type: Type.OBJECT,
+  properties: {
+    provider: {
+      type: Type.STRING,
+      nullable: true
     },
 
-    required: [
-      "provider",
-      "transactionReference",
-      "amount",
-      "currency",
-      "transactionDate",
-      "transactionTime",
-      "senderName",
-      "senderAccount",
-      "confidence"
-    ]
-  };
+    transactionReference: {
+      type: Type.STRING,
+      nullable: true
+    },
 
-  export async function extractReceipt(
-    image: Buffer,
-    mimeType = "image/jpeg"
-  ): Promise<ReceiptExtraction> {
-    if (!Buffer.isBuffer(image)) {
-      throw new Error(
-        "Receipt image must be a valid buffer"
-      );
+    amount: {
+      type: Type.NUMBER,
+      nullable: true
+    },
+
+    currency: {
+      type: Type.STRING,
+      nullable: true
+    },
+
+    transactionDate: {
+      type: Type.STRING,
+      nullable: true
+    },
+
+    transactionTime: {
+      type: Type.STRING,
+      nullable: true
+    },
+
+    senderName: {
+      type: Type.STRING,
+      nullable: true
+    },
+
+    senderAccount: {
+      type: Type.STRING,
+      nullable: true
+    },
+
+    confidence: {
+      type: Type.NUMBER
     }
+  },
 
-    if (image.length === 0) {
-      throw new Error(
-        "Receipt image is empty"
-      );
-    }
+  required: [
+    "provider",
+    "transactionReference",
+    "amount",
+    "currency",
+    "transactionDate",
+    "transactionTime",
+    "senderName",
+    "senderAccount",
+    "confidence"
+  ]
+};
 
-    if (
-      image.length >
-      MAX_RECEIPT_IMAGE_BYTES
-    ) {
-      throw new Error(
-        "Receipt image exceeds the maximum allowed size"
-      );
-    }
+export async function extractReceipt(
+  image: Buffer,
+  mimeType = "image/jpeg"
+): Promise<ReceiptExtraction> {
+  if (!Buffer.isBuffer(image)) {
+    throw new Error(
+      "Receipt image must be a valid buffer"
+    );
+  }
 
-    if (
-      !ALLOWED_RECEIPT_MIME_TYPES.has(
-        mimeType.toLowerCase()
-      )
-    ) {
-      throw new Error(
-        "Unsupported receipt image type"
-      );
-    }
+  if (image.length === 0) {
+    throw new Error(
+      "Receipt image is empty"
+    );
+  }
 
-    const client =
-      getGeminiClient();
+  if (
+    image.length >
+    MAX_RECEIPT_IMAGE_BYTES
+  ) {
+    throw new Error(
+      "Receipt image exceeds the maximum allowed size"
+    );
+  }
 
-    const response =
-      await client.models.generateContent({
-        model: "gemini-3.6-flash",
+  const normalizedMimeType =
+    mimeType.toLowerCase();
 
-        contents: [
-          {
-            inlineData: {
-              mimeType,
-              data: image.toString("base64")
-            }
-          },
+  if (
+    !ALLOWED_RECEIPT_MIME_TYPES.has(
+      normalizedMimeType
+    )
+  ) {
+    throw new Error(
+      "Unsupported receipt image type"
+    );
+  }
 
-          {
-            text: `
+  const isValidImageSignature =
+    (normalizedMimeType === "image/jpeg" &&
+      image.length >= 3 &&
+      image[0] === 0xff &&
+      image[1] === 0xd8 &&
+      image[2] === 0xff) ||
+    (normalizedMimeType === "image/png" &&
+      image.length >= 8 &&
+      image.subarray(0, 8).equals(
+        Buffer.from([
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a
+        ])
+      )) ||
+    (normalizedMimeType === "image/webp" &&
+      image.length >= 12 &&
+      image.subarray(0, 4).toString("ascii") ===
+        "RIFF" &&
+      image.subarray(8, 12).toString("ascii") ===
+        "WEBP");
+
+  if (!isValidImageSignature) {
+    throw new Error(
+      "Receipt image content does not match the declared image type"
+    );
+  }
+
+  const client =
+    getGeminiClient();
+
+  const response =
+    await client.models.generateContent({
+      model: "gemini-3.6-flash",
+
+      contents: [
+        {
+          inlineData: {
+            mimeType,
+            data: image.toString("base64")
+          }
+        },
+
+        {
+          text: `
   You are extracting payment information from an
   Ethiopian mobile-money payment receipt.
 
@@ -186,103 +222,103 @@ import {
 
   Return only the requested structured data.
   `
-          }
-        ],
-
-        config: {
-          responseMimeType:
-            "application/json",
-
-          responseSchema:
-            receiptSchema
         }
-      });
+      ],
 
-    const text =
-      response.text?.trim();
+      config: {
+        responseMimeType:
+          "application/json",
 
-    if (!text) {
-      throw new Error(
-        "Gemini receipt extraction returned an empty response"
-      );
-    }
+        responseSchema:
+          receiptSchema
+      }
+    });
 
-    let parsed: unknown;
+  const text =
+    response.text?.trim();
 
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new Error(
-        "Gemini receipt extraction returned invalid JSON"
-      );
-    }
-
-    if (
-      typeof parsed !== "object" ||
-      parsed === null
-    ) {
-      throw new Error(
-        "Gemini receipt extraction returned invalid data"
-      );
-    }
-
-    const value =
-      parsed as Record<string, unknown>;
-
-    const confidence =
-      typeof value.confidence === "number"
-        ? value.confidence
-        : 0;
-
-    return {
-      provider:
-        typeof value.provider === "string"
-          ? value.provider.trim()
-          : null,
-
-      transactionReference:
-        typeof value.transactionReference ===
-          "string"
-          ? value.transactionReference.trim()
-          : null,
-
-      amount:
-        typeof value.amount === "number" &&
-        Number.isFinite(value.amount)
-          ? value.amount
-          : null,
-
-      currency:
-        typeof value.currency === "string"
-          ? value.currency.trim().toUpperCase()
-          : null,
-
-      transactionDate:
-        typeof value.transactionDate ===
-          "string"
-          ? value.transactionDate.trim()
-          : null,
-
-      transactionTime:
-        typeof value.transactionTime ===
-          "string"
-          ? value.transactionTime.trim()
-          : null,
-
-      senderName:
-        typeof value.senderName === "string"
-          ? value.senderName.trim()
-          : null,
-
-      senderAccount:
-        typeof value.senderAccount ===
-          "string"
-          ? value.senderAccount.trim()
-          : null,
-
-      confidence: Math.min(
-        1,
-        Math.max(0, confidence)
-      )
-    };
+  if (!text) {
+    throw new Error(
+      "Gemini receipt extraction returned an empty response"
+    );
   }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(
+      "Gemini receipt extraction returned invalid JSON"
+    );
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null
+  ) {
+    throw new Error(
+      "Gemini receipt extraction returned invalid data"
+    );
+  }
+
+  const value =
+    parsed as Record<string, unknown>;
+
+  const confidence =
+    typeof value.confidence === "number"
+      ? value.confidence
+      : 0;
+
+  return {
+    provider:
+      typeof value.provider === "string"
+        ? value.provider.trim()
+        : null,
+
+    transactionReference:
+      typeof value.transactionReference ===
+        "string"
+        ? value.transactionReference.trim()
+        : null,
+
+    amount:
+      typeof value.amount === "number" &&
+        Number.isFinite(value.amount)
+        ? value.amount
+        : null,
+
+    currency:
+      typeof value.currency === "string"
+        ? value.currency.trim().toUpperCase()
+        : null,
+
+    transactionDate:
+      typeof value.transactionDate ===
+        "string"
+        ? value.transactionDate.trim()
+        : null,
+
+    transactionTime:
+      typeof value.transactionTime ===
+        "string"
+        ? value.transactionTime.trim()
+        : null,
+
+    senderName:
+      typeof value.senderName === "string"
+        ? value.senderName.trim()
+        : null,
+
+    senderAccount:
+      typeof value.senderAccount ===
+        "string"
+        ? value.senderAccount.trim()
+        : null,
+
+    confidence: Math.min(
+      1,
+      Math.max(0, confidence)
+    )
+  };
+}

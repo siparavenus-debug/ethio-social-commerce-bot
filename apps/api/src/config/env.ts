@@ -26,10 +26,22 @@ if (!authSecret || authSecret.length < 32) {
   );
 }
 
+const platformAuthSecret =
+  process.env.PLATFORM_AUTH_SECRET?.trim();
+
+if (
+  !platformAuthSecret ||
+  platformAuthSecret.length < 32
+) {
+  throw new Error(
+    "PLATFORM_AUTH_SECRET must be configured and contain at least 32 characters."
+  );
+}
+
 const authTokenTtlSeconds =
   Number(
     process.env.AUTH_TOKEN_TTL_SECONDS ??
-      "86400"
+    "86400"
   );
 
 if (
@@ -79,6 +91,8 @@ export const env = {
     process.env.TELEGRAM_MERCHANT_ID,
 
   authSecret,
+
+  platformAuthSecret,
 
   authTokenTtlSeconds,
 

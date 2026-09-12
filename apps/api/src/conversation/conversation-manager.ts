@@ -39,6 +39,7 @@ export type ConversationContext = {
 
 export type ConversationResult = {
   reply: string;
+  imageUrl?: string;
 };
 
 const MAX_AI_MESSAGE_LENGTH = 4000;
@@ -249,76 +250,76 @@ export async function handleConversation(
     } else if (pendingOrder.status === "PENDING_PAYMENT") {
       const transactionReference = text.trim();
 
-    if (!looksLikePaymentReference(transactionReference)) {
-      return {
-        reply:
-          "Please send a valid payment transaction reference.\n\n" +
-          "For example:\n" +
-          "TLB-123456789"
-      };
-    }
-
-    const order = pendingOrder;
-
-    const paymentMethods =
-      await getPaymentInstructions(merchantId);
-
-    const provider =
-      paymentMethods.length === 1
-        ? (paymentMethods[0].provider as PaymentProvider)
-        : PaymentProvider.OTHER;
-
-    const existingPayment =
-      await prisma.payment.findFirst({
-        where: {
-          provider,
-          transactionReference
-        }
-      });
-
-    if (existingPayment) {
-      return {
-        reply:
-          "That transaction reference has already been submitted.\n\n" +
-          "Please check the reference and send a different one if necessary."
-      };
-    }
-
-    const payment =
-      await prisma.payment.create({
-        data: {
-          merchantId,
-          orderId: order.id,
-          provider,
-          status: PaymentStatus.REVIEW_REQUIRED,
-          amount: order.total,
-          currency: order.currency,
-          transactionReference
-        }
-      });
-
-    await prisma.order.update({
-      where: {
-        id: order.id
-      },
-      data: {
-        status: "PAYMENT_REVIEW"
+      if (!looksLikePaymentReference(transactionReference)) {
+        return {
+          reply:
+            "Please send a valid payment transaction reference.\n\n" +
+            "For example:\n" +
+            "TLB-123456789"
+        };
       }
-    });
 
-    setConversationState(chatId, {
-      awaitingPayment: true,
-      pendingOrderId: order.id
-    });
+      const order = pendingOrder;
 
-    return {
-      reply:
-        `Payment submitted for order ${order.orderNumber}. ✅\n\n` +
-        `Transaction reference: ${payment.transactionReference}\n` +
-        `Amount: ${payment.amount} ${payment.currency}\n\n` +
-        "Your payment is now waiting for merchant review.\n\n" +
-        "Please wait for payment confirmation."
-    };
+      const paymentMethods =
+        await getPaymentInstructions(merchantId);
+
+      const provider =
+        paymentMethods.length === 1
+          ? (paymentMethods[0].provider as PaymentProvider)
+          : PaymentProvider.OTHER;
+
+      const existingPayment =
+        await prisma.payment.findFirst({
+          where: {
+            provider,
+            transactionReference
+          }
+        });
+
+      if (existingPayment) {
+        return {
+          reply:
+            "That transaction reference has already been submitted.\n\n" +
+            "Please check the reference and send a different one if necessary."
+        };
+      }
+
+      const payment =
+        await prisma.payment.create({
+          data: {
+            merchantId,
+            orderId: order.id,
+            provider,
+            status: PaymentStatus.REVIEW_REQUIRED,
+            amount: order.total,
+            currency: order.currency,
+            transactionReference
+          }
+        });
+
+      await prisma.order.update({
+        where: {
+          id: order.id
+        },
+        data: {
+          status: "PAYMENT_REVIEW"
+        }
+      });
+
+      setConversationState(chatId, {
+        awaitingPayment: true,
+        pendingOrderId: order.id
+      });
+
+      return {
+        reply:
+          `Payment submitted for order ${order.orderNumber}. ✅\n\n` +
+          `Transaction reference: ${payment.transactionReference}\n` +
+          `Amount: ${payment.amount} ${payment.currency}\n\n` +
+          "Your payment is now waiting for merchant review.\n\n" +
+          "Please wait for payment confirmation."
+      };
     }
   }
   /*
@@ -532,6 +533,8 @@ export async function handleConversation(
     lastIntent: aiResponse.intent
   };
 
+  let responseImageUrl: string | undefined;
+
   for (const toolResult of aiResult.toolResults) {
     if (
       toolResult.tool === "searchProducts" &&
@@ -545,6 +548,7 @@ export async function handleConversation(
           price: number;
           currency: string;
           stock: number;
+          imageUrl: string | null;
         }>;
 
       if (products.length === 1) {
@@ -557,8 +561,18 @@ export async function handleConversation(
           nextState.productName =
             product.name;
 
+          if (product.imageUrl) {
+            responseImageUrl =
+              product.imageUrl;
+          }
+
           nextState.awaitingQuantity =
             true;
+
+          if (product.imageUrl) {
+            responseImageUrl =
+              product.imageUrl;
+          }
         }
       }
     }
@@ -574,6 +588,7 @@ export async function handleConversation(
           price: number;
           currency: string;
           stock: number;
+          imageUrl: string | null;
         };
 
       nextState.productId =
@@ -648,6 +663,11 @@ export async function handleConversation(
   );
 
   return {
-    reply: aiResponse.message
+    reply: aiResponse.message,
+    ...(responseImageUrl
+      ? {
+        imageUrl: responseImageUrl
+      }
+      : {})
   };
 }

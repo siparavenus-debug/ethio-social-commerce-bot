@@ -8,14 +8,11 @@ import {
 
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+router.use(requireAuth);
 
-router.get("/:merchantId/conversations", async (req, res) => {
+router.get("/:merchantId/conversations", requireMerchantAccess,async (req, res) => {
   try {
-    const { merchantId } = req.params;
+    const merchantId = String(req.params.merchantId);
 
     const conversations = await prisma.conversation.findMany({
       where: {
@@ -45,9 +42,9 @@ router.get("/:merchantId/conversations", async (req, res) => {
   }
 });
 
-router.post("/:merchantId/conversations", async (req, res) => {
+router.post("/:merchantId/conversations", requireMerchantAccess,async (req, res) => {
   try {
-    const { merchantId } = req.params;
+    const merchantId = String(req.params.merchantId);
     const {
       customerId,
       channel,
@@ -138,12 +135,10 @@ router.post("/:merchantId/conversations", async (req, res) => {
 
 router.get(
   "/:merchantId/conversations/:conversationId",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const {
-        merchantId,
-        conversationId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+  const conversationId = String(req.params.conversationId);
 
       const conversation = await prisma.conversation.findFirst({
         where: {
@@ -180,12 +175,10 @@ router.get(
 
 router.get(
   "/:merchantId/conversations/:conversationId/messages",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const {
-        merchantId,
-        conversationId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+  const conversationId = String(req.params.conversationId);
 
       const conversation = await prisma.conversation.findFirst({
         where: {
@@ -223,12 +216,10 @@ router.get(
 
 router.post(
   "/:merchantId/conversations/:conversationId/messages",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const {
-        merchantId,
-        conversationId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+  const conversationId = String(req.params.conversationId);
 
       const {
         direction,

@@ -1,4 +1,5 @@
-﻿import { prisma } from "@ethio-commerce/database";
+import { prisma } from "@ethio-commerce/database";
+import { requireMerchantEntitlement } from "../services/subscription-entitlement.js";
 
 export type CreatedOrder = {
   id: string;
@@ -29,6 +30,12 @@ export async function createOrder(
   const orderNumber = `TG-${Date.now()}`;
 
   return prisma.$transaction(async (tx) => {
+    await requireMerchantEntitlement(
+      tx,
+      merchantId,
+      "CREATE_COMMERCE"
+    );
+
     const product = await tx.product.findFirst({
       where: {
         id: productId,

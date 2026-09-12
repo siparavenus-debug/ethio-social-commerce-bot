@@ -1,9 +1,11 @@
-﻿import express from "express";
+import express from "express";
 import rateLimit from "express-rate-limit";
 
 import { env } from "./config/env.js";
 
 import authRouter from "./routes/auth.js";
+import platformAuthRouter from "./routes/platform-auth.js";
+import platformAdminRouter from "./routes/platform-admin.js";
 import merchantsRouter from "./routes/merchants.js";
 import productsRouter from "./routes/products.js";
 import customersRouter from "./routes/customers.js";
@@ -12,7 +14,8 @@ import conversationsRouter from "./routes/conversations.js";
 import telegramRouter from "./routes/telegram.js";
 import paymentMethodsRouter from "./routes/payment-methods.js";
 import paymentsRouter from "./routes/payments.js";
-import paymentReviewRouter from "./routes/payment-review.js";
+import merchantSettlementsRouter from "./routes/merchant-settlements.js";
+import merchantUsersRouter from "./routes/merchant-users.js";
 
 async function start() {
   const app = express();
@@ -238,6 +241,23 @@ async function start() {
   );
 
   /*
+ * Platform authentication routes.
+ *
+ * Platform identity is intentionally separate from
+ * merchant identity. There is no public platform
+ * registration endpoint.
+ */
+  app.use(
+    "/platform/auth",
+    platformAuthRouter
+  );
+
+  app.use(
+    "/platform",
+    platformAdminRouter
+  );
+
+  /*
    * Protected merchant routes.
    *
    * Authentication is enforced inside the
@@ -251,6 +271,11 @@ async function start() {
   app.use(
     "/merchants",
     productsRouter
+  );
+
+  app.use(
+    "/merchants",
+    merchantUsersRouter
   );
 
   app.use(
@@ -276,11 +301,12 @@ async function start() {
   app.use(
     "/merchants",
     paymentsRouter
+
   );
 
   app.use(
     "/merchants",
-    paymentReviewRouter
+    merchantSettlementsRouter
   );
 
   console.log(

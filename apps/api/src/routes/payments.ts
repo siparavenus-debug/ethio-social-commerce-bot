@@ -8,15 +8,13 @@ import {
 
 import {
   requireAuth,
-  requireMerchantAccess
+  requireMerchantAccess,
+  requireRole
 } from "../middleware/auth.js";
 
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+router.use(requireAuth);
 
 /*
  * List payments for a merchant
@@ -25,9 +23,11 @@ router.use(
  */
 router.get(
   "/:merchantId/payments",
+  requireMerchantAccess,
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const payments =
         await prisma.payment.findMany({
@@ -72,9 +72,11 @@ router.get(
  */
 router.post(
   "/:merchantId/payments",
+  requireMerchantAccess,
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const {
         orderId,
@@ -195,7 +197,7 @@ router.post(
        */
       if (
         typeof transactionReference !==
-          "string" ||
+        "string" ||
         transactionReference.trim()
           .length === 0
       ) {
@@ -284,62 +286,64 @@ router.post(
        * treated as successful.
        */
       const payment =
-        await prisma.payment.create({
-          data: {
-            merchantId,
-            orderId,
+        await prisma.$transaction(
+          async (tx) => {
+            const createdPayment =
+              await tx.payment.create({
+                data: {
+                  merchantId,
+                  orderId,
 
-            provider:
-              provider as PaymentProvider,
+                  provider:
+                    provider as PaymentProvider,
 
-            status:
-              PaymentStatus.REVIEW_REQUIRED,
+                  status:
+                    PaymentStatus.REVIEW_REQUIRED,
 
-            amount:
-              numericAmount,
+                  amount:
+                    numericAmount,
 
-            currency:
-              normalizedCurrency,
+                  currency:
+                    normalizedCurrency,
 
-            transactionReference:
-              normalizedTransactionReference,
+                  transactionReference:
+                    normalizedTransactionReference,
 
-            receiptUrl:
-              typeof receiptUrl ===
-                "string" &&
-              receiptUrl.trim()
-                .length > 0
-                ? receiptUrl.trim()
-                : null
-          },
+                  receiptUrl:
+                    typeof receiptUrl ===
+                      "string" &&
+                      receiptUrl.trim()
+                        .length > 0
+                      ? receiptUrl.trim()
+                      : null
+                },
 
-          include: {
-            order: {
-              include: {
-                customer: true,
-                items: true
+                include: {
+                  order: {
+                    include: {
+                      customer: true,
+                      items: true
+                    }
+                  }
+                }
+              });
+
+            await tx.order.update({
+              where: {
+                id: order.id
+              },
+
+              data: {
+                status:
+                  "PAYMENT_REVIEW"
               }
-            }
+            });
+
+            return createdPayment;
           }
-        });
+        );
 
-      /*
-       * Move the order into payment review.
-       */
-      await prisma.order.update({
-        where: {
-          id: order.id
-        },
-
-        data: {
-          status:
-            "PAYMENT_REVIEW"
-        }
-      });
-
-      res.status(201).json(
-        payment
-      );
+      res.status(201).json(payment);
     } catch (error) {
       console.error(
         "Failed to create payment:",

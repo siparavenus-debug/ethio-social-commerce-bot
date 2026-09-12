@@ -7,7 +7,30 @@ export type ProductSearchResult = {
   price: number;
   currency: string;
   stock: number;
+  imageUrl: string | null;
 };
+
+function mapProduct(product: {
+  id: string;
+  name: string;
+  description: string | null;
+  price: unknown;
+  currency: string;
+  stock: number;
+  images: Array<{
+    url: string;
+  }>;
+}): ProductSearchResult {
+  return {
+    id: product.id,
+    name: product.name,
+    description: product.description,
+    price: Number(product.price),
+    currency: product.currency,
+    stock: product.stock,
+    imageUrl: product.images[0]?.url ?? null
+  };
+}
 
 export async function searchProducts(
   merchantId: string,
@@ -28,19 +51,30 @@ export async function searchProducts(
           }
         : {})
     },
+
     orderBy: {
       createdAt: "desc"
+    },
+
+    include: {
+      images: {
+        orderBy: [
+          {
+            isPrimary: "desc"
+          },
+          {
+            sortOrder: "asc"
+          }
+        ],
+        take: 1,
+        select: {
+          url: true
+        }
+      }
     }
   });
 
-  return products.map((product) => ({
-    id: product.id,
-    name: product.name,
-    description: product.description,
-    price: Number(product.price),
-    currency: product.currency,
-    stock: product.stock
-  }));
+  return products.map(mapProduct);
 }
 
 export async function getProduct(
@@ -52,6 +86,23 @@ export async function getProduct(
       id: productId,
       merchantId,
       status: "ACTIVE"
+    },
+
+    include: {
+      images: {
+        orderBy: [
+          {
+            isPrimary: "desc"
+          },
+          {
+            sortOrder: "asc"
+          }
+        ],
+        take: 1,
+        select: {
+          url: true
+        }
+      }
     }
   });
 
@@ -59,14 +110,7 @@ export async function getProduct(
     return null;
   }
 
-  return {
-    id: product.id,
-    name: product.name,
-    description: product.description,
-    price: Number(product.price),
-    currency: product.currency,
-    stock: product.stock
-  };
+  return mapProduct(product);
 }
 
 export async function checkStock(
@@ -87,6 +131,7 @@ export async function checkStock(
       merchantId,
       status: "ACTIVE"
     },
+
     select: {
       stock: true
     }

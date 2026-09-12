@@ -4,24 +4,26 @@ import { sendTelegramMessage } from "../services/telegram.js";
 
 import {
   requireAuth,
-  requireMerchantAccess
+  requireMerchantAccess,
+  requireRole
 } from "../middleware/auth.js";
+
+import {
+requireMerchantEntitlement
+} from "../middleware/subscription-entitlement.js";
 
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+router.use(requireAuth);
 
 /**
  * List merchant orders.
  *
  * GET /merchants/:merchantId/orders
  */
-router.get("/:merchantId/orders", async (req, res) => {
+router.get("/:merchantId/orders", requireMerchantAccess,async (req, res) => {
   try {
-    const { merchantId } = req.params;
+    const merchantId = String(req.params.merchantId);
 
     const orders = await prisma.order.findMany({
       where: {
@@ -30,7 +32,9 @@ router.get("/:merchantId/orders", async (req, res) => {
       include: {
         customer: true,
         items: true,
-        payments: true
+        ...(req.auth!.role === "STAFF"
+          ? {}
+          : { payments: true })
       },
       orderBy: {
         createdAt: "desc"
@@ -52,9 +56,10 @@ router.get("/:merchantId/orders", async (req, res) => {
  *
  * GET /merchants/:merchantId/orders/:orderId
  */
-router.get("/:merchantId/orders/:orderId", async (req, res) => {
+router.get("/:merchantId/orders/:orderId", requireMerchantAccess,async (req, res) => {
   try {
-    const { merchantId, orderId } = req.params;
+    const merchantId = String(req.params.merchantId);
+    const orderId = String(req.params.orderId);
 
     const order = await prisma.order.findFirst({
       where: {
@@ -64,7 +69,9 @@ router.get("/:merchantId/orders/:orderId", async (req, res) => {
       include: {
         customer: true,
         items: true,
-        payments: true
+        ...(req.auth!.role === "STAFF"
+          ? {}
+          : { payments: true })
       }
     });
 
@@ -107,293 +114,299 @@ router.get("/:merchantId/orders/:orderId", async (req, res) => {
  * Product stock is reserved/deducted inside the same
  * database transaction as order creation.
  */
-router.post("/:merchantId/orders", async (req, res) => {
-  try {
-    const { merchantId } = req.params;
+router.post(
+  "/:merchantId/orders",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "CREATE_COMMERCE"
+  ),
+  requireRole("OWNER", "ADMIN"),
+  async (req, res) => {
+    try {
+      const merchantId = String(req.params.merchantId);
+      const {
+        customerId,
+        orderNumber,
+        currency,
+        items
+      } = req.body;
 
-    const {
-      customerId,
-      orderNumber,
-      currency,
-      items
-    } = req.body;
-
-    const merchant = await prisma.merchant.findUnique({
-      where: {
-        id: merchantId
-      }
-    });
-
-    if (!merchant) {
-      res.status(404).json({
-        error: "Merchant not found"
-      });
-      return;
-    }
-
-    if (
-      typeof orderNumber !== "string" ||
-      orderNumber.trim().length === 0
-    ) {
-      res.status(400).json({
-        error: "orderNumber is required"
-      });
-      return;
-    }
-
-    if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({
-        error: "items must be a non-empty array"
-      });
-      return;
-    }
-
-    if (customerId !== undefined && customerId !== null) {
-      const customer = await prisma.customer.findFirst({
+      const merchant = await prisma.merchant.findUnique({
         where: {
-          id: customerId,
-          merchantId
+          id: merchantId
         }
       });
 
-      if (!customer) {
-        res.status(400).json({
-          error: "Customer not found for this merchant"
+      if (!merchant) {
+        res.status(404).json({
+          error: "Merchant not found"
         });
         return;
       }
-    }
-
-    const order = await prisma.$transaction(async (tx) => {
-      /*
-       * Validate item structure before touching inventory.
-       */
-      const normalizedItems = items.map((item) => {
-        if (
-          !item ||
-          typeof item.productId !== "string" ||
-          item.productId.trim().length === 0
-        ) {
-          throw new Error(
-            "Each item must contain a valid productId"
-          );
-        }
-
-        const quantity = Number(item.quantity);
-
-        if (
-          !Number.isInteger(quantity) ||
-          quantity <= 0
-        ) {
-          throw new Error(
-            "Each item quantity must be a positive integer"
-          );
-        }
-
-        return {
-          productId: item.productId,
-          quantity
-        };
-      });
-
-      /*
-       * Load all products belonging to this merchant.
-       */
-      const productIds = normalizedItems.map(
-        (item) => item.productId
-      );
-
-      const products = await tx.product.findMany({
-        where: {
-          id: {
-            in: productIds
-          },
-          merchantId
-        }
-      });
-
-      /*
-       * Make sure every requested product exists.
-       */
-      if (products.length !== productIds.length) {
-        throw new Error(
-          "One or more products were not found for this merchant"
-        );
-      }
-
-      /*
-       * Prevent duplicate product IDs from creating
-       * confusing stock calculations.
-       */
-      const uniqueProductIds = new Set(productIds);
 
       if (
-        uniqueProductIds.size !== productIds.length
+        typeof orderNumber !== "string" ||
+        orderNumber.trim().length === 0
       ) {
-        throw new Error(
-          "Each product may only appear once in an order"
-        );
+        res.status(400).json({
+          error: "orderNumber is required"
+        });
+        return;
       }
 
-      let subtotal = 0;
+      if (!Array.isArray(items) || items.length === 0) {
+        res.status(400).json({
+          error: "items must be a non-empty array"
+        });
+        return;
+      }
 
-      const orderItems = normalizedItems.map(
-        (item) => {
-          const product = products.find(
-            (product) =>
-              product.id === item.productId
-          );
+      if (customerId !== undefined && customerId !== null) {
+        const customer = await prisma.customer.findFirst({
+          where: {
+            id: customerId,
+            merchantId
+          }
+        });
 
-          if (!product) {
+        if (!customer) {
+          res.status(400).json({
+            error: "Customer not found for this merchant"
+          });
+          return;
+        }
+      }
+
+      const order = await prisma.$transaction(async (tx) => {
+        /*
+         * Validate item structure before touching inventory.
+         */
+        const normalizedItems = items.map((item) => {
+          if (
+            !item ||
+            typeof item.productId !== "string" ||
+            item.productId.trim().length === 0
+          ) {
             throw new Error(
-              "Product lookup failed"
+              "Each item must contain a valid productId"
             );
           }
 
-          if (product.status !== "ACTIVE") {
+          const quantity = Number(item.quantity);
+
+          if (
+            !Number.isInteger(quantity) ||
+            quantity <= 0
+          ) {
             throw new Error(
-              `Product "${product.name}" is not active`
+              "Each item quantity must be a positive integer"
             );
           }
-
-          if (product.stock < item.quantity) {
-            throw new Error(
-              `Insufficient stock for product "${product.name}". Available: ${product.stock}, requested: ${item.quantity}`
-            );
-          }
-
-          const unitPrice = Number(product.price);
-
-          const lineTotal =
-            unitPrice * item.quantity;
-
-          subtotal += lineTotal;
 
           return {
-            product,
-            quantity: item.quantity,
-            unitPrice,
-            lineTotal
+            productId: item.productId,
+            quantity
           };
-        }
-      );
+        });
 
-      /*
-       * Create the order first.
-       *
-       * The stock changes below are part of this same
-       * transaction. If anything fails, the order itself
-       * will also be rolled back.
-       */
-      const createdOrder = await tx.order.create({
-        data: {
-          merchantId,
-          customerId: customerId ?? null,
-          orderNumber: orderNumber.trim(),
-          currency:
-            typeof currency === "string" &&
-            currency.trim().length > 0
-              ? currency.trim()
-              : merchant.currency,
-          subtotal,
-          total: subtotal,
-          items: {
-            create: orderItems.map((item) => ({
-              productId: item.product.id,
-              productName: item.product.name,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              lineTotal: item.lineTotal
-            }))
-          }
-        }
-      });
+        /*
+         * Load all products belonging to this merchant.
+         */
+        const productIds = normalizedItems.map(
+          (item) => item.productId
+        );
 
-      /*
-       * Atomically deduct stock.
-       *
-       * The WHERE clause includes:
-       *   stock >= requested quantity
-       *
-       * This protects against stock becoming insufficient
-       * between the earlier validation and this update.
-       */
-      for (const item of orderItems) {
-        const updatedProduct =
-          await tx.product.updateMany({
-            where: {
-              id: item.product.id,
-              merchantId,
-              stock: {
-                gte: item.quantity
-              }
+        const products = await tx.product.findMany({
+          where: {
+            id: {
+              in: productIds
             },
-            data: {
-              stock: {
-                decrement: item.quantity
-              }
-            }
-          });
+            merchantId
+          }
+        });
 
-        if (updatedProduct.count !== 1) {
+        /*
+         * Make sure every requested product exists.
+         */
+        if (products.length !== productIds.length) {
           throw new Error(
-            `Insufficient stock for product "${item.product.name}".`
+            "One or more products were not found for this merchant"
           );
         }
 
         /*
-         * Record the inventory movement for auditing.
+         * Prevent duplicate product IDs from creating
+         * confusing stock calculations.
          */
-        await tx.auditLog.create({
+        const uniqueProductIds = new Set(productIds);
+
+        if (
+          uniqueProductIds.size !== productIds.length
+        ) {
+          throw new Error(
+            "Each product may only appear once in an order"
+          );
+        }
+
+        let subtotal = 0;
+
+        const orderItems = normalizedItems.map(
+          (item) => {
+            const product = products.find(
+              (product) =>
+                product.id === item.productId
+            );
+
+            if (!product) {
+              throw new Error(
+                "Product lookup failed"
+              );
+            }
+
+            if (product.status !== "ACTIVE") {
+              throw new Error(
+                `Product "${product.name}" is not active`
+              );
+            }
+
+            if (product.stock < item.quantity) {
+              throw new Error(
+                `Insufficient stock for product "${product.name}". Available: ${product.stock}, requested: ${item.quantity}`
+              );
+            }
+
+            const unitPrice = Number(product.price);
+
+            const lineTotal =
+              unitPrice * item.quantity;
+
+            subtotal += lineTotal;
+
+            return {
+              product,
+              quantity: item.quantity,
+              unitPrice,
+              lineTotal
+            };
+          }
+        );
+
+        /*
+         * Create the order first.
+         *
+         * The stock changes below are part of this same
+         * transaction. If anything fails, the order itself
+         * will also be rolled back.
+         */
+        const createdOrder = await tx.order.create({
           data: {
             merchantId,
-            actorUserId: null,
-            action: "PRODUCT_STOCK_DEDUCTED",
-            entityType: "PRODUCT",
-            entityId: item.product.id,
-            metadata: {
-              productName: item.product.name,
-              quantityDeducted: item.quantity,
-              previousStock: item.product.stock,
-              newStock:
-                item.product.stock -
-                item.quantity,
-              orderId: createdOrder.id,
-              orderNumber:
-                orderNumber.trim()
+            customerId: customerId ?? null,
+            orderNumber: orderNumber.trim(),
+            currency:
+              typeof currency === "string" &&
+                currency.trim().length > 0
+                ? currency.trim()
+                : merchant.currency,
+            subtotal,
+            total: subtotal,
+            items: {
+              create: orderItems.map((item) => ({
+                productId: item.product.id,
+                productName: item.product.name,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                lineTotal: item.lineTotal
+              }))
             }
           }
         });
-      }
 
-      /*
-       * Return the complete order after inventory has
-       * successfully been deducted.
-       */
-      return tx.order.findUniqueOrThrow({
-        where: {
-          id: createdOrder.id
-        },
-        include: {
-          customer: true,
-          items: true,
-          payments: true
+        /*
+         * Atomically deduct stock.
+         *
+         * The WHERE clause includes:
+         *   stock >= requested quantity
+         *
+         * This protects against stock becoming insufficient
+         * between the earlier validation and this update.
+         */
+        for (const item of orderItems) {
+          const updatedProduct =
+            await tx.product.updateMany({
+              where: {
+                id: item.product.id,
+                merchantId,
+                stock: {
+                  gte: item.quantity
+                }
+              },
+              data: {
+                stock: {
+                  decrement: item.quantity
+                }
+              }
+            });
+
+          if (updatedProduct.count !== 1) {
+            throw new Error(
+              `Insufficient stock for product "${item.product.name}".`
+            );
+          }
+
+          /*
+           * Record the inventory movement for auditing.
+           */
+          await tx.auditLog.create({
+            data: {
+              merchantId,
+              actorUserId: req.auth!.id,
+              action: "PRODUCT_STOCK_DEDUCTED",
+              entityType: "PRODUCT",
+              entityId: item.product.id,
+              metadata: {
+                productName: item.product.name,
+                quantityDeducted: item.quantity,
+                previousStock: item.product.stock,
+                newStock:
+                  item.product.stock -
+                  item.quantity,
+                orderId: createdOrder.id,
+                orderNumber:
+                  orderNumber.trim()
+              }
+            }
+          });
         }
+
+        /*
+         * Return the complete order after inventory has
+         * successfully been deducted.
+         */
+        return tx.order.findUniqueOrThrow({
+          where: {
+            id: createdOrder.id
+          },
+          include: {
+            customer: true,
+            items: true,
+            payments: true
+          }
+        });
       });
-    });
 
-    res.status(201).json(order);
-  } catch (error) {
-    console.error("Failed to create order:", error);
+      res.status(201).json(order);
+    } catch (error) {
+      console.error("Failed to create order:", error);
 
-    res.status(400).json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to create order"
-    });
-  }
-});
+      res.status(400).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create order"
+      });
+    }
+  });
 
 /**
  * Update order fulfillment status.
@@ -407,12 +420,11 @@ router.post("/:merchantId/orders", async (req, res) => {
  */
 router.post(
   "/:merchantId/orders/:orderId/status",
+  requireMerchantAccess,requireRole("OWNER", "ADMIN", "STAFF"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        orderId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const orderId = String(req.params.orderId);
 
       const { status } = req.body;
 
@@ -483,7 +495,7 @@ router.post(
           await tx.auditLog.create({
             data: {
               merchantId,
-              actorUserId: null,
+              actorUserId: req.auth!.id,
               action:
                 status === "FULFILLING"
                   ? "ORDER_FULFILLING"

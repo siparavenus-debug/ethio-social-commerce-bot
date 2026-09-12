@@ -114,7 +114,7 @@ type Order = {
     unitPrice: string;
     lineTotal: string;
   }[];
-  payments: {
+  payments?: {
     id: string;
     provider: string;
     status: string;
@@ -160,13 +160,106 @@ type Product = {
   images?: ProductImage[];
 };
 
+type BillingSubscription = {
+  id: string;
+  plan: {
+    code: string;
+    name: string;
+  };
+  status: string;
+  billingInterval: string;
+  priceSnapshot: string;
+  commissionRateSnapshot: string;
+  currency: string;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  trialEndsAt: string | null;
+};
+
+type BillingCurrentPeriod = {
+  status:
+  | "ESTIMATE"
+  | "INVOICED"
+  | "NEGATIVE_TOTAL_REQUIRES_REVIEW"
+  | "NO_SUBSCRIPTION";
+  periodStart: string | null;
+  periodEnd: string | null;
+  subscriptionAmount: string | null;
+  commissionAmount: string | null;
+  totalAmount: string | null;
+  currency: string;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  invoiceStatus: string | null;
+};
+
+type BillingSummary = {
+  merchantId: string;
+  subscription:
+  | BillingSubscription
+  | null;
+  currentPeriod: BillingCurrentPeriod;
+};
+
+type BillingCommissionAdjustment = {
+  id: string;
+  type: string;
+  amount: string;
+  currency: string;
+  reason: string;
+  createdAt: string;
+};
+
+type BillingCommission = {
+  id: string;
+  paymentId: string;
+  orderId: string;
+  subscriptionId: string;
+  transactionAmount: string;
+  commissionRate: string;
+  commissionAmount: string;
+  adjustmentAmount: string;
+  netCommissionAmount: string;
+  currency: string;
+  status: string;
+  createdAt: string;
+  adjustments: BillingCommissionAdjustment[];
+};
+
+type BillingInvoice = {
+  id: string;
+  invoiceNumber: string;
+  periodStart: string;
+  periodEnd: string;
+  subscriptionAmount: string;
+  commissionAmount: string;
+  totalAmount: string;
+  currency: string;
+  status: string;
+  dueAt: string | null;
+  openedAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+};
+
+type BillingSettlement = {
+  id: string;
+  invoiceId: string;
+  provider: string;
+  status: string;
+  amount: string;
+  currency: string;
+  transactionReference: string | null;
+  receiptUrl: string | null;
+  reviewNote: string | null;
+  submittedAt: string;
+  verifiedAt: string | null;
+  createdAt: string;
+};
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:3000";
-
-const MERCHANT_ID =
-  import.meta.env.VITE_MERCHANT_ID ||
-  "cmsrm4og20000q8578gy73r86";
 
 const AUTH_STORAGE_KEY =
   "ethio-commerce-auth";
@@ -174,7 +267,19 @@ const AUTH_STORAGE_KEY =
 type Tab =
   | "payments"
   | "orders"
-  | "inventory";
+  | "inventory"
+  | "billing"
+  | "users";
+
+type MerchantUser = {
+  id: string;
+  merchantId: string;
+  email: string;
+  displayName: string | null;
+  role: "OWNER" | "ADMIN" | "STAFF";
+  createdAt: string;
+  updatedAt: string;
+};
 
 export default function App() {
   const [
@@ -205,6 +310,16 @@ export default function App() {
     }
   );
 
+  const role = auth?.user.role;
+  const merchantId = auth?.user.merchantId;
+  const canManageProducts = role === "OWNER" || role === "ADMIN";
+  const canReviewPayments = role === "OWNER" || role === "ADMIN";
+  const canFulfillOrders = role === "OWNER" || role === "ADMIN" || role === "STAFF";
+  const canViewBilling =
+    role === "OWNER";
+  const canManageUsers =
+    role === "OWNER";
+
   const [
     loginEmail,
     setLoginEmail
@@ -224,6 +339,75 @@ export default function App() {
     activeTab,
     setActiveTab
   ] = useState<Tab>("payments");
+
+  const [
+    merchantUsers,
+    setMerchantUsers
+  ] = useState<MerchantUser[]>([]);
+
+  const [
+    loadingUsers,
+    setLoadingUsers
+  ] = useState(false);
+
+  const [
+    newUserDisplayName,
+    setNewUserDisplayName
+  ] = useState("");
+
+  const [
+    newUserEmail,
+    setNewUserEmail
+  ] = useState("");
+
+  const [
+    newUserPassword,
+    setNewUserPassword
+  ] = useState("");
+
+  const [
+    newUserRole,
+    setNewUserRole
+  ] = useState<"ADMIN" | "STAFF">(
+    "STAFF"
+  );
+
+  const [
+    creatingUser,
+    setCreatingUser
+  ] = useState(false);
+
+  const [
+    editingUserId,
+    setEditingUserId
+  ] = useState<string | null>(null);
+
+  const [
+    editUserDisplayName,
+    setEditUserDisplayName
+  ] = useState("");
+
+  const [
+    editUserRole,
+    setEditUserRole
+  ] = useState<"ADMIN" | "STAFF">(
+    "STAFF"
+  );
+
+  const [
+    editUserPassword,
+    setEditUserPassword
+  ] = useState("");
+
+  const [
+    savingUser,
+    setSavingUser
+  ] = useState(false);
+
+  const [
+    deletingUserId,
+    setDeletingUserId
+  ] = useState<string | null>(null);
 
   const [
     reviews,
@@ -282,6 +466,71 @@ export default function App() {
     categories,
     setCategories
   ] = useState<ProductCategory[]>([]);
+
+  const [
+    billingSummary,
+    setBillingSummary
+  ] = useState<BillingSummary | null>(
+    null
+  );
+
+  const [
+    billingCommissions,
+    setBillingCommissions
+  ] = useState<BillingCommission[]>(
+    []
+  );
+
+  const [
+    billingInvoices,
+    setBillingInvoices
+  ] = useState<BillingInvoice[]>(
+    []
+  );
+
+  const [
+    billingSettlements,
+    setBillingSettlements
+  ] = useState<BillingSettlement[]>(
+    []
+  );
+
+  const [
+    loadingBilling,
+    setLoadingBilling
+  ] = useState(false);
+
+  const [
+    settlementInvoiceId,
+    setSettlementInvoiceId
+  ] = useState("");
+
+  const [
+    settlementProvider,
+    setSettlementProvider
+  ] = useState<
+    "TELEBIRR" | "CBE_BIRR" | "OTHER"
+  >("TELEBIRR");
+
+  const [
+    settlementTransactionReference,
+    setSettlementTransactionReference
+  ] = useState("");
+
+  const [
+    settlementReceiptUrl,
+    setSettlementReceiptUrl
+  ] = useState("");
+
+  const [
+    submittingSettlement,
+    setSubmittingSettlement
+  ] = useState(false);
+
+  const [
+    settlementIdempotencyKey,
+    setSettlementIdempotencyKey
+  ] = useState("");
 
   const [
     loadingCategories,
@@ -344,14 +593,9 @@ export default function App() {
   ] = useState<string | null>(null);
 
   const [
-    imageUrl,
-    setImageUrl
-  ] = useState("");
-
-  const [
-    imageAltText,
-    setImageAltText
-  ] = useState("");
+    imageFile,
+    setImageFile
+  ] = useState<File | null>(null);
 
 
 
@@ -438,6 +682,17 @@ export default function App() {
     setOrders([]);
     setProducts([]);
     setCategories([]);
+    setBillingSummary(null);
+    setBillingCommissions([]);
+    setBillingInvoices([]);
+    setBillingSettlements([]);
+    setLoadingBilling(false);
+    setSettlementInvoiceId("");
+    setSettlementProvider("TELEBIRR");
+    setSettlementTransactionReference("");
+    setSettlementReceiptUrl("");
+    setSubmittingSettlement(false);
+    setSettlementIdempotencyKey("");
 
     setProductFormOpen(false);
     setEditingProductId(null);
@@ -534,9 +789,17 @@ export default function App() {
     path: string,
     options: RequestInit = {}
   ) {
+
     if (!auth?.token) {
       throw new Error(
         "Authentication required"
+      );
+    }
+
+    if (!merchantId) {
+      logout();
+      throw new Error(
+        "Your session is invalid. Please sign in again."
       );
     }
 
@@ -552,6 +815,7 @@ export default function App() {
 
     if (
       options.body &&
+      !(options.body instanceof FormData) &&
       !headers.has(
         "Content-Type"
       )
@@ -585,7 +849,9 @@ export default function App() {
   }
 
   async function loadReviews() {
-    if (!auth?.token) {
+    if (!auth?.token || !merchantId || !canReviewPayments) {
+      setReviews([]);
+      setLoadingReviews(false);
       return;
     }
 
@@ -595,7 +861,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/payment-review`
+          `/merchants/${merchantId}/payment-review`
         );
 
       if (!response.ok) {
@@ -634,7 +900,7 @@ export default function App() {
   }
 
   async function loadOrders() {
-    if (!auth?.token) {
+    if (!auth?.token || !merchantId) {
       return;
     }
 
@@ -644,7 +910,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/orders`
+          `/merchants/${merchantId}/orders`
         );
 
       if (!response.ok) {
@@ -683,7 +949,7 @@ export default function App() {
   }
 
   async function loadProducts() {
-    if (!auth?.token) {
+    if (!auth?.token || !merchantId) {
       return;
     }
 
@@ -693,7 +959,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/products`
+          `/merchants/${merchantId}/products`
         );
 
       if (!response.ok) {
@@ -732,12 +998,12 @@ export default function App() {
   }
 
   async function loadCategories() {
-    if (!auth?.token) return;
+    if (!auth?.token || !merchantId) return;
 
     try {
       setLoadingCategories(true);
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/categories`
+        `/merchants/${merchantId}/products/categories`
       );
       const data = await response.json();
 
@@ -798,6 +1064,11 @@ export default function App() {
   }
 
   async function saveProduct() {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage products.");
+      return;
+    }
+
     const name = productName.trim();
     const description = productDescription.trim();
     const numericPrice = Number(productPrice);
@@ -839,8 +1110,8 @@ export default function App() {
 
       const response = await apiFetch(
         editingProductId
-          ? `/merchants/${MERCHANT_ID}/products/${editingProductId}`
-          : `/merchants/${MERCHANT_ID}/products`,
+          ? `/merchants/${merchantId}/products/${editingProductId}`
+          : `/merchants/${merchantId}/products`,
         {
           method: editingProductId ? "PATCH" : "POST",
           body: JSON.stringify({
@@ -887,6 +1158,11 @@ export default function App() {
   }
 
   async function createCategory() {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage product categories.");
+      return;
+    }
+
     const name = categoryName.trim();
 
     if (!name) {
@@ -904,7 +1180,7 @@ export default function App() {
       setSuccess("");
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/categories`,
+        `/merchants/${merchantId}/products/categories`,
         {
           method: "POST",
           body: JSON.stringify({ name })
@@ -953,7 +1229,7 @@ export default function App() {
       setSuccess("");
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/categories/${categoryId}`,
+        `/merchants/${merchantId}/products/categories/${categoryId}`,
         { method: "DELETE" }
       );
       const data = await response.json();
@@ -981,11 +1257,13 @@ export default function App() {
   }
 
   async function addProductImage(productId: string) {
-    const url = imageUrl.trim();
-    const altText = imageAltText.trim();
+    if (!canManageProducts) {
+      setError("You do not have permission to manage product images.");
+      return;
+    }
 
-    if (!url) {
-      setError("Image URL is required.");
+    if (!imageFile) {
+      setError("Please select an image file.");
       return;
     }
 
@@ -994,21 +1272,14 @@ export default function App() {
       setError("");
       setSuccess("");
 
-      const product =
-        products.find(
-          (item) => item.id === productId
-        );
+      const formData = new FormData();
+      formData.append("image", imageFile);
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/${productId}/images`,
+        `/merchants/${merchantId}/products/${productId}/images/upload`,
         {
           method: "POST",
-          body: JSON.stringify({
-            url,
-            altText: altText || null,
-            isPrimary:
-              (product?.images?.length || 0) === 0
-          })
+          body: formData
         }
       );
 
@@ -1017,19 +1288,19 @@ export default function App() {
       if (!response.ok) {
         throw new Error(
           data?.error ||
-          "Failed to add product image"
+          "Failed to upload product image"
         );
       }
 
-      setImageUrl("");
-      setImageAltText("");
-      setSuccess("Product image added successfully.");
+      setImageFile(null);
+      setImageProductId(null);
+      setSuccess("Product image uploaded successfully.");
       await loadProducts();
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to add product image"
+          : "Failed to upload product image"
       );
     } finally {
       setActionId(null);
@@ -1040,13 +1311,18 @@ export default function App() {
     productId: string,
     imageId: string
   ) {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage product images.");
+      return;
+    }
+
     try {
       setActionId(`primary-${imageId}`);
       setError("");
       setSuccess("");
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/${productId}/images/${imageId}/primary`,
+        `/merchants/${merchantId}/products/${productId}/images/${imageId}/primary`,
         { method: "PATCH" }
       );
       const data = await response.json();
@@ -1075,6 +1351,11 @@ export default function App() {
     productId: string,
     imageId: string
   ) {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage product images.");
+      return;
+    }
+
     if (!window.confirm("Delete this product image?")) {
       return;
     }
@@ -1085,7 +1366,7 @@ export default function App() {
       setSuccess("");
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/${productId}/images/${imageId}`,
+        `/merchants/${merchantId}/products/${productId}/images/${imageId}`,
         { method: "DELETE" }
       );
       const data = await response.json();
@@ -1114,6 +1395,11 @@ export default function App() {
     productId: string,
     name: string
   ) {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage products.");
+      return;
+    }
+
     if (
       !window.confirm(
         `Delete product "${name}"? This cannot be undone.`
@@ -1128,7 +1414,7 @@ export default function App() {
       setSuccess("");
 
       const response = await apiFetch(
-        `/merchants/${MERCHANT_ID}/products/${productId}`,
+        `/merchants/${merchantId}/products/${productId}`,
         { method: "DELETE" }
       );
       const data = await response.json();
@@ -1155,6 +1441,610 @@ export default function App() {
     }
   }
 
+  async function loadUsers() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageUsers
+    ) {
+      setMerchantUsers([]);
+      setLoadingUsers(false);
+      return;
+    }
+
+    try {
+      setLoadingUsers(true);
+      setError("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/users`
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to load merchant users"
+        );
+      }
+
+      setMerchantUsers(
+        Array.isArray(data?.users)
+          ? data.users
+          : []
+      );
+    } catch (loadError) {
+      console.error(
+        "Failed to load merchant users:",
+        loadError
+      );
+
+      setMerchantUsers([]);
+
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load merchant users"
+      );
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  async function createUser() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageUsers
+    ) {
+      setError(
+        "You do not have permission to manage users."
+      );
+      return;
+    }
+
+    const email =
+      newUserEmail.trim().toLowerCase();
+
+    const displayName =
+      newUserDisplayName.trim();
+
+    const password =
+      newUserPassword;
+
+    if (!email) {
+      setError("Email is required.");
+      return;
+    }
+
+    if (password.length < 8) {
+      setError(
+        "Password must be at least 8 characters."
+      );
+      return;
+    }
+
+    if (
+      newUserRole !== "ADMIN" &&
+      newUserRole !== "STAFF"
+    ) {
+      setError(
+        "New users must be ADMIN or STAFF."
+      );
+      return;
+    }
+
+    try {
+      setCreatingUser(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/users`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            email,
+            password,
+            role: newUserRole,
+            ...(displayName
+              ? { displayName }
+              : {})
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to create user"
+        );
+      }
+
+      setNewUserDisplayName("");
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserRole("STAFF");
+
+      setSuccess(
+        `${data?.user?.email || email} created successfully.`
+      );
+
+      await loadUsers();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create user"
+      );
+    } finally {
+      setCreatingUser(false);
+    }
+  }
+
+  function startEditingUser(
+    merchantUser: MerchantUser
+  ) {
+    if (
+      !canManageUsers ||
+      merchantUser.role === "OWNER"
+    ) {
+      return;
+    }
+
+    setEditingUserId(merchantUser.id);
+    setEditUserDisplayName(
+      merchantUser.displayName || ""
+    );
+    setEditUserRole(merchantUser.role);
+    setEditUserPassword("");
+    setError("");
+    setSuccess("");
+  }
+
+  function cancelEditingUser() {
+    setEditingUserId(null);
+    setEditUserDisplayName("");
+    setEditUserRole("STAFF");
+    setEditUserPassword("");
+  }
+
+  async function updateUser() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageUsers ||
+      !editingUserId
+    ) {
+      setError(
+        "You do not have permission to manage users."
+      );
+      return;
+    }
+
+    if (
+      editUserRole !== "ADMIN" &&
+      editUserRole !== "STAFF"
+    ) {
+      setError(
+        "User role must be ADMIN or STAFF."
+      );
+      return;
+    }
+
+    if (
+      editUserPassword &&
+      editUserPassword.length < 8
+    ) {
+      setError(
+        "Password must be at least 8 characters."
+      );
+      return;
+    }
+
+    try {
+      setSavingUser(true);
+      setError("");
+      setSuccess("");
+
+      const body: {
+        displayName: string;
+        role: "ADMIN" | "STAFF";
+        password?: string;
+      } = {
+        displayName:
+          editUserDisplayName.trim(),
+        role: editUserRole
+      };
+
+      if (editUserPassword) {
+        body.password =
+          editUserPassword;
+      }
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/users/${editingUserId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to update user"
+        );
+      }
+
+      setSuccess(
+        `${data?.user?.email ||
+        "User"
+        } updated successfully.`
+      );
+
+      cancelEditingUser();
+
+      await loadUsers();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to update user"
+      );
+    } finally {
+      setSavingUser(false);
+    }
+  }
+
+  async function deleteUser(
+    merchantUser: MerchantUser
+  ) {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageUsers
+    ) {
+      setError(
+        "You do not have permission to manage users."
+      );
+      return;
+    }
+
+    if (merchantUser.role === "OWNER") {
+      setError(
+        "The owner account cannot be deleted."
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${merchantUser.email}? This action cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setDeletingUserId(
+        merchantUser.id
+      );
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/users/${merchantUser.id}`,
+        {
+          method: "DELETE"
+        }
+      );
+
+      if (!response.ok) {
+        const data = await response
+          .json()
+          .catch(() => null);
+
+        throw new Error(
+          data?.error ||
+          "Failed to delete user"
+        );
+      }
+
+      if (
+        editingUserId ===
+        merchantUser.id
+      ) {
+        cancelEditingUser();
+      }
+
+      setSuccess(
+        `${merchantUser.email} deleted successfully.`
+      );
+
+      await loadUsers();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete user"
+      );
+    } finally {
+      setDeletingUserId(null);
+    }
+  }
+
+  async function loadBilling() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canViewBilling
+    ) {
+      setBillingSummary(null);
+      setBillingCommissions([]);
+      setBillingInvoices([]);
+      setBillingSettlements([]);
+      setLoadingBilling(false);
+      return;
+    }
+
+    try {
+      setLoadingBilling(true);
+      setError("");
+
+      const [
+        summaryResponse,
+        commissionsResponse,
+        invoicesResponse,
+        settlementsResponse
+      ] = await Promise.all([
+        apiFetch(
+          `/merchants/${merchantId}/billing/summary`
+        ),
+        apiFetch(
+          `/merchants/${merchantId}/billing/commissions`
+        ),
+        apiFetch(
+          `/merchants/${merchantId}/billing/invoices`
+        ),
+        apiFetch(
+          `/merchants/${merchantId}/billing/settlements`
+        )
+      ]);
+
+      const [
+        summaryData,
+        commissionsData,
+        invoicesData,
+        settlementsData
+      ] = await Promise.all([
+        summaryResponse.json().catch(
+          () => null
+        ),
+        commissionsResponse.json().catch(
+          () => null
+        ),
+        invoicesResponse.json().catch(
+          () => null
+        ),
+        settlementsResponse.json().catch(
+          () => null
+        )
+      ]);
+
+      if (!summaryResponse.ok) {
+        throw new Error(
+          summaryData?.error ||
+          `Failed to load billing summary (${summaryResponse.status})`
+        );
+      }
+
+      if (!commissionsResponse.ok) {
+        throw new Error(
+          commissionsData?.error ||
+          `Failed to load commission history (${commissionsResponse.status})`
+        );
+      }
+
+      if (!invoicesResponse.ok) {
+        throw new Error(
+          invoicesData?.error ||
+          `Failed to load invoice history (${invoicesResponse.status})`
+        );
+      }
+
+      if (!settlementsResponse.ok) {
+        throw new Error(
+          settlementsData?.error ||
+          `Failed to load settlement history (${settlementsResponse.status})`
+        );
+      }
+
+      setBillingSummary(
+        summaryData as BillingSummary
+      );
+
+      setBillingCommissions(
+        Array.isArray(
+          commissionsData?.commissions
+        )
+          ? commissionsData.commissions
+          : []
+      );
+
+      setBillingInvoices(
+        Array.isArray(
+          invoicesData?.invoices
+        )
+          ? invoicesData.invoices
+          : []
+      );
+
+      setBillingSettlements(
+        Array.isArray(
+          settlementsData?.settlements
+        )
+          ? settlementsData.settlements
+          : []
+      );
+    } catch (err) {
+      setBillingSummary(null);
+      setBillingCommissions([]);
+      setBillingInvoices([]);
+      setBillingSettlements([]);
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load billing information"
+      );
+    } finally {
+      setLoadingBilling(false);
+    }
+  }
+
+  async function submitSettlement() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canViewBilling
+    ) {
+      setError(
+        "You do not have access to platform billing."
+      );
+      return;
+    }
+
+    const invoice =
+      billingInvoices.find(
+        (candidate) =>
+          candidate.id ===
+          settlementInvoiceId
+      );
+
+    if (!invoice) {
+      setError(
+        "Select an invoice to settle."
+      );
+      return;
+    }
+
+    if (invoice.status !== "OPEN") {
+      setError(
+        "Only an open invoice can be settled."
+      );
+      return;
+    }
+
+    const transactionReference =
+      settlementTransactionReference.trim();
+
+    const receiptUrl =
+      settlementReceiptUrl.trim();
+
+    if (
+      !transactionReference &&
+      !receiptUrl
+    ) {
+      setError(
+        "Enter a transaction reference or settlement evidence URL."
+      );
+      return;
+    }
+
+    const idempotencyKey =
+      settlementIdempotencyKey ||
+      (
+        typeof crypto !== "undefined" &&
+          typeof crypto.randomUUID ===
+          "function"
+          ? crypto.randomUUID()
+          : `settlement-${Date.now()}-${Math.random()
+            .toString(36)
+            .slice(2)}`
+      );
+
+    if (!settlementIdempotencyKey) {
+      setSettlementIdempotencyKey(
+        idempotencyKey
+      );
+    }
+
+    try {
+      setSubmittingSettlement(true);
+      setError("");
+      setSuccess("");
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/billing/settlements`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              invoiceId: invoice.id,
+              provider:
+                settlementProvider,
+              amount:
+                invoice.totalAmount,
+              currency:
+                invoice.currency,
+              idempotencyKey,
+              transactionReference:
+                transactionReference ||
+                null,
+              receiptUrl:
+                receiptUrl || null
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to submit settlement"
+        );
+      }
+
+      setSettlementInvoiceId("");
+      setSettlementProvider(
+        "TELEBIRR"
+      );
+      setSettlementTransactionReference(
+        ""
+      );
+      setSettlementReceiptUrl("");
+      setSettlementIdempotencyKey("");
+
+      setSuccess(
+        "Settlement evidence submitted for review."
+      );
+
+      await loadBilling();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to submit settlement"
+      );
+    } finally {
+      setSubmittingSettlement(false);
+    }
+  }
+
   async function refreshDashboard() {
     if (!auth?.token) {
       return;
@@ -1164,7 +2054,12 @@ export default function App() {
     setSuccess("");
 
     await Promise.all([
-      loadReviews(),
+      ...(canReviewPayments
+        ? [loadReviews()]
+        : []),
+      ...(canViewBilling
+        ? [loadBilling()]
+        : []),
       loadOrders(),
       loadProducts(),
       loadCategories()
@@ -1174,6 +2069,11 @@ export default function App() {
   async function verifyPayment(
     paymentId: string
   ) {
+    if (!canReviewPayments) {
+      setError("You do not have permission to review payments.");
+      return;
+    }
+
     try {
       setActionId(paymentId);
       setError("");
@@ -1181,7 +2081,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/payment-review/${paymentId}/verify`,
+          `/merchants/${merchantId}/payment-review/${paymentId}/verify`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1224,6 +2124,11 @@ export default function App() {
   function openRejectForm(
     paymentId: string
   ) {
+    if (!canReviewPayments) {
+      setError("You do not have permission to review payments.");
+      return;
+    }
+
     setRejectingPaymentId(
       paymentId
     );
@@ -1246,6 +2151,11 @@ export default function App() {
     paymentId: string,
     reviewNote: string
   ) {
+    if (!canReviewPayments) {
+      setError("You do not have permission to review payments.");
+      return;
+    }
+
     const trimmedNote =
       reviewNote.trim();
 
@@ -1263,7 +2173,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/payment-review/${paymentId}/reject`,
+          `/merchants/${merchantId}/payment-review/${paymentId}/reject`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1320,7 +2230,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/orders/${orderId}/status`,
+          `/merchants/${merchantId}/orders/${orderId}/status`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1367,6 +2277,11 @@ export default function App() {
   function openRestockForm(
     productId: string
   ) {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage inventory.");
+      return;
+    }
+
     setRestockingProductId(
       productId
     );
@@ -1390,6 +2305,11 @@ export default function App() {
   async function restockProduct(
     productId: string
   ) {
+    if (!canManageProducts) {
+      setError("You do not have permission to manage inventory.");
+      return;
+    }
+
     const numericQuantity =
       Number(restockQuantity);
 
@@ -1449,7 +2369,7 @@ export default function App() {
 
       const response =
         await apiFetch(
-          `/merchants/${MERCHANT_ID}/products/${productId}/restock`,
+          `/merchants/${merchantId}/products/${productId}/restock`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1503,6 +2423,73 @@ export default function App() {
     }
   }
 
+  const sortedReviews = useMemo(() => {
+    const next = [...reviews];
+
+    next.sort((a, b) => {
+      switch (reviewSort) {
+        case "oldest":
+          return (
+            new Date(a.createdAt).getTime() -
+            new Date(b.createdAt).getTime()
+          );
+
+        case "amount-high":
+          return (
+            Number(b.amount) -
+            Number(a.amount)
+          );
+
+        case "amount-low":
+          return (
+            Number(a.amount) -
+            Number(b.amount)
+          );
+
+        case "provider-az":
+          return (a.provider || "").localeCompare(
+            b.provider || ""
+          );
+
+        case "provider-za":
+          return (b.provider || "").localeCompare(
+            a.provider || ""
+          );
+
+        case "customer-az":
+          return (
+            (
+              a.order.customer?.name ||
+              "Unknown customer"
+            ).localeCompare(
+              b.order.customer?.name ||
+              "Unknown customer"
+            )
+          );
+
+        case "customer-za":
+          return (
+            (
+              b.order.customer?.name ||
+              "Unknown customer"
+            ).localeCompare(
+              a.order.customer?.name ||
+              "Unknown customer"
+            )
+          );
+
+        case "newest":
+        default:
+          return (
+            new Date(b.createdAt).getTime() -
+            new Date(a.createdAt).getTime()
+          );
+      }
+    });
+
+    return next;
+  }, [reviews, reviewSort]);
+
   useEffect(() => {
     if (!auth?.token) {
       setLoadingReviews(false);
@@ -1512,8 +2499,33 @@ export default function App() {
       return;
     }
 
+    if (
+      !canReviewPayments &&
+      activeTab === "payments"
+    ) {
+      setActiveTab("orders");
+    }
+
+    if (
+      !canViewBilling &&
+      activeTab === "billing"
+    ) {
+      setActiveTab("orders");
+    }
+
+    if (
+      !canManageUsers &&
+      activeTab === "users"
+    ) {
+      setActiveTab("orders");
+    }
+
     void refreshDashboard();
-  }, [auth?.token]);
+  }, [
+    auth?.token,
+    canReviewPayments,
+    canViewBilling
+  ]);
 
   const reviewCount =
     reviews.length;
@@ -1659,72 +2671,7 @@ export default function App() {
     );
   }
 
-  const sortedReviews = useMemo(() => {
-    const next = [...reviews];
 
-    next.sort((a, b) => {
-      switch (reviewSort) {
-        case "oldest":
-          return (
-            new Date(a.createdAt).getTime() -
-            new Date(b.createdAt).getTime()
-          );
-
-        case "amount-high":
-          return (
-            Number(b.amount) -
-            Number(a.amount)
-          );
-
-        case "amount-low":
-          return (
-            Number(a.amount) -
-            Number(b.amount)
-          );
-
-        case "provider-az":
-          return (a.provider || "").localeCompare(
-            b.provider || ""
-          );
-
-        case "provider-za":
-          return (b.provider || "").localeCompare(
-            a.provider || ""
-          );
-
-        case "customer-az":
-          return (
-            (
-              a.order.customer?.name ||
-              "Unknown customer"
-            ).localeCompare(
-              b.order.customer?.name ||
-              "Unknown customer"
-            )
-          );
-
-        case "customer-za":
-          return (
-            (
-              b.order.customer?.name ||
-              "Unknown customer"
-            ).localeCompare(
-              a.order.customer?.name ||
-              "Unknown customer"
-            )
-          );
-
-        case "newest":
-        default:
-          return (
-            new Date(b.createdAt).getTime() -
-            new Date(a.createdAt).getTime()
-          );
-      }
-    });
-
-    return next;
-  }, [reviews, reviewSort]);
 
   return (
     <main style={styles.page}>
@@ -1766,7 +2713,10 @@ export default function App() {
               void refreshDashboard()
             }
             disabled={
-              loadingReviews ||
+              (canReviewPayments &&
+                loadingReviews) ||
+              (canViewBilling &&
+                loadingBilling) ||
               loadingOrders ||
               loadingProducts ||
               actionId !== null
@@ -1775,7 +2725,10 @@ export default function App() {
               styles.refreshButton
             }
           >
-            {loadingReviews ||
+            {(canReviewPayments &&
+              loadingReviews) ||
+              (canViewBilling &&
+                loadingBilling) ||
               loadingOrders ||
               loadingProducts
               ? "Refreshing..."
@@ -1800,27 +2753,29 @@ export default function App() {
       <section
         style={styles.summary}
       >
-        <div
-          style={
-            styles.summaryCard
-          }
-        >
-          <span
+        {canReviewPayments && (
+          <div
             style={
-              styles.summaryLabel
+              styles.summaryCard
             }
           >
-            Payments awaiting review
-          </span>
+            <span
+              style={
+                styles.summaryLabel
+              }
+            >
+              Payments awaiting review
+            </span>
 
-          <strong
-            style={
-              styles.summaryValue
-            }
-          >
-            {reviewCount}
-          </strong>
-        </div>
+            <strong
+              style={
+                styles.summaryValue
+              }
+            >
+              {reviewCount}
+            </strong>
+          </div>
+        )}
 
         <div
           style={
@@ -1903,35 +2858,37 @@ export default function App() {
       <section
         style={styles.tabs}
       >
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab(
-              "payments"
-            );
-            setError("");
-            setSuccess("");
-          }}
-          style={{
-            ...styles.tab,
-            ...(activeTab ===
-              "payments"
-              ? styles.activeTab
-              : {})
-          }}
-        >
-          Payment Review
+        {canReviewPayments && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(
+                "payments"
+              );
+              setError("");
+              setSuccess("");
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab ===
+                "payments"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Payment Review
 
-          {reviewCount > 0 && (
-            <span
-              style={
-                styles.tabCount
-              }
-            >
-              {reviewCount}
-            </span>
-          )}
-        </button>
+            {reviewCount > 0 && (
+              <span
+                style={
+                  styles.tabCount
+                }
+              >
+                {reviewCount}
+              </span>
+            )}
+          </button>
+        )}
 
         <button
           type="button"
@@ -1993,6 +2950,50 @@ export default function App() {
               </span>
             )}
         </button>
+
+        {canViewBilling && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(
+                "billing"
+              );
+              setError("");
+              setSuccess("");
+              void loadBilling();
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab ===
+                "billing"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Billing
+          </button>
+        )}
+
+        {canManageUsers && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("users");
+              setError("");
+              setSuccess("");
+              void loadUsers();
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab === "users"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Users
+          </button>
+        )}
+
       </section>
 
       {error && (
@@ -2586,58 +3587,8 @@ export default function App() {
                                       </span>
                                     </div>
 
-                                    <div
-                                      style={{
-                                        display: "grid",
-                                        gridTemplateColumns:
-                                          "minmax(0, 1fr) minmax(0, 1fr)",
-                                        gap: "12px",
-                                      }}
-                                    >
-                                      <div>
-                                        <div
-                                          style={{
-                                            fontSize: "11px",
-                                            color: "#64748b",
-                                            marginBottom: "3px",
-                                          }}
-                                        >
-                                          Expected
-                                        </div>
 
-                                        <div
-                                          style={{
-                                            fontWeight: 600,
-                                            color: "#0f172a",
-                                          }}
-                                        >
-                                          {finding.expected}
-                                        </div>
-                                      </div>
 
-                                      <div>
-                                        <div
-                                          style={{
-                                            fontSize: "11px",
-                                            color: "#64748b",
-                                            marginBottom: "3px",
-                                          }}
-                                        >
-                                          Receipt says
-                                        </div>
-
-                                        <div
-                                          style={{
-                                            fontWeight: 600,
-                                            color: isMismatch
-                                              ? "#b91c1c"
-                                              : "#0f172a",
-                                          }}
-                                        >
-                                          {finding.actual}
-                                        </div>
-                                      </div>
-                                    </div>
 
                                     {isMismatch && (
                                       <div
@@ -3167,16 +4118,12 @@ export default function App() {
 
                   const payment =
                     order.payments
-                      .filter(
+                      ?.filter(
                         (item) =>
-                          item.status ===
-                          "VERIFIED"
+                          item.status === "VERIFIED"
                       )
                       .at(-1) ||
-                    order.payments.at(
-                      -1
-                    );
-
+                    order.payments?.at(-1);
                   return (
                     <article
                       key={
@@ -3347,7 +4294,7 @@ export default function App() {
                             styles.actions
                           }
                         >
-                          {order.status ===
+                          {canFulfillOrders && order.status ===
                             "PAID" && (
                               <button
                                 type="button"
@@ -3372,7 +4319,7 @@ export default function App() {
                               </button>
                             )}
 
-                          {order.status ===
+                          {canFulfillOrders && order.status ===
                             "FULFILLING" && (
                               <button
                                 type="button"
@@ -3416,7 +4363,8 @@ export default function App() {
             </div>
           )}
         </section>
-      ) : (
+      ) : activeTab ===
+        "inventory" ? (
         <section
           style={styles.section}
         >
@@ -3503,17 +4451,19 @@ export default function App() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={openNewProductForm}
-                  disabled={actionId !== null}
-                  style={styles.restockButton}
-                >
-                  + Add Product
-                </button>
+                {canManageProducts && (
+                  <button
+                    type="button"
+                    onClick={openNewProductForm}
+                    disabled={actionId !== null}
+                    style={styles.restockButton}
+                  >
+                    + Add Product
+                  </button>
+                )}
               </div>
 
-              {productFormOpen && (
+              {canManageProducts && productFormOpen && (
                 <div
                   style={{
                     borderTop: "1px solid #e2e8f0",
@@ -3757,46 +4707,48 @@ export default function App() {
                 </button>
               </div>
 
-              <div
-                style={{
-                  display: "flex",
-                  gap: "8px",
-                  marginBottom: "12px"
-                }}
-              >
-                <input
-                  value={categoryName}
-                  maxLength={100}
-                  onChange={(event) =>
-                    setCategoryName(
-                      event.target.value
-                    )
-                  }
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void createCategory();
-                    }
-                  }}
-                  disabled={actionId !== null}
+              {canManageProducts && (
+                <div
                   style={{
-                    ...styles.formInput,
-                    margin: 0
+                    display: "flex",
+                    gap: "8px",
+                    marginBottom: "12px"
                   }}
-                  placeholder="New category"
-                />
-                <button
-                  type="button"
-                  onClick={() => void createCategory()}
-                  disabled={
-                    actionId !== null ||
-                    !categoryName.trim()
-                  }
-                  style={styles.confirmRestockButton}
                 >
-                  Add
-                </button>
-              </div>
+                  <input
+                    value={categoryName}
+                    maxLength={100}
+                    onChange={(event) =>
+                      setCategoryName(
+                        event.target.value
+                      )
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void createCategory();
+                      }
+                    }}
+                    disabled={actionId !== null}
+                    style={{
+                      ...styles.formInput,
+                      margin: 0
+                    }}
+                    placeholder="New category"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void createCategory()}
+                    disabled={
+                      actionId !== null ||
+                      !categoryName.trim()
+                    }
+                    style={styles.confirmRestockButton}
+                  >
+                    Add
+                  </button>
+                </div>
+              )}
 
               {categories.length === 0 ? (
                 <div
@@ -3841,26 +4793,28 @@ export default function App() {
                             ({category._count?.products ?? 0})
                           </span>
                         </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void deleteCategory(
-                              category.id,
-                              category.name
-                            )
-                          }
-                          disabled={actionId !== null}
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            cursor: "pointer",
-                            color: "#b91c1c",
-                            padding: "0 3px"
-                          }}
-                          title="Delete category"
-                        >
-                          ×
-                        </button>
+                        {canManageProducts && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void deleteCategory(
+                                category.id,
+                                category.name
+                              )
+                            }
+                            disabled={actionId !== null}
+                            style={{
+                              border: "none",
+                              background: "transparent",
+                              cursor: "pointer",
+                              color: "#b91c1c",
+                              padding: "0 3px"
+                            }}
+                            title="Delete category"
+                          >
+                            ×
+                          </button>
+                        )}
                       </div>
                     )
                   )}
@@ -4120,7 +5074,7 @@ export default function App() {
                         </div>
                       </div>
 
-                      {imageProductId === product.id && (
+                      {canManageProducts && imageProductId === product.id && (
                         <div
                           style={{
                             borderTop: "1px solid #e2e8f0",
@@ -4128,14 +5082,35 @@ export default function App() {
                             marginTop: "14px"
                           }}
                         >
-                          <strong
+                          <div
                             style={{
-                              display: "block",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "space-between",
+                              gap: "10px",
                               marginBottom: "10px"
                             }}
                           >
-                            Product Images
-                          </strong>
+                            <strong>
+                              Product Images
+                            </strong>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setImageProductId(null);
+                                setImageFile(null);
+                                setError("");
+                              }}
+                              disabled={actionId !== null}
+                              style={{
+                                ...styles.cancelButton,
+                                fontSize: "11px",
+                                padding: "4px 8px"
+                              }}
+                            >
+                              Hide Images
+                            </button>
+                          </div>
 
                           {product.images &&
                             product.images.length > 0 && (
@@ -4246,48 +5221,39 @@ export default function App() {
                             style={{
                               display: "grid",
                               gridTemplateColumns:
-                                "minmax(0, 2fr) minmax(0, 1fr) auto",
+                                "minmax(0, 1fr) auto",
                               gap: "8px",
                               alignItems: "end"
                             }}
                           >
                             <div>
                               <label style={styles.formLabel}>
-                                Image URL
+                                Image file
                               </label>
                               <input
-                                value={imageUrl}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
                                 onChange={(event) =>
-                                  setImageUrl(
-                                    event.target.value
+                                  setImageFile(
+                                    event.target.files?.[0] ?? null
                                   )
                                 }
                                 disabled={
                                   actionId !== null
                                 }
                                 style={styles.formInput}
-                                placeholder="https://..."
                               />
-                            </div>
-
-                            <div>
-                              <label style={styles.formLabel}>
-                                Alt text
-                              </label>
-                              <input
-                                value={imageAltText}
-                                maxLength={300}
-                                onChange={(event) =>
-                                  setImageAltText(
-                                    event.target.value
-                                  )
-                                }
-                                disabled={
-                                  actionId !== null
-                                }
-                                style={styles.formInput}
-                                placeholder="Optional"
-                              />
+                              {imageFile && (
+                                <div
+                                  style={{
+                                    marginTop: "5px",
+                                    fontSize: "12px",
+                                    color: "#64748b"
+                                  }}
+                                >
+                                  Selected: {imageFile.name}
+                                </div>
+                              )}
                             </div>
 
                             <button
@@ -4299,316 +5265,1776 @@ export default function App() {
                               }
                               disabled={
                                 actionId !== null ||
-                                !imageUrl.trim()
+                                !imageFile
                               }
                               style={
                                 styles.confirmRestockButton
                               }
                             >
-                              Add Image
+                              Upload Image
                             </button>
                           </div>
                         </div>
                       )}
 
-                      {isRestocking ? (
-                        <div
-                          style={
-                            styles.restockPanel
-                          }
-                        >
-                          <strong
-                            style={
-                              styles.restockTitle
-                            }
-                          >
-                            Restock{" "}
-                            {
-                              product.name
-                            }
-                          </strong>
-
-                          <p
-                            style={
-                              styles.restockCurrentStock
-                            }
-                          >
-                            Current stock:{" "}
-                            <strong>
-                              {
-                                product.stock
-                              }
-                            </strong>
-                          </p>
-
-                          <label
-                            style={
-                              styles.formLabel
-                            }
-                          >
-                            Quantity to add
-                          </label>
-
-                          <input
-                            type="number"
-                            min="1"
-                            max="100000"
-                            step="1"
-                            value={
-                              restockQuantity
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              setRestockQuantity(
-                                event
-                                  .target
-                                  .value
-                              )
-                            }
-                            placeholder="Example: 10"
-                            disabled={
-                              busy
-                            }
-                            style={
-                              styles.formInput
-                            }
-                          />
-
-                          {validQuantity && (
-                            <div
-                              style={
-                                styles.projectedStock
-                              }
-                            >
-                              <span>
-                                New stock after restock
-                              </span>
-
-                              <strong>
-                                {
-                                  projectedStock
-                                }
-                              </strong>
-                            </div>
-                          )}
-
-                          {exceedsQuantityLimit && (
-                            <p
-                              style={
-                                styles.formWarning
-                              }
-                            >
-                              Maximum restock quantity
-                              is 100,000 units.
-                            </p>
-                          )}
-
-                          {exceedsStockLimit && (
-                            <p
-                              style={
-                                styles.formWarning
-                              }
-                            >
-                              Resulting stock cannot
-                              exceed 1,000,000 units.
-                            </p>
-                          )}
-
-                          <label
-                            style={
-                              styles.formLabel
-                            }
-                          >
-                            Note{" "}
-                            <span
-                              style={
-                                styles.optionalLabel
-                              }
-                            >
-                              (optional)
-                            </span>
-                          </label>
-
-                          <textarea
-                            value={
-                              restockNote
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              setRestockNote(
-                                event
-                                  .target
-                                  .value
-                              )
-                            }
-                            placeholder="Example: New shipment received"
-                            disabled={
-                              busy
-                            }
-                            rows={3}
-                            maxLength={500}
-                            style={
-                              styles.formTextarea
-                            }
-                          />
-
-                          <span
-                            style={
-                              styles.characterCount
-                            }
-                          >
-                            {
-                              restockNote.length
-                            }
-                            /500
-                          </span>
-
+                      {/* Hide the normal product footer while image panel is open */}
+                      {imageProductId !== product.id && (
+                        isRestocking ? (
                           <div
                             style={
-                              styles.restockActions
+                              styles.restockPanel
                             }
                           >
-                            <button
-                              type="button"
+                            <strong
+                              style={
+                                styles.restockTitle
+                              }
+                            >
+                              Restock{" "}
+                              {
+                                product.name
+                              }
+                            </strong>
+
+                            <p
+                              style={
+                                styles.restockCurrentStock
+                              }
+                            >
+                              Current stock:{" "}
+                              <strong>
+                                {
+                                  product.stock
+                                }
+                              </strong>
+                            </p>
+
+                            <label
+                              style={
+                                styles.formLabel
+                              }
+                            >
+                              Quantity to add
+                            </label>
+
+                            <input
+                              type="number"
+                              min="1"
+                              max="100000"
+                              step="1"
+                              value={
+                                restockQuantity
+                              }
+                              onChange={(
+                                event
+                              ) =>
+                                setRestockQuantity(
+                                  event
+                                    .target
+                                    .value
+                                )
+                              }
+                              placeholder="Example: 10"
                               disabled={
                                 busy
                               }
-                              onClick={
-                                cancelRestock
-                              }
                               style={
-                                styles.cancelButton
+                                styles.formInput
+                              }
+                            />
+
+                            {validQuantity && (
+                              <div
+                                style={
+                                  styles.projectedStock
+                                }
+                              >
+                                <span>
+                                  New stock after restock
+                                </span>
+
+                                <strong>
+                                  {
+                                    projectedStock
+                                  }
+                                </strong>
+                              </div>
+                            )}
+
+                            {exceedsQuantityLimit && (
+                              <p
+                                style={
+                                  styles.formWarning
+                                }
+                              >
+                                Maximum restock quantity
+                                is 100,000 units.
+                              </p>
+                            )}
+
+                            {exceedsStockLimit && (
+                              <p
+                                style={
+                                  styles.formWarning
+                                }
+                              >
+                                Resulting stock cannot
+                                exceed 1,000,000 units.
+                              </p>
+                            )}
+
+                            <label
+                              style={
+                                styles.formLabel
                               }
                             >
-                              Cancel
-                            </button>
+                              Note{" "}
+                              <span
+                                style={
+                                  styles.optionalLabel
+                                }
+                              >
+                                (optional)
+                              </span>
+                            </label>
 
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                !validQuantity ||
-                                exceedsQuantityLimit ||
-                                exceedsStockLimit
+                            <textarea
+                              value={
+                                restockNote
                               }
-                              onClick={() =>
-                                void restockProduct(
-                                  product.id
+                              onChange={(
+                                event
+                              ) =>
+                                setRestockNote(
+                                  event
+                                    .target
+                                    .value
                                 )
                               }
+                              placeholder="Example: New shipment received"
+                              disabled={
+                                busy
+                              }
+                              rows={3}
+                              maxLength={500}
                               style={
-                                styles.confirmRestockButton
+                                styles.formTextarea
+                              }
+                            />
+
+                            <span
+                              style={
+                                styles.characterCount
                               }
                             >
-                              {busy
-                                ? "Adding Stock..."
-                                : `Add ${validQuantity ? quantityNumber : ""} Stock`}
-                            </button>
+                              {
+                                restockNote.length
+                              }
+                              /500
+                            </span>
+
+                            <div
+                              style={
+                                styles.restockActions
+                              }
+                            >
+                              <button
+                                type="button"
+                                disabled={
+                                  busy
+                                }
+                                onClick={
+                                  cancelRestock
+                                }
+                                style={
+                                  styles.cancelButton
+                                }
+                              >
+                                Cancel
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  !validQuantity ||
+                                  exceedsQuantityLimit ||
+                                  exceedsStockLimit
+                                }
+                                onClick={() =>
+                                  void restockProduct(
+                                    product.id
+                                  )
+                                }
+                                style={
+                                  styles.confirmRestockButton
+                                }
+                              >
+                                {busy
+                                  ? "Adding Stock..."
+                                  : `Add ${validQuantity ? quantityNumber : ""} Stock`}
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <div
-                          style={
-                            styles.productFooter
-                          }
-                        >
-                          <span
+                        ) : (
+                          <div
                             style={
-                              styles.productUpdated
+                              styles.productFooter
                             }
                           >
-                            Updated{" "}
-                            {new Date(
-                              product.updatedAt
-                            ).toLocaleString()}
-                          </span>
-
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: "7px",
-                              flexWrap: "wrap",
-                              justifyContent: "flex-end"
-                            }}
-                          >
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !== null
+                            <span
+                              style={
+                                styles.productUpdated
                               }
-                              onClick={() =>
-                                openEditProductForm(product)
-                              }
-                              style={styles.cancelButton}
                             >
-                              Edit
-                            </button>
+                              Updated{" "}
+                              {new Date(
+                                product.updatedAt
+                              ).toLocaleString()}
+                            </span>
 
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !== null
-                              }
-                              onClick={() => {
-                                setImageProductId(
-                                  imageProductId === product.id
-                                    ? null
-                                    : product.id
-                                );
-                                setImageUrl("");
-                                setImageAltText("");
-                                setError("");
-                              }}
-                              style={styles.cancelButton}
-                            >
-                              {imageProductId === product.id
-                                ? "Hide Images"
-                                : "Images"}
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !== null
-                              }
-                              onClick={() =>
-                                openRestockForm(product.id)
-                              }
-                              style={styles.restockButton}
-                            >
-                              Restock
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                actionId !== null
-                              }
-                              onClick={() =>
-                                void deleteProduct(
-                                  product.id,
-                                  product.name
-                                )
-                              }
+                            <div
                               style={{
-                                ...styles.cancelButton,
-                                color: "#b91c1c"
+                                display: "flex",
+                                gap: "7px",
+                                flexWrap: "wrap",
+                                justifyContent: "flex-end"
                               }}
                             >
-                              Delete
-                            </button>
+                              {canManageProducts && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      busy ||
+                                      actionId !== null
+                                    }
+                                    onClick={() =>
+                                      openEditProductForm(product)
+                                    }
+                                    style={styles.cancelButton}
+                                  >
+                                    Edit
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      busy ||
+                                      actionId !== null
+                                    }
+                                    onClick={() => {
+                                      setImageProductId(
+                                        imageProductId === product.id
+                                          ? null
+                                          : product.id
+                                      );
+                                      setImageFile(null);
+                                      setError("");
+                                    }}
+                                    style={styles.cancelButton}
+                                  >
+                                    {imageProductId === product.id
+                                      ? "Hide Images"
+                                      : "Images"}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      busy ||
+                                      actionId !== null
+                                    }
+                                    onClick={() =>
+                                      openRestockForm(product.id)
+                                    }
+                                    style={styles.restockButton}
+                                  >
+                                    Restock
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      busy ||
+                                      actionId !== null
+                                    }
+                                    onClick={() =>
+                                      void deleteProduct(
+                                        product.id,
+                                        product.name
+                                      )
+                                    }
+                                    style={{
+                                      ...styles.cancelButton,
+                                      color: "#b91c1c"
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
-                        </div>
+                        )
                       )}
                     </article>
                   );
                 }
+              )}
+            </div>
+          )}
+        </section>
+      ) : activeTab === "billing" ? (
+        <section
+          style={styles.section}
+        >
+          <div
+            style={
+              styles.sectionHeader
+            }
+          >
+            <div>
+              <h2
+                style={
+                  styles.sectionTitle
+                }
+              >
+                Billing
+              </h2>
+
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
+                Review your subscription,
+                commissions, invoices, and
+                settlements.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                void loadBilling()
+              }
+              disabled={loadingBilling}
+              style={
+                styles.refreshButton
+              }
+            >
+              {loadingBilling
+                ? "Loading..."
+                : "Refresh Billing"}
+            </button>
+          </div>
+
+          {loadingBilling &&
+            !billingSummary ? (
+            <div
+              style={styles.emptyState}
+            >
+              Loading billing information...
+            </div>
+          ) : !billingSummary ? (
+            <div
+              style={styles.emptyState}
+            >
+              Billing information is not
+              available.
+            </div>
+          ) : billingSummary.currentPeriod
+            .status ===
+            "NO_SUBSCRIPTION" ? (
+            <div
+              style={styles.emptyState}
+            >
+              No subscription is currently
+              configured for this merchant.
+            </div>
+          ) : billingSummary.subscription ? (
+            <>
+              <div
+                style={styles.summary}
+              >
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Plan"
+                    value={
+                      `${billingSummary.subscription.plan.name} (${billingSummary.subscription.plan.code})`
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Subscription status"
+                    value={
+                      billingSummary
+                        .subscription.status
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Billing interval"
+                    value={
+                      billingSummary
+                        .subscription
+                        .billingInterval
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label={
+                      billingSummary
+                        .subscription
+                        .billingInterval ===
+                        "MONTHLY"
+                        ? "Monthly subscription"
+                        : billingSummary
+                          .subscription
+                          .billingInterval ===
+                          "ANNUAL"
+                          ? "Annual subscription"
+                          : "Subscription price"
+                    }
+                    value={
+                      `${billingSummary.subscription.priceSnapshot} ${billingSummary.subscription.currency}`
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Commission rate"
+                    value={
+                      `${Number(
+                        billingSummary
+                          .subscription
+                          .commissionRateSnapshot
+                      ) * 100}%`
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Current period"
+                    value={
+                      `${new Date(
+                        billingSummary
+                          .subscription
+                          .currentPeriodStart
+                      ).toLocaleDateString()} - ${new Date(
+                        billingSummary
+                          .subscription
+                          .currentPeriodEnd
+                      ).toLocaleDateString()}`
+                    }
+                  />
+                </div>
+              </div>
+
+              <div
+                style={styles.summary}
+              >
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Subscription amount"
+                    value={
+                      billingSummary
+                        .currentPeriod
+                        .subscriptionAmount !==
+                        null
+                        ? `${billingSummary.currentPeriod.subscriptionAmount} ${billingSummary.currentPeriod.currency}`
+                        : "-"
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label="Commission accrued"
+                    value={
+                      billingSummary
+                        .currentPeriod
+                        .commissionAmount !==
+                        null
+                        ? `${billingSummary.currentPeriod.commissionAmount} ${billingSummary.currentPeriod.currency}`
+                        : "-"
+                    }
+                  />
+                </div>
+
+                <div
+                  style={
+                    styles.summaryCard
+                  }
+                >
+                  <Detail
+                    label={
+                      billingSummary
+                        .currentPeriod
+                        .status ===
+                        "INVOICED"
+                        ? "Invoice total"
+                        : "Estimated current bill"
+                    }
+                    value={
+                      billingSummary
+                        .currentPeriod
+                        .totalAmount !== null
+                        ? `${billingSummary.currentPeriod.totalAmount} ${billingSummary.currentPeriod.currency}`
+                        : "-"
+                    }
+                  />
+                </div>
+              </div>
+
+              {billingSummary.currentPeriod
+                .status ===
+                "INVOICED" && (
+                  <div
+                    style={styles.emptyState}
+                  >
+                    Current period invoice:{" "}
+                    {billingSummary.currentPeriod
+                      .invoiceNumber ||
+                      billingSummary.currentPeriod
+                        .invoiceId ||
+                      "Invoice"}{" "}
+                    —{" "}
+                    {billingSummary.currentPeriod
+                      .invoiceStatus ||
+                      "status unavailable"}
+                  </div>
+                )}
+
+              {billingSummary.currentPeriod
+                .status ===
+                "NEGATIVE_TOTAL_REQUIRES_REVIEW" && (
+                  <div
+                    style={styles.emptyState}
+                  >
+                    This billing period requires
+                    review before an invoice can
+                    be finalized.
+                  </div>
+                )}
+            </>
+          ) : (
+            <div
+              style={styles.emptyState}
+            >
+              Billing subscription information
+              is unavailable.
+            </div>
+          )}
+          <div
+            style={{
+              marginTop: "28px"
+            }}
+          >
+            <div
+              style={
+                styles.sectionHeader
+              }
+            >
+              <div>
+                <h3
+                  style={{
+                    ...styles.sectionTitle,
+                    fontSize: "18px"
+                  }}
+                >
+                  Commission History
+                </h3>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Verified transaction
+                  commissions and append-only
+                  billing adjustments.
+                </p>
+              </div>
+            </div>
+
+            {billingCommissions.length ===
+              0 ? (
+              <div
+                style={styles.emptyState}
+              >
+                No commission transactions
+                found.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px"
+                }}
+              >
+                {billingCommissions.map(
+                  (commission) => (
+                    <article
+                      key={commission.id}
+                      style={
+                        styles.summaryCard
+                      }
+                    >
+                      <div
+                        style={styles.summary}
+                      >
+                        <Detail
+                          label="Transaction amount"
+                          value={`${commission.transactionAmount} ${commission.currency}`}
+                        />
+
+                        <Detail
+                          label="Commission rate"
+                          value={`${Number(
+                            commission.commissionRate
+                          ) * 100}%`}
+                        />
+
+                        <Detail
+                          label="Original commission"
+                          value={`${commission.commissionAmount} ${commission.currency}`}
+                        />
+
+                        <Detail
+                          label="Adjustments"
+                          value={`${commission.adjustmentAmount} ${commission.currency}`}
+                        />
+
+                        <Detail
+                          label="Net commission"
+                          value={`${commission.netCommissionAmount} ${commission.currency}`}
+                        />
+
+                        <Detail
+                          label="Status"
+                          value={commission.status}
+                        />
+
+                        <Detail
+                          label="Recorded"
+                          value={new Date(
+                            commission.createdAt
+                          ).toLocaleString()}
+                        />
+                      </div>
+
+                      {commission.adjustments
+                        .length > 0 && (
+                          <div
+                            style={{
+                              marginTop:
+                                "16px"
+                            }}
+                          >
+                            <strong>
+                              Adjustments
+                            </strong>
+
+                            <div
+                              style={{
+                                display:
+                                  "grid",
+                                gap: "8px",
+                                marginTop:
+                                  "8px"
+                              }}
+                            >
+                              {commission.adjustments.map(
+                                (
+                                  adjustment
+                                ) => (
+                                  <div
+                                    key={
+                                      adjustment.id
+                                    }
+                                    style={
+                                      styles.emptyState
+                                    }
+                                  >
+                                    <div>
+                                      {
+                                        adjustment.type
+                                      }
+                                      {" — "}
+                                      {
+                                        adjustment.amount
+                                      }{" "}
+                                      {
+                                        adjustment.currency
+                                      }
+                                    </div>
+
+                                    <div>
+                                      {
+                                        adjustment.reason
+                                      }
+                                    </div>
+
+                                    <div>
+                                      {new Date(
+                                        adjustment.createdAt
+                                      ).toLocaleString()}
+                                    </div>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          </div>
+                        )}
+                    </article>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              marginTop: "28px"
+            }}
+          >
+            <div
+              style={
+                styles.sectionHeader
+              }
+            >
+              <div>
+                <h3
+                  style={{
+                    ...styles.sectionTitle,
+                    fontSize: "18px"
+                  }}
+                >
+                  Invoice History
+                </h3>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Finalized billing records and
+                  their persisted totals.
+                </p>
+              </div>
+            </div>
+
+            {billingInvoices.length === 0 ? (
+              <div
+                style={styles.emptyState}
+              >
+                No invoices found.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px"
+                }}
+              >
+                {billingInvoices.map(
+                  (invoice) => (
+                    <article
+                      key={invoice.id}
+                      style={
+                        styles.summaryCard
+                      }
+                    >
+                      <div
+                        style={styles.summary}
+                      >
+                        <Detail
+                          label="Invoice"
+                          value={
+                            invoice.invoiceNumber
+                          }
+                        />
+
+                        <Detail
+                          label="Status"
+                          value={invoice.status}
+                        />
+
+                        <Detail
+                          label="Billing period"
+                          value={`${new Date(
+                            invoice.periodStart
+                          ).toLocaleDateString()} - ${new Date(
+                            invoice.periodEnd
+                          ).toLocaleDateString()}`}
+                        />
+
+                        <Detail
+                          label="Subscription amount"
+                          value={`${invoice.subscriptionAmount} ${invoice.currency}`}
+                        />
+
+                        <Detail
+                          label="Commission amount"
+                          value={`${invoice.commissionAmount} ${invoice.currency}`}
+                        />
+
+                        <Detail
+                          label="Invoice total"
+                          value={`${invoice.totalAmount} ${invoice.currency}`}
+                        />
+
+                        <Detail
+                          label="Created"
+                          value={new Date(
+                            invoice.createdAt
+                          ).toLocaleString()}
+                        />
+
+                        <Detail
+                          label="Opened"
+                          value={
+                            invoice.openedAt
+                              ? new Date(
+                                invoice.openedAt
+                              ).toLocaleString()
+                              : "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Due"
+                          value={
+                            invoice.dueAt
+                              ? new Date(
+                                invoice.dueAt
+                              ).toLocaleString()
+                              : "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Paid"
+                          value={
+                            invoice.paidAt
+                              ? new Date(
+                                invoice.paidAt
+                              ).toLocaleString()
+                              : "-"
+                          }
+                        />
+                      </div>
+                    </article>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: "28px"
+            }}
+          >
+            <div style={styles.sectionHeader}>
+              <div>
+                <h3
+                  style={{
+                    ...styles.sectionTitle,
+                    fontSize: "18px"
+                  }}
+                >
+                  Submit Settlement
+                </h3>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Submit payment evidence for an
+                  open platform invoice. Submission
+                  requires review before the invoice
+                  can be marked paid.
+                </p>
+              </div>
+            </div>
+
+            {billingInvoices.filter(
+              (invoice) =>
+                invoice.status === "OPEN"
+            ).length === 0 ? (
+              <div style={styles.emptyState}>
+                No open invoices require settlement.
+              </div>
+            ) : (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitSettlement();
+                }}
+                style={{
+                  display: "grid",
+                  gap: "16px"
+                }}
+              >
+                <label
+                  style={{
+                    display: "grid",
+                    gap: "6px"
+                  }}
+                >
+                  <span>
+                    Open invoice
+                  </span>
+
+                  <select
+                    style={styles.formInput}
+                    value={
+                      settlementInvoiceId
+                    }
+                    onChange={(event) => {
+                      setSettlementInvoiceId(
+                        event.target.value
+                      );
+
+                      setSettlementIdempotencyKey(
+                        ""
+                      );
+                    }}
+                    disabled={
+                      submittingSettlement
+                    }
+                    required
+                  >
+                    <option value="">
+                      Select an invoice
+                    </option>
+
+                    {billingInvoices
+                      .filter(
+                        (invoice) =>
+                          invoice.status ===
+                          "OPEN"
+                      )
+                      .map((invoice) => (
+                        <option
+                          key={invoice.id}
+                          value={invoice.id}
+                        >
+                          {invoice.invoiceNumber} -{" "}
+                          {invoice.totalAmount}{" "}
+                          {invoice.currency}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+
+                {settlementInvoiceId &&
+                  (() => {
+                    const selectedInvoice =
+                      billingInvoices.find(
+                        (invoice) =>
+                          invoice.id ===
+                          settlementInvoiceId &&
+                          invoice.status ===
+                          "OPEN"
+                      );
+
+                    if (!selectedInvoice) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        style={
+                          styles.summaryCard
+                        }
+                      >
+                        <div
+                          style={
+                            styles.summary
+                          }
+                        >
+                          <Detail
+                            label="Invoice"
+                            value={
+                              selectedInvoice.invoiceNumber
+                            }
+                          />
+
+                          <Detail
+                            label="Amount due"
+                            value={`${selectedInvoice.totalAmount} ${selectedInvoice.currency}`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                <label
+                  style={{
+                    display: "grid",
+                    gap: "6px"
+                  }}
+                >
+                  <span>
+                    Provider
+                  </span>
+
+                  <select
+                    style={styles.formInput}
+                    value={
+                      settlementProvider
+                    }
+                    onChange={(event) => {
+                      setSettlementProvider(
+                        event.target.value as
+                        | "TELEBIRR"
+                        | "CBE_BIRR"
+                        | "OTHER"
+                      );
+
+                      setSettlementIdempotencyKey(
+                        ""
+                      );
+                    }}
+                    disabled={
+                      submittingSettlement
+                    }
+                  >
+                    <option value="TELEBIRR">
+                      Telebirr
+                    </option>
+
+                    <option value="CBE_BIRR">
+                      CBE Birr
+                    </option>
+
+                    <option value="OTHER">
+                      Other
+                    </option>
+                  </select>
+                </label>
+
+                <label
+                  style={{
+                    display: "grid",
+                    gap: "6px"
+                  }}
+                >
+                  <span>
+                    Transaction reference
+                  </span>
+
+                  <input
+                    style={styles.formInput}
+                    type="text"
+                    value={
+                      settlementTransactionReference
+                    }
+                    onChange={(event) => {
+                      setSettlementTransactionReference(
+                        event.target.value
+                      );
+
+                      setSettlementIdempotencyKey(
+                        ""
+                      );
+                    }}
+                    disabled={
+                      submittingSettlement
+                    }
+                    placeholder="Transaction reference"
+                  />
+                </label>
+
+                <label
+                  style={{
+                    display: "grid",
+                    gap: "6px"
+                  }}
+                >
+                  <span>
+                    Settlement evidence URL
+                  </span>
+
+                  <input
+                    style={styles.formInput}
+                    type="url"
+                    value={
+                      settlementReceiptUrl
+                    }
+                    onChange={(event) => {
+                      setSettlementReceiptUrl(
+                        event.target.value
+                      );
+
+                      setSettlementIdempotencyKey(
+                        ""
+                      );
+                    }}
+                    disabled={
+                      submittingSettlement
+                    }
+                    placeholder="https://..."
+                  />
+                </label>
+
+                <div
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Enter a transaction reference or
+                  evidence URL. Amount and currency
+                  come directly from the selected
+                  invoice and cannot be changed here.
+                </div>
+
+                <div>
+                  <button
+                    type="submit"
+                    disabled={
+                      submittingSettlement ||
+                      !settlementInvoiceId ||
+                      (
+                        !settlementTransactionReference.trim() &&
+                        !settlementReceiptUrl.trim()
+                      )
+                    }
+                    style={
+                      styles.refreshButton
+                    }
+                  >
+                    {submittingSettlement
+                      ? "Submitting..."
+                      : "Submit for Review"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: "28px"
+            }}
+          >
+            <div
+              style={
+                styles.sectionHeader
+              }
+            >
+              <div>
+                <h3
+                  style={{
+                    ...styles.sectionTitle,
+                    fontSize: "18px"
+                  }}
+                >
+                  Settlement History
+                </h3>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Merchant payments submitted
+                  toward platform invoices.
+                </p>
+              </div>
+            </div>
+
+            {billingSettlements.length ===
+              0 ? (
+              <div
+                style={styles.emptyState}
+              >
+                No settlements found.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px"
+                }}
+              >
+                {billingSettlements.map(
+                  (settlement) => (
+                    <article
+                      key={settlement.id}
+                      style={
+                        styles.summaryCard
+                      }
+                    >
+                      <div
+                        style={styles.summary}
+                      >
+                        <Detail
+                          label="Provider"
+                          value={
+                            settlement.provider
+                          }
+                        />
+
+                        <Detail
+                          label="Status"
+                          value={
+                            settlement.status
+                          }
+                        />
+
+                        <Detail
+                          label="Amount"
+                          value={`${settlement.amount} ${settlement.currency}`}
+                        />
+
+                        <Detail
+                          label="Transaction reference"
+                          value={
+                            settlement.transactionReference ||
+                            "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Submitted"
+                          value={new Date(
+                            settlement.submittedAt
+                          ).toLocaleString()}
+                        />
+
+                        <Detail
+                          label="Verified"
+                          value={
+                            settlement.verifiedAt
+                              ? new Date(
+                                settlement.verifiedAt
+                              ).toLocaleString()
+                              : "-"
+                          }
+                        />
+                      </div>
+
+                      {settlement.receiptUrl && (
+                        <div
+                          style={{
+                            marginTop: "12px"
+                          }}
+                        >
+                          <a
+                            href={
+                              settlement.receiptUrl
+                            }
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            View settlement evidence
+                          </a>
+                        </div>
+                      )}
+
+                      {settlement.reviewNote && (
+                        <div
+                          style={{
+                            marginTop: "12px"
+                          }}
+                        >
+                          <strong>
+                            Review note
+                          </strong>
+
+                          <div>
+                            {
+                              settlement.reviewNote
+                            }
+                          </div>
+                        </div>
+                      )}
+                    </article>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : (
+        <section
+          style={styles.section}
+        >
+          <div
+            style={styles.sectionHeader}
+          >
+            <div>
+              <h2
+                style={styles.sectionTitle}
+              >
+                Users
+              </h2>
+
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
+                Manage the people who can access
+                this merchant account.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                void loadUsers()
+              }
+              disabled={loadingUsers}
+              style={
+                styles.inventoryRefreshButton
+              }
+            >
+              {loadingUsers
+                ? "Loading..."
+                : "Refresh Users"}
+            </button>
+          </div>
+
+          <div
+            style={{
+              marginBottom: "20px",
+              padding: "16px",
+              border: "1px solid #dbe3ee",
+              borderRadius: "14px"
+            }}
+          >
+            <h3
+              style={{
+                ...styles.sectionTitle,
+                fontSize: "18px",
+                marginTop: 0
+              }}
+            >
+              Create User
+            </h3>
+
+            <div
+              style={{
+                display: "grid",
+                gap: "12px",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(220px, 1fr))"
+              }}
+            >
+              <div>
+                <label
+                  style={styles.formLabel}
+                >
+                  Display name
+                </label>
+
+                <input
+                  type="text"
+                  value={newUserDisplayName}
+                  onChange={(event) =>
+                    setNewUserDisplayName(
+                      event.target.value
+                    )
+                  }
+                  disabled={creatingUser}
+                  style={styles.formInput}
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div>
+                <label
+                  style={styles.formLabel}
+                >
+                  Email
+                </label>
+
+                <input
+                  type="email"
+                  value={newUserEmail}
+                  onChange={(event) =>
+                    setNewUserEmail(
+                      event.target.value
+                    )
+                  }
+                  disabled={creatingUser}
+                  style={styles.formInput}
+                  placeholder="employee@example.com"
+                />
+              </div>
+
+              <div>
+                <label
+                  style={styles.formLabel}
+                >
+                  Password
+                </label>
+
+                <input
+                  type="password"
+                  value={newUserPassword}
+                  onChange={(event) =>
+                    setNewUserPassword(
+                      event.target.value
+                    )
+                  }
+                  disabled={creatingUser}
+                  style={styles.formInput}
+                  placeholder="Minimum 8 characters"
+                />
+              </div>
+
+              <div>
+                <label
+                  style={styles.formLabel}
+                >
+                  Role
+                </label>
+
+                <select
+                  value={newUserRole}
+                  onChange={(event) =>
+                    setNewUserRole(
+                      event.target.value as
+                      | "ADMIN"
+                      | "STAFF"
+                    )
+                  }
+                  disabled={creatingUser}
+                  style={styles.formInput}
+                >
+                  <option value="STAFF">
+                    STAFF
+                  </option>
+
+                  <option value="ADMIN">
+                    ADMIN
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: "16px"
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  void createUser()
+                }
+                disabled={creatingUser}
+                style={
+                  styles.inventoryRefreshButton
+                }
+              >
+                {creatingUser
+                  ? "Creating..."
+                  : "Create User"}
+              </button>
+            </div>
+          </div>
+
+          {loadingUsers &&
+            merchantUsers.length === 0 ? (
+            <div
+              style={styles.emptyState}
+            >
+              Loading users...
+            </div>
+          ) : merchantUsers.length === 0 ? (
+            <div
+              style={styles.emptyState}
+            >
+              No users found.
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "grid",
+                gap: "12px"
+              }}
+            >
+              {merchantUsers.map(
+                (merchantUser) => (
+                  <article
+                    key={merchantUser.id}
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    {editingUserId ===
+                      merchantUser.id &&
+                      merchantUser.role !== "OWNER" ? (
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: "16px"
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: "12px",
+                            gridTemplateColumns:
+                              "repeat(auto-fit, minmax(220px, 1fr))"
+                          }}
+                        >
+                          <div>
+                            <label
+                              style={styles.formLabel}
+                            >
+                              Display name
+                            </label>
+
+                            <input
+                              type="text"
+                              value={editUserDisplayName}
+                              onChange={(event) =>
+                                setEditUserDisplayName(
+                                  event.target.value
+                                )
+                              }
+                              disabled={savingUser}
+                              style={styles.formInput}
+                              placeholder="Optional"
+                            />
+                          </div>
+
+                          <div>
+                            <label
+                              style={styles.formLabel}
+                            >
+                              Role
+                            </label>
+
+                            <select
+                              value={editUserRole}
+                              onChange={(event) =>
+                                setEditUserRole(
+                                  event.target.value as
+                                  | "ADMIN"
+                                  | "STAFF"
+                                )
+                              }
+                              disabled={savingUser}
+                              style={styles.formInput}
+                            >
+                              <option value="STAFF">
+                                STAFF
+                              </option>
+
+                              <option value="ADMIN">
+                                ADMIN
+                              </option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label
+                              style={styles.formLabel}
+                            >
+                              New password
+                            </label>
+
+                            <input
+                              type="password"
+                              value={editUserPassword}
+                              onChange={(event) =>
+                                setEditUserPassword(
+                                  event.target.value
+                                )
+                              }
+                              disabled={savingUser}
+                              style={styles.formInput}
+                              placeholder="Leave blank to keep current password"
+                            />
+                          </div>
+                        </div>
+
+                        <div style={styles.summary}>
+                          <Detail
+                            label="Email"
+                            value={merchantUser.email}
+                          />
+
+                          <Detail
+                            label="Created"
+                            value={new Date(
+                              merchantUser.createdAt
+                            ).toLocaleDateString()}
+                          />
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "10px",
+                            flexWrap: "wrap"
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void updateUser()
+                            }
+                            disabled={savingUser}
+                            style={
+                              styles.inventoryRefreshButton
+                            }
+                          >
+                            {savingUser
+                              ? "Saving..."
+                              : "Save Changes"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={cancelEditingUser}
+                            disabled={savingUser}
+                            style={
+                              styles.inventoryRefreshButton
+                            }
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div
+                          style={styles.summary}
+                        >
+                          <Detail
+                            label="Display name"
+                            value={
+                              merchantUser.displayName ||
+                              "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Email"
+                            value={
+                              merchantUser.email
+                            }
+                          />
+
+                          <Detail
+                            label="Role"
+                            value={
+                              merchantUser.role
+                            }
+                          />
+
+                          <Detail
+                            label="Created"
+                            value={new Date(
+                              merchantUser.createdAt
+                            ).toLocaleDateString()}
+                          />
+                        </div>
+
+                        {merchantUser.role !==
+                          "OWNER" && (
+                            <div
+                              style={{
+                                marginTop: "16px",
+                                display: "flex",
+                                gap: "10px",
+                                flexWrap: "wrap"
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  startEditingUser(
+                                    merchantUser
+                                  )
+                                }
+                                disabled={
+                                  savingUser ||
+                                  deletingUserId !== null
+                                }
+                                style={
+                                  styles.inventoryRefreshButton
+                                }
+                              >
+                                Edit
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void deleteUser(
+                                    merchantUser
+                                  )
+                                }
+                                disabled={
+                                  savingUser ||
+                                  deletingUserId !== null
+                                }
+                                style={
+                                  styles.inventoryRefreshButton
+                                }
+                              >
+                                {deletingUserId ===
+                                  merchantUser.id
+                                  ? "Deleting..."
+                                  : "Delete"}
+                              </button>
+                            </div>
+                          )}
+                      </>
+                    )}
+                  </article>
+                )
               )}
             </div>
           )}

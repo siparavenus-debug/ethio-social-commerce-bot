@@ -3,15 +3,17 @@ import { prisma } from "@ethio-commerce/database";
 
 import {
   requireAuth,
-  requireMerchantAccess
+  requireMerchantAccess,
+  requireRole
 } from "../middleware/auth.js";
+
+import {
+requireMerchantEntitlement
+} from "../middleware/subscription-entitlement.js";
 
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+router.use(requireAuth);
 
 const PRODUCT_NAME_MAX_LENGTH = 200;
 const PRODUCT_DESCRIPTION_MAX_LENGTH = 5000;
@@ -77,9 +79,9 @@ function isValidImageUrl(
  */
 router.get(
   "/:merchantId/products/categories",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const categories =
         await prisma.productCategory.findMany({
@@ -124,9 +126,14 @@ router.get(
  */
 router.post(
   "/:merchantId/products/categories",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
       const { name } = req.body;
 
       if (
@@ -217,12 +224,15 @@ router.post(
  */
 router.delete(
   "/:merchantId/products/categories/:categoryId",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        categoryId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const categoryId = String(req.params.categoryId);
 
       const category =
         await prisma.productCategory.findFirst({
@@ -274,9 +284,10 @@ router.delete(
  */
 router.get(
   "/:merchantId/products",
+ requireMerchantAccess,
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const products =
         await prisma.product.findMany({
@@ -322,12 +333,10 @@ router.get(
  */
 router.get(
   "/:merchantId/products/:productId",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const product =
         await prisma.product.findFirst({
@@ -389,9 +398,14 @@ router.get(
  */
 router.post(
   "/:merchantId/products",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const { merchantId } = req.params;
+      const merchantId = String(req.params.merchantId);
 
       const {
         name,
@@ -437,14 +451,14 @@ router.post(
 
       const trimmedDescription =
         typeof description === "string" &&
-        description.trim().length > 0
+          description.trim().length > 0
           ? description.trim()
           : null;
 
       if (
         trimmedDescription &&
         trimmedDescription.length >
-          PRODUCT_DESCRIPTION_MAX_LENGTH
+        PRODUCT_DESCRIPTION_MAX_LENGTH
       ) {
         res.status(400).json({
           error: `description must be ${PRODUCT_DESCRIPTION_MAX_LENGTH} characters or fewer`
@@ -544,7 +558,7 @@ router.post(
             price: numericPrice,
             currency:
               typeof currency === "string" &&
-              currency.trim().length > 0
+                currency.trim().length > 0
                 ? currency.trim().toUpperCase()
                 : merchant.currency,
             stock: numericStock,
@@ -578,12 +592,15 @@ router.post(
  */
 router.patch(
   "/:merchantId/products/:productId",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const {
         name,
@@ -660,14 +677,14 @@ router.patch(
 
         const trimmedDescription =
           typeof description === "string" &&
-          description.trim().length > 0
+            description.trim().length > 0
             ? description.trim()
             : null;
 
         if (
           trimmedDescription &&
           trimmedDescription.length >
-            PRODUCT_DESCRIPTION_MAX_LENGTH
+          PRODUCT_DESCRIPTION_MAX_LENGTH
         ) {
           res.status(400).json({
             error: `description must be ${PRODUCT_DESCRIPTION_MAX_LENGTH} characters or fewer`
@@ -829,12 +846,15 @@ router.patch(
  */
 router.delete(
   "/:merchantId/products/:productId",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const product =
         await prisma.product.findFirst({
@@ -891,12 +911,15 @@ router.delete(
  */
 router.patch(
   "/:merchantId/products/:productId/stock",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const { stock } = req.body;
 
@@ -965,12 +988,15 @@ router.patch(
  */
 router.post(
   "/:merchantId/products/:productId/restock",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const {
         quantity,
@@ -1004,7 +1030,7 @@ router.post(
 
       const trimmedNote =
         typeof note === "string" &&
-        note.trim().length > 0
+          note.trim().length > 0
           ? note.trim()
           : null;
 
@@ -1050,7 +1076,7 @@ router.post(
             await tx.auditLog.create({
               data: {
                 merchantId,
-                actorUserId: null,
+                actorUserId: req.auth!.id,
                 action:
                   "PRODUCT_RESTOCKED",
                 entityType: "PRODUCT",
@@ -1122,12 +1148,15 @@ router.post(
  */
 router.post(
   "/:merchantId/products/:productId/images",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const {
         url,
@@ -1158,14 +1187,14 @@ router.post(
 
       const trimmedAltText =
         typeof altText === "string" &&
-        altText.trim().length > 0
+          altText.trim().length > 0
           ? altText.trim()
           : null;
 
       if (
         trimmedAltText &&
         trimmedAltText.length >
-          IMAGE_ALT_TEXT_MAX_LENGTH
+        IMAGE_ALT_TEXT_MAX_LENGTH
       ) {
         res.status(400).json({
           error:
@@ -1272,12 +1301,10 @@ router.post(
  */
 router.get(
   "/:merchantId/products/:productId/images",
-  async (req, res) => {
+  requireMerchantAccess,async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
 
       const product =
         await prisma.product.findFirst({
@@ -1334,13 +1361,16 @@ router.get(
  */
 router.patch(
   "/:merchantId/products/:productId/images/:imageId/primary",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId,
-        imageId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
+      const imageId = String(req.params.imageId);
 
       const product =
         await prisma.product.findFirst({
@@ -1420,13 +1450,16 @@ router.patch(
  */
 router.delete(
   "/:merchantId/products/:productId/images/:imageId",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        productId,
-        imageId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const productId = String(req.params.productId);
+      const imageId = String(req.params.imageId);
 
       const product =
         await prisma.product.findFirst({

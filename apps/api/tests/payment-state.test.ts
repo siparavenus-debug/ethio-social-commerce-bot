@@ -61,4 +61,45 @@ describe("payment review state machine", () => {
       "Order cannot be updated because its current status is PAID"
     );
   });
+  it("does not allow rejection of an already rejected payment", () => {
+    expect(() =>
+      applyPaymentReview(
+        {
+          paymentStatus: "REJECTED",
+          orderStatus: "PENDING_PAYMENT"
+        },
+        "REJECT"
+      )
+    ).toThrow(
+      "Payment cannot be rejected because its current status is REJECTED"
+    );
+  });
+
+  it("does not allow rejection of an already verified payment", () => {
+    expect(() =>
+      applyPaymentReview(
+        {
+          paymentStatus: "VERIFIED",
+          orderStatus: "PAID"
+        },
+        "REJECT"
+      )
+    ).toThrow(
+      "Payment cannot be rejected because its current status is VERIFIED"
+    );
+  });
+
+  it("does not allow verification of a pending payment", () => {
+    expect(() =>
+      applyPaymentReview(
+        {
+          paymentStatus: "PENDING",
+          orderStatus: "PENDING_PAYMENT"
+        },
+        "VERIFY"
+      )
+    ).toThrow(
+      "Payment cannot be verified because its current status is PENDING"
+    );
+  });
 });

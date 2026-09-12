@@ -8,19 +8,21 @@ import {
 
 import {
   requireAuth,
-  requireMerchantAccess
+  requireMerchantAccess,
+  requireRole
 } from "../middleware/auth.js";
+
+import {
+requireMerchantEntitlement
+} from "../middleware/subscription-entitlement.js";
 
 const router = Router();
 
-router.use(
-  requireAuth,
-  requireMerchantAccess
-);
+router.use(requireAuth);
 
-router.get("/:merchantId/payment-methods", async (req, res) => {
+router.get("/:merchantId/payment-methods", requireMerchantAccess,async (req, res) => {
   try {
-    const { merchantId } = req.params;
+    const merchantId = String(req.params.merchantId);
 
     const merchant = await prisma.merchant.findUnique({
       where: {
@@ -54,115 +56,125 @@ router.get("/:merchantId/payment-methods", async (req, res) => {
   }
 });
 
-router.post("/:merchantId/payment-methods", async (req, res) => {
-  try {
-    const { merchantId } = req.params;
-    const {
-      provider,
-      accountName,
-      accountNumber,
-      status
-    } = req.body;
+router.post(
+  "/:merchantId/payment-methods",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_COMMERCE_CONFIG"
+  ),
+  requireRole("OWNER", "ADMIN"),
+  async (req, res) => {
+    try {
+      const merchantId = String(req.params.merchantId);
+      const {
+        provider,
+        accountName,
+        accountNumber,
+        status
+      } = req.body;
 
-    const merchant = await prisma.merchant.findUnique({
-      where: {
-        id: merchantId
+      const merchant = await prisma.merchant.findUnique({
+        where: {
+          id: merchantId
+        }
+      });
+
+      if (!merchant) {
+        res.status(404).json({
+          error: "Merchant not found"
+        });
+        return;
       }
-    });
 
-    if (!merchant) {
-      res.status(404).json({
-        error: "Merchant not found"
-      });
-      return;
-    }
-
-    if (
-      typeof provider !== "string" ||
-      !Object.values(PaymentProvider).includes(
-        provider as PaymentProvider
-      )
-    ) {
-      res.status(400).json({
-        error: "provider must be TELEBIRR, CBE_BIRR, or OTHER"
-      });
-      return;
-    }
-
-    if (
-      typeof accountName !== "string" ||
-      accountName.trim().length === 0
-    ) {
-      res.status(400).json({
-        error: "accountName is required"
-      });
-      return;
-    }
-
-    if (
-      typeof accountNumber !== "string" ||
-      accountNumber.trim().length === 0
-    ) {
-      res.status(400).json({
-        error: "accountNumber is required"
-      });
-      return;
-    }
-
-    if (
-      status !== undefined &&
-      (typeof status !== "string" ||
-        !Object.values(PaymentMethodStatus).includes(
-          status as PaymentMethodStatus
-        ))
-    ) {
-      res.status(400).json({
-        error: "status must be ACTIVE or INACTIVE"
-      });
-      return;
-    }
-
-    const paymentMethod = await prisma.paymentMethod.create({
-      data: {
-        merchantId,
-        provider: provider as PaymentProvider,
-        accountName: accountName.trim(),
-        accountNumber: accountNumber.trim(),
-        status:
-          status === undefined
-            ? PaymentMethodStatus.ACTIVE
-            : (status as PaymentMethodStatus)
+      if (
+        typeof provider !== "string" ||
+        !Object.values(PaymentProvider).includes(
+          provider as PaymentProvider
+        )
+      ) {
+        res.status(400).json({
+          error: "provider must be TELEBIRR, CBE_BIRR, or OTHER"
+        });
+        return;
       }
-    });
 
-    res.status(201).json(paymentMethod);
-  } catch (error) {
-    console.error("Failed to create payment method:", error);
+      if (
+        typeof accountName !== "string" ||
+        accountName.trim().length === 0
+      ) {
+        res.status(400).json({
+          error: "accountName is required"
+        });
+        return;
+      }
 
-    if (
-      error instanceof Error &&
-      error.message.includes("Unique constraint")
-    ) {
-      res.status(409).json({
-        error: "A payment method for this provider already exists"
+      if (
+        typeof accountNumber !== "string" ||
+        accountNumber.trim().length === 0
+      ) {
+        res.status(400).json({
+          error: "accountNumber is required"
+        });
+        return;
+      }
+
+      if (
+        status !== undefined &&
+        (typeof status !== "string" ||
+          !Object.values(PaymentMethodStatus).includes(
+            status as PaymentMethodStatus
+          ))
+      ) {
+        res.status(400).json({
+          error: "status must be ACTIVE or INACTIVE"
+        });
+        return;
+      }
+
+      const paymentMethod = await prisma.paymentMethod.create({
+        data: {
+          merchantId,
+          provider: provider as PaymentProvider,
+          accountName: accountName.trim(),
+          accountNumber: accountNumber.trim(),
+          status:
+            status === undefined
+              ? PaymentMethodStatus.ACTIVE
+              : (status as PaymentMethodStatus)
+        }
       });
-      return;
-    }
 
-    res.status(500).json({
-      error: "Failed to create payment method"
-    });
-  }
-});
+      res.status(201).json(paymentMethod);
+    } catch (error) {
+      console.error("Failed to create payment method:", error);
+
+      if (
+        error instanceof Error &&
+        error.message.includes("Unique constraint")
+      ) {
+        res.status(409).json({
+          error: "A payment method for this provider already exists"
+        });
+        return;
+      }
+
+      res.status(500).json({
+        error: "Failed to create payment method"
+      });
+    }
+  });
 
 router.patch(
   "/:merchantId/payment-methods/:paymentMethodId",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_COMMERCE_CONFIG"
+  ),
+  requireRole("OWNER", "ADMIN"),
   async (req, res) => {
     try {
-      const {
-        merchantId,
-        paymentMethodId
-      } = req.params;
+      const merchantId = String(req.params.merchantId);
+      const paymentMethodId = String(req.params.paymentMethodId);
 
       const {
         accountName,
@@ -227,18 +239,18 @@ router.patch(
           data: {
             ...(accountName !== undefined
               ? {
-                  accountName: accountName.trim()
-                }
+                accountName: accountName.trim()
+              }
               : {}),
             ...(accountNumber !== undefined
               ? {
-                  accountNumber: accountNumber.trim()
-                }
+                accountNumber: accountNumber.trim()
+              }
               : {}),
             ...(status !== undefined
               ? {
-                  status: status as PaymentMethodStatus
-                }
+                status: status as PaymentMethodStatus
+              }
               : {})
           }
         });

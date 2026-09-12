@@ -39,8 +39,7 @@ async function telegramApi<T>(
 
   if (!response.ok || !data.ok || !data.result) {
     throw new Error(
-      `Telegram API ${method} failed: ${
-        data.description ?? response.statusText
+      `Telegram API ${method} failed: ${data.description ?? response.statusText
       }`
     );
   }
@@ -63,6 +62,33 @@ export async function sendTelegramMessage(
   if (!result.message_id) {
     throw new Error(
       "Telegram sendMessage returned an invalid response"
+    );
+  }
+
+  return String(result.message_id);
+}
+
+export async function sendTelegramPhoto(
+  chatId: string,
+  photo: string,
+  caption?: string
+) {
+  const result =
+    await telegramApi<{
+      message_id?: number;
+    }>("sendPhoto", {
+      chat_id: chatId,
+      photo,
+      ...(caption
+        ? {
+          caption
+        }
+        : {})
+    });
+
+  if (!result.message_id) {
+    throw new Error(
+      "Telegram sendPhoto returned an invalid response"
     );
   }
 
