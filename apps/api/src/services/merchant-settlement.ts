@@ -23,6 +23,30 @@ const MAX_SERIALIZABLE_ATTEMPTS = 3;
 const MAX_IDEMPOTENCY_KEY_LENGTH = 200;
 const MAX_TRANSACTION_REFERENCE_LENGTH = 200;
 
+// objectKey must come from server-controlled receipt metadata.
+function getReceiptIdentity(
+  evidence: {
+    receiptMetadata?: Prisma.InputJsonValue | Prisma.JsonValue | null;
+    receiptUrl?: string | null;
+  }
+): string | null {
+  const metadata =
+    evidence.receiptMetadata;
+
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    "objectKey" in metadata &&
+    typeof metadata.objectKey === "string" &&
+    metadata.objectKey.trim()
+  ) {
+    return metadata.objectKey;
+  }
+
+  return evidence.receiptUrl ?? null;
+}
+
 function normalizeInput(
   input: SubmitMerchantSettlementInput
 ) {
@@ -138,7 +162,7 @@ function validateInput(
    */
   if (
     !input.transactionReference &&
-    !input.receiptUrl
+    !getReceiptIdentity(input)
   ) {
     throw new Error(
       "Merchant settlement requires a transaction reference or receipt"
@@ -154,6 +178,7 @@ function isSameInstruction(
     currency: string;
     transactionReference: string | null;
     receiptUrl: string | null;
+    receiptMetadata: Prisma.JsonValue;
   },
   input: ReturnType<typeof normalizeInput>
 ): boolean {
@@ -169,8 +194,8 @@ function isSameInstruction(
       input.currency &&
     settlement.transactionReference ===
       input.transactionReference &&
-    settlement.receiptUrl ===
-      input.receiptUrl
+    getReceiptIdentity(settlement) ===
+      getReceiptIdentity(input)
   );
 }
 

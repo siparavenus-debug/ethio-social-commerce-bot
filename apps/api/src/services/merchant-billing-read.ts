@@ -403,6 +403,34 @@ export async function getMerchantInvoiceHistory(
   };
 }
 
+function hasSettlementReceiptEvidence(
+  receiptUrl: string | null,
+  receiptMetadata: Prisma.JsonValue | null
+): boolean {
+  if (
+    typeof receiptUrl === "string" &&
+    receiptUrl.trim()
+  ) {
+    return true;
+  }
+
+  if (
+    !receiptMetadata ||
+    typeof receiptMetadata !== "object" ||
+    Array.isArray(receiptMetadata)
+  ) {
+    return false;
+  }
+
+  const objectKey =
+    receiptMetadata.objectKey;
+
+  return (
+    typeof objectKey === "string" &&
+    Boolean(objectKey.trim())
+  );
+}
+
 export async function getMerchantSettlementHistory(
   merchantId: string
 ) {
@@ -468,6 +496,11 @@ export async function getMerchantSettlementHistory(
             settlement.transactionReference,
           receiptUrl:
             settlement.receiptUrl,
+          hasReceiptEvidence:
+            hasSettlementReceiptEvidence(
+              settlement.receiptUrl,
+              settlement.receiptMetadata
+            ),
           reviewNote:
             settlement.reviewNote,
           submittedAt:

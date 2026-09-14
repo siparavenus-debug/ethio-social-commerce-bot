@@ -41,6 +41,11 @@ import {
   verifyMerchantSettlement
 } from "../services/merchant-settlement-review.js";
 
+import {
+  getSettlementReceipt,
+  isAllowedImageType
+} from "../services/storage.js";
+
 const router = Router();
 
 router.use(requirePlatformAuth);
@@ -974,7 +979,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error: error.message
@@ -1024,7 +1029,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error: error.message
@@ -1035,6 +1040,147 @@ router.get(
       res.status(500).json({
         error:
           "Failed to load platform merchant settlements"
+      });
+    }
+  }
+);
+
+/*
+ * Platform read of one private merchant settlement receipt.
+ *
+ * GET /platform/merchants/:merchantId/billing/settlements/:settlementId/evidence
+ *
+ * This route inherits requirePlatformAuth from the
+ * platform router. Merchant credentials are not valid
+ * for this administration boundary.
+ *
+ * The private R2 object is streamed through the
+ * authenticated API. No permanent public receipt URL
+ * is exposed.
+ */
+router.get(
+  "/merchants/:merchantId/billing/settlements/:settlementId/evidence",
+  async (req, res) => {
+    try {
+      const merchantId =
+        req.params.merchantId?.trim();
+
+      const settlementId =
+        req.params.settlementId?.trim();
+
+      if (!merchantId) {
+        res.status(400).json({
+          error:
+            "Merchant ID is required"
+        });
+        return;
+      }
+
+      if (!settlementId) {
+        res.status(400).json({
+          error:
+            "Settlement ID is required"
+        });
+        return;
+      }
+
+      const settlement =
+        await prisma.merchantSettlement.findFirst({
+          where: {
+            id:
+              settlementId,
+            merchantId
+          },
+          select: {
+            receiptMetadata: true
+          }
+        });
+
+      if (!settlement) {
+        res.status(404).json({
+          error:
+            "Merchant settlement not found"
+        });
+        return;
+      }
+
+      const receiptMetadata =
+        settlement.receiptMetadata;
+
+      if (
+        !receiptMetadata ||
+        typeof receiptMetadata !==
+        "object" ||
+        Array.isArray(
+          receiptMetadata
+        )
+      ) {
+        res.status(404).json({
+          error:
+            "Settlement receipt evidence is not available"
+        });
+        return;
+      }
+
+      const objectKey =
+        receiptMetadata.objectKey;
+
+      if (
+        typeof objectKey !==
+        "string" ||
+        !objectKey.trim()
+      ) {
+        res.status(404).json({
+          error:
+            "Settlement receipt evidence is not available"
+        });
+        return;
+      }
+
+      const receipt =
+        await getSettlementReceipt(
+          objectKey.trim()
+        );
+
+      if (
+        receipt.contentType &&
+        isAllowedImageType(
+          receipt.contentType
+        )
+      ) {
+        res.type(
+          receipt.contentType
+        );
+      } else {
+        res.type(
+          "application/octet-stream"
+        );
+      }
+
+      res.setHeader(
+        "Content-Length",
+        String(
+          receipt.contentLength
+        )
+      );
+
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store"
+      );
+
+      res.send(
+        receipt.buffer
+      );
+    } catch (error) {
+      console.error(
+        "Failed to read platform merchant settlement receipt evidence:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to read settlement receipt evidence"
       });
     }
   }
@@ -1154,12 +1300,12 @@ router.post(
         if (
           typeof subscriptionCharge !== "object" ||
           typeof subscriptionCharge.subscriptionId !==
-            "string" ||
+          "string" ||
           !subscriptionCharge.subscriptionId.trim() ||
           typeof subscriptionCharge.billingPeriodStart !==
-            "string" ||
+          "string" ||
           typeof subscriptionCharge.billingPeriodEnd !==
-            "string"
+          "string"
         ) {
           res.status(400).json({
             error:
@@ -1225,7 +1371,7 @@ router.post(
       if (
         message === "Merchant not found" ||
         message ===
-          "Merchant subscription not found"
+        "Merchant subscription not found"
       ) {
         res.status(404).json({ error: message });
         return;
@@ -1393,7 +1539,7 @@ router.post(
 
       if (
         message ===
-          "Merchant settlement not found"
+        "Merchant settlement not found"
       ) {
         res.status(404).json({
           error: message
@@ -1482,7 +1628,7 @@ router.post(
 
       if (
         message ===
-          "Merchant settlement not found"
+        "Merchant settlement not found"
       ) {
         res.status(404).json({
           error: message

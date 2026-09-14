@@ -471,6 +471,110 @@ describe(
     );
 
     it(
+      "forbids merchant OWNER from verifying own settlement through platform administration",
+      async () => {
+        const fixture =
+          await createFixture(
+            "owner-platform-verify"
+          );
+
+        const submission =
+          await postSettlement(
+            fixture.merchant.id,
+            settlementBody(
+              fixture.invoice.id,
+              "OWNER-PLATFORM-VERIFY"
+            ),
+            fixture.token
+          );
+
+        expect(
+          submission.status
+        ).toBe(201);
+
+        const settlement =
+          await prisma.merchantSettlement.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          settlement.status
+        ).toBe(
+          MerchantSettlementStatus.REVIEW_REQUIRED
+        );
+
+        const response =
+          await fetch(
+            `${API_BASE_URL}/platform/merchants/${fixture.merchant.id}/billing/settlements/${settlement.id}/verify`,
+            {
+              method:
+                "POST",
+              headers: {
+                authorization:
+                  `Bearer ${fixture.token}`
+              }
+            }
+          );
+
+        expect(
+          response.status
+        ).toBe(403);
+
+        const responseBody =
+          await response.json() as {
+            error?: string;
+          };
+
+        expect(
+          responseBody.error
+        ).toBe(
+          "Merchant accounts are not authorized to access platform administration"
+        );
+
+        const unchangedSettlement =
+          await prisma.merchantSettlement.findUniqueOrThrow({
+            where: {
+              id:
+                settlement.id
+            }
+          });
+
+        const unchangedInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          unchangedSettlement.status
+        ).toBe(
+          MerchantSettlementStatus.REVIEW_REQUIRED
+        );
+
+        expect(
+          unchangedSettlement.verifiedAt
+        ).toBeNull();
+
+        expect(
+          unchangedInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          unchangedInvoice.paidAt
+        ).toBeNull();
+      }
+    );
+
+    it(
       "returns the same settlement for an identical idempotent replay",
       async () => {
         const fixture =

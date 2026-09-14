@@ -168,7 +168,7 @@ async function submitFixture(
   suffix: string,
   provider:
     MerchantSettlementProvider =
-      MerchantSettlementProvider.TELEBIRR
+    MerchantSettlementProvider.TELEBIRR
 ) {
   return submitMerchantSettlement({
     merchantId,
@@ -263,6 +263,8 @@ describe(
             "DAY17-SETTLEMENT-TXN-review-required",
           receiptUrl:
             "https://example.test/review-required.jpg",
+          hasReceiptEvidence:
+            true,
           reviewNote:
             null,
           verifiedAt:
@@ -275,6 +277,148 @@ describe(
         ).toBeInstanceOf(
           Date
         );
+      }
+    );
+
+    it(
+      "reports private object evidence without exposing a public receipt URL",
+      async () => {
+        const merchant =
+          await createMerchant(
+            "private-evidence"
+          );
+
+        const invoice =
+          await createInvoice(
+            merchant.id,
+            "private-evidence",
+            1
+          );
+
+        const settlement =
+          await submitMerchantSettlement({
+            merchantId:
+              merchant.id,
+            invoiceId:
+              invoice.id,
+            provider:
+              MerchantSettlementProvider.TELEBIRR,
+            amount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            idempotencyKey:
+              "day17-settlement-private-evidence",
+            transactionReference:
+              "DAY17-SETTLEMENT-TXN-PRIVATE-EVIDENCE",
+            receiptUrl:
+              null,
+            receiptMetadata: {
+              objectKey:
+                `merchants/${merchant.id}/settlements/private-evidence.png`
+            }
+          });
+
+        const result =
+          await getMerchantSettlementHistory(
+            merchant.id
+          );
+
+        const historySettlement =
+          result.settlements.find(
+            (candidate) =>
+              candidate.id ===
+              settlement.id
+          );
+
+        expect(
+          historySettlement
+        ).toBeDefined();
+
+        expect(
+          historySettlement
+            ?.receiptUrl
+        ).toBeNull();
+
+        expect(
+          historySettlement
+            ?.hasReceiptEvidence
+        ).toBe(true);
+
+        expect(
+          historySettlement
+        ).not.toHaveProperty(
+          "receiptMetadata"
+        );
+
+        expect(
+          historySettlement
+        ).not.toHaveProperty(
+          "objectKey"
+        );
+      }
+    );
+
+    it(
+      "reports no receipt evidence when a settlement has transaction-reference evidence only",
+      async () => {
+        const merchant =
+          await createMerchant(
+            "reference-only"
+          );
+
+        const invoice =
+          await createInvoice(
+            merchant.id,
+            "reference-only",
+            1
+          );
+
+        const settlement =
+          await submitMerchantSettlement({
+            merchantId:
+              merchant.id,
+            invoiceId:
+              invoice.id,
+            provider:
+              MerchantSettlementProvider.TELEBIRR,
+            amount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            idempotencyKey:
+              "day17-settlement-reference-only",
+            transactionReference:
+              "DAY17-SETTLEMENT-TXN-REFERENCE-ONLY",
+            receiptUrl:
+              null
+          });
+
+        const result =
+          await getMerchantSettlementHistory(
+            merchant.id
+          );
+
+        const historySettlement =
+          result.settlements.find(
+            (candidate) =>
+              candidate.id ===
+              settlement.id
+          );
+
+        expect(
+          historySettlement
+            ?.receiptUrl
+        ).toBeNull();
+
+        expect(
+          historySettlement
+            ?.hasReceiptEvidence
+        ).toBe(false);
       }
     );
 

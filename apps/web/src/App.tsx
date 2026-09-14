@@ -251,6 +251,7 @@ type BillingSettlement = {
   currency: string;
   transactionReference: string | null;
   receiptUrl: string | null;
+  hasReceiptEvidence: boolean;
   reviewNote: string | null;
   submittedAt: string;
   verifiedAt: string | null;
@@ -518,9 +519,9 @@ export default function App() {
   ] = useState("");
 
   const [
-    settlementReceiptUrl,
-    setSettlementReceiptUrl
-  ] = useState("");
+    settlementReceiptFile,
+    setSettlementReceiptFile
+  ] = useState<File | null>(null);
 
   const [
     submittingSettlement,
@@ -690,7 +691,7 @@ export default function App() {
     setSettlementInvoiceId("");
     setSettlementProvider("TELEBIRR");
     setSettlementTransactionReference("");
-    setSettlementReceiptUrl("");
+    setSettlementReceiptFile(null);
     setSubmittingSettlement(false);
     setSettlementIdempotencyKey("");
 
@@ -846,6 +847,105 @@ export default function App() {
     }
 
     return response;
+  }
+
+  async function openSettlementEvidence(
+    settlement: BillingSettlement
+  ) {
+    if (settlement.receiptUrl) {
+      window.open(
+        settlement.receiptUrl,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      return;
+    }
+
+    if (!settlement.hasReceiptEvidence) {
+      setError(
+        "Settlement receipt evidence is not available."
+      );
+      return;
+    }
+
+    const evidenceWindow =
+      window.open("", "_blank");
+
+    if (evidenceWindow) {
+      evidenceWindow.opener = null;
+    }
+
+    try {
+      setError("");
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/billing/settlements/${settlement.id}/evidence`
+        );
+
+      if (!response.ok) {
+        const data =
+          await response
+            .json()
+            .catch(() => null);
+
+        throw new Error(
+          data?.error ||
+          "Failed to load settlement evidence"
+        );
+      }
+
+      const blob =
+        await response.blob();
+
+      const objectUrl =
+        URL.createObjectURL(
+          blob
+        );
+
+      if (evidenceWindow) {
+        evidenceWindow.location.href =
+          objectUrl;
+      } else {
+        const link =
+          document.createElement(
+            "a"
+          );
+
+        link.href =
+          objectUrl;
+
+        link.target =
+          "_blank";
+
+        link.rel =
+          "noopener noreferrer";
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+        link.remove();
+      }
+
+      window.setTimeout(
+        () => {
+          URL.revokeObjectURL(
+            objectUrl
+          );
+        },
+        60_000
+      );
+    } catch (err) {
+      evidenceWindow?.close();
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load settlement evidence"
+      );
+    }
   }
 
   async function loadReviews() {
@@ -1950,15 +2050,12 @@ export default function App() {
     const transactionReference =
       settlementTransactionReference.trim();
 
-    const receiptUrl =
-      settlementReceiptUrl.trim();
-
     if (
       !transactionReference &&
-      !receiptUrl
+      !settlementReceiptFile
     ) {
       setError(
-        "Enter a transaction reference or settlement evidence URL."
+        "Enter a transaction reference or upload a settlement receipt."
       );
       return;
     }
@@ -1986,26 +2083,54 @@ export default function App() {
       setError("");
       setSuccess("");
 
+      const formData =
+        new FormData();
+
+      formData.append(
+        "invoiceId",
+        invoice.id
+      );
+
+      formData.append(
+        "provider",
+        settlementProvider
+      );
+
+      formData.append(
+        "amount",
+        invoice.totalAmount
+      );
+
+      formData.append(
+        "currency",
+        invoice.currency
+      );
+
+      formData.append(
+        "idempotencyKey",
+        idempotencyKey
+      );
+
+      if (transactionReference) {
+        formData.append(
+          "transactionReference",
+          transactionReference
+        );
+      }
+
+      if (settlementReceiptFile) {
+        formData.append(
+          "receipt",
+          settlementReceiptFile
+        );
+      }
+
       const response =
         await apiFetch(
           `/merchants/${merchantId}/billing/settlements`,
           {
             method: "POST",
-            body: JSON.stringify({
-              invoiceId: invoice.id,
-              provider:
-                settlementProvider,
-              amount:
-                invoice.totalAmount,
-              currency:
-                invoice.currency,
-              idempotencyKey,
-              transactionReference:
-                transactionReference ||
-                null,
-              receiptUrl:
-                receiptUrl || null
-            })
+            body: formData
           }
         );
 
@@ -2026,7 +2151,7 @@ export default function App() {
       setSettlementTransactionReference(
         ""
       );
-      setSettlementReceiptUrl("");
+      setSettlementReceiptFile(null);
       setSettlementIdempotencyKey("");
 
       setSuccess(
@@ -6397,18 +6522,17 @@ export default function App() {
                   }}
                 >
                   <span>
-                    Settlement evidence URL
+                    Settlement receipt
                   </span>
 
                   <input
                     style={styles.formInput}
-                    type="url"
-                    value={
-                      settlementReceiptUrl
-                    }
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
                     onChange={(event) => {
-                      setSettlementReceiptUrl(
-                        event.target.value
+                      setSettlementReceiptFile(
+                        event.target.files?.[0] ??
+                        null
                       );
 
                       setSettlementIdempotencyKey(
@@ -6418,7 +6542,6 @@ export default function App() {
                     disabled={
                       submittingSettlement
                     }
-                    placeholder="https://..."
                   />
                 </label>
 
@@ -6427,10 +6550,11 @@ export default function App() {
                     styles.sectionDescription
                   }
                 >
-                  Enter a transaction reference or
-                  evidence URL. Amount and currency
-                  come directly from the selected
-                  invoice and cannot be changed here.
+                  Enter a transaction reference or upload
+                  a JPEG, PNG, or WebP settlement receipt.
+                  Amount and currency come directly from
+                  the selected invoice and cannot be
+                  changed here.
                 </div>
 
                 <div>
@@ -6441,7 +6565,7 @@ export default function App() {
                       !settlementInvoiceId ||
                       (
                         !settlementTransactionReference.trim() &&
-                        !settlementReceiptUrl.trim()
+                        !settlementReceiptFile
                       )
                     }
                     style={
@@ -6558,21 +6682,22 @@ export default function App() {
                         />
                       </div>
 
-                      {settlement.receiptUrl && (
+                      {settlement.hasReceiptEvidence && (
                         <div
                           style={{
                             marginTop: "12px"
                           }}
                         >
-                          <a
-                            href={
-                              settlement.receiptUrl
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void openSettlementEvidence(
+                                settlement
+                              )
                             }
-                            target="_blank"
-                            rel="noreferrer"
                           >
                             View settlement evidence
-                          </a>
+                          </button>
                         </div>
                       )}
 

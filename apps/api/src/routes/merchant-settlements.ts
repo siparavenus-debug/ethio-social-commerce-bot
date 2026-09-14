@@ -1,5 +1,16 @@
-import { Router } from "express";
 import {
+  createHash
+} from "node:crypto";
+
+import {
+  Router,
+  type RequestHandler
+} from "express";
+
+import multer from "multer";
+
+import {
+  prisma,
   MerchantSettlementProvider,
   Prisma
 } from "@ethio-commerce/database";
@@ -21,7 +32,134 @@ import {
   getMerchantSettlementHistory
 } from "../services/merchant-billing-read.js";
 
+import {
+  deleteSettlementReceipt,
+  getMaxImageSizeBytes,
+  getSettlementReceipt,
+  isAllowedImageType,
+  uploadSettlementReceipt
+} from "../services/storage.js";
+
 const router = Router();
+
+const settlementReceiptUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: getMaxImageSizeBytes(),
+    files: 1
+  },
+  fileFilter: (_req, file, cb) => {
+    if (!isAllowedImageType(file.mimetype)) {
+      cb(
+        new Error(
+          "Only JPEG, PNG, and WebP images are allowed."
+        )
+      );
+      return;
+    }
+
+    cb(null, true);
+  }
+});
+
+const handleSettlementReceiptUpload: RequestHandler = (
+  req,
+  res,
+  next
+) => {
+  settlementReceiptUpload.single("receipt")(
+    req,
+    res,
+    (error) => {
+      if (!error) {
+        next();
+        return;
+      }
+
+      if (error instanceof multer.MulterError) {
+        if (error.code === "LIMIT_FILE_SIZE") {
+          res.status(400).json({
+            error:
+              "Receipt image exceeds the maximum allowed size"
+          });
+          return;
+        }
+
+        res.status(400).json({
+          error:
+            "Invalid receipt upload"
+        });
+        return;
+      }
+
+      res.status(400).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Invalid receipt upload"
+      });
+    }
+  );
+};
+
+function buildSettlementReceiptObjectKey(
+  merchantId: string,
+  invoiceId: string,
+  idempotencyKey: string,
+  fileBuffer: Buffer,
+  mimeType: string
+): string {
+  const extension =
+    mimeType === "image/jpeg"
+      ? "jpg"
+      : mimeType === "image/png"
+        ? "png"
+        : "webp";
+
+  const invoiceHash =
+    createHash("sha256")
+      .update(invoiceId)
+      .digest("hex")
+      .slice(0, 24);
+
+  const idempotencyHash =
+    createHash("sha256")
+      .update(idempotencyKey)
+      .digest("hex")
+      .slice(0, 24);
+
+  const fileHash =
+    createHash("sha256")
+      .update(fileBuffer)
+      .digest("hex")
+      .slice(0, 24);
+
+  return (
+    `merchants/${merchantId}/settlements/` +
+    `${invoiceHash}/` +
+    `${idempotencyHash}-${fileHash}.${extension}`
+  );
+}
+
+function getSettlementReceiptObjectKey(
+  receiptMetadata: Prisma.JsonValue | null
+): string | null {
+  if (
+    !receiptMetadata ||
+    typeof receiptMetadata !== "object" ||
+    Array.isArray(receiptMetadata)
+  ) {
+    return null;
+  }
+
+  const objectKey =
+    receiptMetadata.objectKey;
+
+  return typeof objectKey === "string" &&
+    objectKey.trim()
+    ? objectKey.trim()
+    : null;
+}
 
 router.use(requireAuth);
 
@@ -64,7 +202,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error:
@@ -120,7 +258,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error:
@@ -176,7 +314,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error:
@@ -232,7 +370,7 @@ router.get(
       if (
         error instanceof Error &&
         error.message ===
-          "Merchant not found"
+        "Merchant not found"
       ) {
         res.status(404).json({
           error:
@@ -268,6 +406,7 @@ router.post(
   "/:merchantId/billing/settlements",
   requireMerchantAccess,
   requireRole("OWNER"),
+  handleSettlementReceiptUpload,
   async (req, res) => {
     try {
       const merchantId =
@@ -281,16 +420,14 @@ router.post(
         amount,
         currency,
         idempotencyKey,
-        transactionReference,
-        receiptUrl,
-        receiptMetadata
+        transactionReference
       } = req.body;
 
       if (
         typeof invoiceId !==
-          "string" ||
+        "string" ||
         invoiceId.trim().length ===
-          0
+        0
       ) {
         res.status(400).json({
           error:
@@ -301,7 +438,7 @@ router.post(
 
       if (
         typeof provider !==
-          "string" ||
+        "string" ||
         !Object.values(
           MerchantSettlementProvider
         ).includes(
@@ -318,9 +455,9 @@ router.post(
       if (
         !(
           typeof amount ===
-            "string" ||
+          "string" ||
           typeof amount ===
-            "number"
+          "number"
         )
       ) {
         res.status(400).json({
@@ -364,9 +501,9 @@ router.post(
 
       if (
         typeof currency !==
-          "string" ||
+        "string" ||
         currency.trim().length ===
-          0
+        0
       ) {
         res.status(400).json({
           error:
@@ -377,7 +514,7 @@ router.post(
 
       if (
         typeof idempotencyKey !==
-          "string" ||
+        "string" ||
         idempotencyKey.trim()
           .length === 0
       ) {
@@ -390,11 +527,11 @@ router.post(
 
       if (
         transactionReference !==
-          undefined &&
+        undefined &&
         transactionReference !==
-          null &&
+        null &&
         typeof transactionReference !==
-          "string"
+        "string"
       ) {
         res.status(400).json({
           error:
@@ -403,106 +540,288 @@ router.post(
         return;
       }
 
+      const normalizedIdempotencyKey =
+        idempotencyKey.trim();
+
+      let uploadedObjectKey:
+        string | null = null;
+
+      let serverReceiptMetadata:
+        Prisma.InputJsonValue | null = null;
+
+      if (req.file) {
+        uploadedObjectKey =
+          buildSettlementReceiptObjectKey(
+            merchantId,
+            invoiceId.trim(),
+            normalizedIdempotencyKey,
+            req.file.buffer,
+            req.file.mimetype
+          );
+
+        const imageType =
+          req.file.mimetype as
+          | "image/jpeg"
+          | "image/png"
+          | "image/webp";
+
+        const receiptSha256 =
+          createHash("sha256")
+            .update(req.file.buffer)
+            .digest("hex");
+
+        await uploadSettlementReceipt(
+          uploadedObjectKey,
+          req.file.buffer,
+          imageType
+        );
+
+        serverReceiptMetadata = {
+          receivedVia:
+            "MERCHANT_DASHBOARD",
+          contentType:
+            req.file.mimetype,
+          size:
+            req.file.size,
+          sha256:
+            receiptSha256,
+          objectKey:
+            uploadedObjectKey
+        };
+      }
+
+      let settlement;
+
+      try {
+        settlement =
+          await submitMerchantSettlement({
+            merchantId,
+            invoiceId:
+              invoiceId.trim(),
+            provider:
+              provider as MerchantSettlementProvider,
+            amount:
+              decimalAmount,
+            currency,
+            idempotencyKey:
+              normalizedIdempotencyKey,
+            transactionReference:
+              typeof transactionReference ===
+                "string"
+                ? transactionReference
+                : null,
+            receiptUrl:
+              null,
+            receiptMetadata:
+              serverReceiptMetadata,
+            actorUserId:
+              req.auth!.id
+          });
+      } catch (error) {
+        if (uploadedObjectKey) {
+          const existing =
+            await prisma.merchantSettlement.findUnique({
+              where: {
+                merchantId_idempotencyKey: {
+                  merchantId,
+                  idempotencyKey:
+                    normalizedIdempotencyKey
+                }
+              },
+              select: {
+                receiptMetadata: true
+              }
+            });
+
+          const existingObjectKey =
+            getSettlementReceiptObjectKey(
+              existing?.receiptMetadata ?? null
+            );
+
+          if (
+            !existing ||
+            existingObjectKey !==
+            uploadedObjectKey
+          ) {
+            try {
+              await deleteSettlementReceipt(
+                uploadedObjectKey
+              );
+            } catch (cleanupError) {
+              console.error(
+                "Failed to clean up settlement receipt upload:",
+                cleanupError
+              );
+            }
+          }
+        }
+
+        throw error;
+      }
+
+      res.status(201).json(
+      settlement
+    );
+  } catch (error) {
+    console.error(
+      "Failed to submit merchant settlement:",
+      error
+    );
+
+    if (
+      error instanceof Error
+    ) {
       if (
-        receiptUrl !== undefined &&
-        receiptUrl !== null &&
-        typeof receiptUrl !==
-          "string"
+        error.message ===
+        "Merchant invoice not found"
       ) {
-        res.status(400).json({
+        res.status(404).json({
           error:
-            "receiptUrl must be a string"
+            error.message
         });
         return;
       }
 
+      if (
+        error.message.includes(
+          "idempotency key was already used"
+        ) ||
+        error.message.includes(
+          "transaction reference has already been submitted"
+        )
+      ) {
+        res.status(409).json({
+          error:
+            error.message
+        });
+        return;
+      }
+
+      if (
+        error.message.startsWith(
+          "Merchant settlement"
+        )
+      ) {
+        res.status(400).json({
+          error:
+            error.message
+        });
+        return;
+      }
+    }
+
+    res.status(500).json({
+      error:
+        "Failed to submit merchant settlement"
+    });
+  }
+  }
+);
+
+/*
+ * Read one private merchant settlement receipt.
+ *
+ * GET /merchants/:merchantId/billing/settlements/:settlementId/evidence
+ *
+ * Platform billing is OWNER-only.
+ *
+ * The settlement must belong to the authenticated merchant.
+ * The private R2 object is streamed through the authenticated API.
+ * No permanent public receipt URL is exposed.
+ */
+router.get(
+  "/:merchantId/billing/settlements/:settlementId/evidence",
+  requireMerchantAccess,
+  requireRole("OWNER"),
+  async (req, res) => {
+    try {
+      const merchantId =
+        String(
+          req.params.merchantId
+        );
+
+      const settlementId =
+        String(
+          req.params.settlementId
+        );
+
       const settlement =
-        await submitMerchantSettlement({
-          merchantId,
-          invoiceId:
-            invoiceId.trim(),
-          provider:
-            provider as MerchantSettlementProvider,
-          amount:
-            decimalAmount,
-          currency,
-          idempotencyKey,
-          transactionReference:
-            typeof transactionReference ===
-              "string"
-              ? transactionReference
-              : null,
-          receiptUrl:
-            typeof receiptUrl ===
-              "string"
-              ? receiptUrl
-              : null,
-          receiptMetadata:
-            receiptMetadata ===
-              undefined ||
-            receiptMetadata ===
-              null
-              ? null
-              : receiptMetadata as
-                  Prisma.InputJsonValue,
-          actorUserId:
-            req.auth!.id
+        await prisma.merchantSettlement.findFirst({
+          where: {
+            id:
+              settlementId,
+            merchantId
+          },
+          select: {
+            receiptMetadata: true
+          }
         });
 
-      res.status(201).json(
-        settlement
+      if (!settlement) {
+        res.status(404).json({
+          error:
+            "Merchant settlement not found"
+        });
+        return;
+      }
+
+      const objectKey =
+        getSettlementReceiptObjectKey(
+          settlement.receiptMetadata
+        );
+
+      if (!objectKey) {
+        res.status(404).json({
+          error:
+            "Settlement receipt evidence is not available"
+        });
+        return;
+      }
+
+      const receipt =
+        await getSettlementReceipt(
+          objectKey
+        );
+
+      if (
+        receipt.contentType &&
+        isAllowedImageType(
+          receipt.contentType
+        )
+      ) {
+        res.type(
+          receipt.contentType
+        );
+      } else {
+        res.type(
+          "application/octet-stream"
+        );
+      }
+
+      res.setHeader(
+        "Content-Length",
+        String(
+          receipt.contentLength
+        )
+      );
+
+      res.setHeader(
+        "Cache-Control",
+        "private, no-store"
+      );
+
+      res.send(
+        receipt.buffer
       );
     } catch (error) {
       console.error(
-        "Failed to submit merchant settlement:",
+        "Failed to read merchant settlement receipt evidence:",
         error
       );
 
-      if (
-        error instanceof Error
-      ) {
-        if (
-          error.message ===
-          "Merchant invoice not found"
-        ) {
-          res.status(404).json({
-            error:
-              error.message
-          });
-          return;
-        }
-
-        if (
-          error.message.includes(
-            "idempotency key was already used"
-          ) ||
-          error.message.includes(
-            "transaction reference has already been submitted"
-          )
-        ) {
-          res.status(409).json({
-            error:
-              error.message
-          });
-          return;
-        }
-
-        if (
-          error.message.startsWith(
-            "Merchant settlement"
-          )
-        ) {
-          res.status(400).json({
-            error:
-              error.message
-          });
-          return;
-        }
-      }
-
       res.status(500).json({
         error:
-          "Failed to submit merchant settlement"
+          "Failed to read settlement receipt evidence"
       });
     }
   }

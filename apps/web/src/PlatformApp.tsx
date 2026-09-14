@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { platformRequest, PlatformApiError, PLATFORM_SESSION_KEY } from "./platform-api";
+
+import {
+  platformFetch,
+  platformRequest,
+  PlatformApiError,
+  PLATFORM_SESSION_KEY
+} from "./platform-api";
+
 import "./platform.css";
 
 type Row = { id: string;[key: string]: unknown };
@@ -87,6 +94,114 @@ export default function PlatformApp() {
   function fail(e: unknown) {
     if (e instanceof PlatformApiError && e.status === 401) logout();
     setError(e instanceof Error ? e.message : "Unable to connect to the API.");
+  }
+  async function openSettlementEvidence(
+    settlement: Row
+  ) {
+    const receiptUrl =
+      typeof settlement.receiptUrl === "string"
+        ? settlement.receiptUrl.trim()
+        : "";
+
+    if (
+      receiptUrl &&
+      /^https?:\/\//i.test(receiptUrl)
+    ) {
+      window.open(
+        receiptUrl,
+        "_blank",
+        "noopener,noreferrer"
+      );
+      return;
+    }
+
+    if (
+      settlement.hasReceiptEvidence !== true
+    ) {
+      setError(
+        "Settlement receipt evidence is not available."
+      );
+      return;
+    }
+
+    if (!selected) {
+      setError(
+        "Select a merchant before viewing settlement evidence."
+      );
+      return;
+    }
+
+    const evidenceWindow =
+      window.open("", "_blank");
+
+    if (evidenceWindow) {
+      evidenceWindow.opener = null;
+    }
+
+    try {
+      setError("");
+
+      const response =
+        await platformFetch(
+          `/merchants/${encodeURIComponent(
+            selected
+          )}/billing/settlements/${encodeURIComponent(
+            settlement.id
+          )}/evidence`,
+          token
+        );
+
+      if (!response.ok) {
+        const data =
+          await response
+            .json()
+            .catch(() => null);
+
+        throw new PlatformApiError(
+          data?.error ||
+            `Failed to load settlement evidence (${response.status})`,
+          response.status
+        );
+      }
+
+      const blob =
+        await response.blob();
+
+      const objectUrl =
+        URL.createObjectURL(blob);
+
+      if (evidenceWindow) {
+        evidenceWindow.location.href =
+          objectUrl;
+      } else {
+        const link =
+          document.createElement("a");
+
+        link.href = objectUrl;
+        link.target = "_blank";
+        link.rel =
+          "noopener noreferrer";
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+        link.remove();
+      }
+
+      window.setTimeout(
+        () => {
+          URL.revokeObjectURL(
+            objectUrl
+          );
+        },
+        60_000
+      );
+    } catch (e) {
+      evidenceWindow?.close();
+      fail(e);
+    }
   }
   useEffect(() => {
     if (!token) return;
@@ -187,7 +302,27 @@ export default function PlatformApp() {
           }
           return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
         }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
-      {view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{merchant.subscription && !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p><button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button></>}</section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{typeof r.receiptUrl === "string" && /^https?:\/\//i.test(r.receiptUrl) && <a href={r.receiptUrl} target="_blank" rel="noopener noreferrer">View receipt</a>}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
+      {view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{merchant.subscription && !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p><button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button></>}</section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
+  r.hasReceiptEvidence === true ||
+  (
+    typeof r.receiptUrl === "string" &&
+    /^https?:\/\//i.test(
+      r.receiptUrl
+    )
+  )
+) && (
+  <button
+    type="button"
+    disabled={busy}
+    onClick={() =>
+      void openSettlementEvidence(
+        r
+      )
+    }
+  >
+    View receipt
+  </button>
+)}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
       {view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
       {(view === "Revenue" || view === "Overdue") && <Table rows={rows} columns={["invoiceNumber", "merchant", "totalAmount", "currency", "status", view === "Revenue" ? "paidAt" : "dueAt"]} />}
       {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}

@@ -68,6 +68,16 @@ const r2Configured = Boolean(
   r2PublicBaseUrl
 );
 
+const r2SettlementBucketName =
+  process.env.R2_SETTLEMENT_BUCKET_NAME?.trim();
+
+const r2SettlementConfigured = Boolean(
+  r2AccountId &&
+  r2AccessKeyId &&
+  r2SecretAccessKey &&
+  r2SettlementBucketName
+);
+
 export const env = {
   nodeEnv:
     process.env.NODE_ENV ??
@@ -101,5 +111,8 @@ export const env = {
   r2SecretAccessKey,
   r2BucketName,
   r2PublicBaseUrl,
-  r2Configured
+  r2Configured,
+
+  r2SettlementBucketName,
+  r2SettlementConfigured
 } as const;
