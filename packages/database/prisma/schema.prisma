@@ -111,11 +111,14 @@ enum MerchantSettlementProvider {
 }
 
 model Merchant {
-  id        String   @id @default(cuid())
-  name      String
-  currency  String   @default("ETB") @db.VarChar(3)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(cuid())
+  name           String
+  currency       String   @default("ETB") @db.VarChar(3)
+  phone          String?
+  alternatePhone String?
+  address        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   users          MerchantUser[]
   customers      Customer[]

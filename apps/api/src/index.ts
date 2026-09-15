@@ -7,6 +7,7 @@ import authRouter from "./routes/auth.js";
 import platformAuthRouter from "./routes/platform-auth.js";
 import platformAdminRouter from "./routes/platform-admin.js";
 import merchantsRouter from "./routes/merchants.js";
+import merchantProfileRouter from "./routes/merchant-profile.js";
 import productsRouter from "./routes/products.js";
 import customersRouter from "./routes/customers.js";
 import ordersRouter from "./routes/orders.js";
@@ -266,6 +267,11 @@ async function start() {
   app.use(
     "/merchants",
     merchantsRouter
+  );
+
+  app.use(
+    "/merchants",
+    merchantProfileRouter
   );
 
   app.use(

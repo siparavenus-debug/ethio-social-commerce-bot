@@ -269,6 +269,7 @@ type Tab =
   | "payments"
   | "orders"
   | "inventory"
+  | "profile"
   | "billing"
   | "users";
 
@@ -278,6 +279,17 @@ type MerchantUser = {
   email: string;
   displayName: string | null;
   role: "OWNER" | "ADMIN" | "STAFF";
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MerchantProfile = {
+  id: string;
+  name: string;
+  currency: string;
+  phone: string | null;
+  alternatePhone: string | null;
+  address: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -320,6 +332,8 @@ export default function App() {
     role === "OWNER";
   const canManageUsers =
     role === "OWNER";
+  const canManageProfile =
+    role === "OWNER" || role === "ADMIN";
 
   const [
     loginEmail,
@@ -409,6 +423,38 @@ export default function App() {
     deletingUserId,
     setDeletingUserId
   ] = useState<string | null>(null);
+
+  const [
+    merchantProfile,
+    setMerchantProfile
+  ] = useState<MerchantProfile | null>(
+    null
+  );
+
+  const [
+    profilePhone,
+    setProfilePhone
+  ] = useState("");
+
+  const [
+    profileAlternatePhone,
+    setProfileAlternatePhone
+  ] = useState("");
+
+  const [
+    profileAddress,
+    setProfileAddress
+  ] = useState("");
+
+  const [
+    loadingProfile,
+    setLoadingProfile
+  ] = useState(false);
+
+  const [
+    savingProfile,
+    setSavingProfile
+  ] = useState(false);
 
   const [
     reviews,
@@ -687,6 +733,12 @@ export default function App() {
     setBillingCommissions([]);
     setBillingInvoices([]);
     setBillingSettlements([]);
+    setMerchantProfile(null);
+    setProfilePhone("");
+    setProfileAlternatePhone("");
+    setProfileAddress("");
+    setLoadingProfile(false);
+    setSavingProfile(false);
     setLoadingBilling(false);
     setSettlementInvoiceId("");
     setSettlementProvider("TELEBIRR");
@@ -1538,6 +1590,160 @@ export default function App() {
       );
     } finally {
       setActionId(null);
+    }
+  }
+
+  async function loadMerchantProfile() {
+    if (
+      !auth?.token ||
+      !merchantId
+    ) {
+      setMerchantProfile(null);
+      setProfilePhone("");
+      setProfileAlternatePhone("");
+      setProfileAddress("");
+      setLoadingProfile(false);
+      return;
+    }
+
+    try {
+      setLoadingProfile(true);
+      setError("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/profile`
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to load merchant profile"
+        );
+      }
+
+      const profile =
+        data as MerchantProfile;
+
+      setMerchantProfile(profile);
+      setProfilePhone(
+        profile.phone ?? ""
+      );
+      setProfileAlternatePhone(
+        profile.alternatePhone ?? ""
+      );
+      setProfileAddress(
+        profile.address ?? ""
+      );
+    } catch (loadError) {
+      setMerchantProfile(null);
+
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load merchant profile"
+      );
+    } finally {
+      setLoadingProfile(false);
+    }
+  }
+
+  async function saveMerchantProfile() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageProfile
+    ) {
+      setError(
+        "You do not have permission to update the merchant profile."
+      );
+      return;
+    }
+
+    const phone =
+      profilePhone.trim();
+    const alternatePhone =
+      profileAlternatePhone.trim();
+    const address =
+      profileAddress.trim();
+
+    if (phone.length > 50) {
+      setError(
+        "Phone must be at most 50 characters."
+      );
+      return;
+    }
+
+    if (alternatePhone.length > 50) {
+      setError(
+        "Alternate phone must be at most 50 characters."
+      );
+      return;
+    }
+
+    if (address.length > 1000) {
+      setError(
+        "Address must be at most 1000 characters."
+      );
+      return;
+    }
+
+    try {
+      setSavingProfile(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/profile`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            phone,
+            alternatePhone,
+            address
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to update merchant profile"
+        );
+      }
+
+      const profile =
+        data as MerchantProfile;
+
+      setMerchantProfile(profile);
+      setProfilePhone(
+        profile.phone ?? ""
+      );
+      setProfileAlternatePhone(
+        profile.alternatePhone ?? ""
+      );
+      setProfileAddress(
+        profile.address ?? ""
+      );
+
+      setSuccess(
+        "Merchant profile updated."
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Failed to update merchant profile"
+      );
+    } finally {
+      setSavingProfile(false);
     }
   }
 
@@ -3074,6 +3280,27 @@ export default function App() {
                 {lowStockProducts}
               </span>
             )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setActiveTab(
+              "profile"
+            );
+            setError("");
+            setSuccess("");
+            void loadMerchantProfile();
+          }}
+          style={{
+            ...styles.tab,
+            ...(activeTab ===
+              "profile"
+              ? styles.activeTab
+              : {})
+          }}
+        >
+          Profile
         </button>
 
         {canViewBilling && (
@@ -6724,6 +6951,208 @@ export default function App() {
               </div>
             )}
           </div>
+        </section>
+      ) : activeTab === "profile" ? (
+        <section
+          style={styles.section}
+        >
+          <div
+            style={styles.sectionHeader}
+          >
+            <div>
+              <h2
+                style={styles.sectionTitle}
+              >
+                Merchant Profile
+              </h2>
+
+              <p
+                style={
+                  styles.sectionDescription
+                }
+              >
+                Business contact information
+                used for merchant operations.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                void loadMerchantProfile()
+              }
+              disabled={loadingProfile}
+              style={
+                styles.inventoryRefreshButton
+              }
+            >
+              {loadingProfile
+                ? "Loading..."
+                : "Refresh"}
+            </button>
+          </div>
+
+          {loadingProfile &&
+            !merchantProfile ? (
+            <p>
+              Loading merchant profile...
+            </p>
+          ) : !merchantProfile ? (
+            <p>
+              Merchant profile is not
+              available.
+            </p>
+          ) : (
+            <>
+              <div style={styles.summary}>
+                <Detail
+                  label="Merchant"
+                  value={merchantProfile.name}
+                />
+
+                <Detail
+                  label="Currency"
+                  value={
+                    merchantProfile.currency
+                  }
+                />
+              </div>
+
+              {canManageProfile ? (
+                <div
+                  style={{
+                    marginTop: "24px"
+                  }}
+                >
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Phone
+                  </label>
+
+                  <input
+                    type="tel"
+                    value={profilePhone}
+                    onChange={(event) =>
+                      setProfilePhone(
+                        event.target.value
+                      )
+                    }
+                    maxLength={50}
+                    style={styles.formInput}
+                  />
+
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Alternate phone
+                    <span
+                      style={
+                        styles.optionalLabel
+                      }
+                    >
+                      {" "}
+                      Optional
+                    </span>
+                  </label>
+
+                  <input
+                    type="tel"
+                    value={
+                      profileAlternatePhone
+                    }
+                    onChange={(event) =>
+                      setProfileAlternatePhone(
+                        event.target.value
+                      )
+                    }
+                    maxLength={50}
+                    style={styles.formInput}
+                  />
+
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Address
+                    <span
+                      style={
+                        styles.optionalLabel
+                      }
+                    >
+                      {" "}
+                      Optional
+                    </span>
+                  </label>
+
+                  <textarea
+                    value={profileAddress}
+                    onChange={(event) =>
+                      setProfileAddress(
+                        event.target.value
+                      )
+                    }
+                    maxLength={1000}
+                    rows={5}
+                    style={
+                      styles.formTextarea
+                    }
+                  />
+
+                  <div
+                    style={
+                      styles.characterCount
+                    }
+                  >
+                    {profileAddress.length}
+                    /1000
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void saveMerchantProfile()
+                    }
+                    disabled={savingProfile}
+                  >
+                    {savingProfile
+                      ? "Saving..."
+                      : "Save Profile"}
+                  </button>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    ...styles.summary,
+                    marginTop: "24px"
+                  }}
+                >
+                  <Detail
+                    label="Phone"
+                    value={
+                      merchantProfile.phone ||
+                      "-"
+                    }
+                  />
+
+                  <Detail
+                    label="Alternate phone"
+                    value={
+                      merchantProfile.alternatePhone ||
+                      "-"
+                    }
+                  />
+
+                  <Detail
+                    label="Address"
+                    value={
+                      merchantProfile.address ||
+                      "-"
+                    }
+                  />
+                </div>
+              )}
+            </>
+          )}
         </section>
       ) : (
         <section

@@ -178,6 +178,9 @@ router.get(
             id: true,
             name: true,
             currency: true,
+            phone: true,
+            alternatePhone: true,
+            address: true,
             createdAt: true,
             updatedAt: true,
             subscription: {
@@ -251,6 +254,9 @@ router.get(
             id: true,
             name: true,
             currency: true,
+            phone: true,
+            alternatePhone: true,
+            address: true,
             createdAt: true,
             updatedAt: true,
             subscription: {
