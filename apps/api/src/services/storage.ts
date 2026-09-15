@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  NoSuchKey,
   PutObjectCommand,
   S3Client
 } from "@aws-sdk/client-s3";
@@ -17,6 +18,13 @@ const ALLOWED_IMAGE_TYPES = [
 
 type AllowedImageType =
   (typeof ALLOWED_IMAGE_TYPES)[number];
+
+export class SettlementReceiptNotFoundError extends Error {
+  constructor() {
+    super("Settlement receipt evidence is not available");
+    this.name = "SettlementReceiptNotFoundError";
+  }
+}
 
 function getR2Client(): S3Client {
   if (
@@ -242,15 +250,25 @@ export async function getSettlementReceipt(
 
   const client = getR2Client();
 
-  const response =
-    await client.send(
-      new GetObjectCommand({
-        Bucket:
-          env.r2SettlementBucketName,
-        Key:
-          normalizedObjectKey
-      })
-    );
+  let response;
+
+  try {
+    response =
+      await client.send(
+        new GetObjectCommand({
+          Bucket:
+            env.r2SettlementBucketName,
+          Key:
+            normalizedObjectKey
+        })
+      );
+  } catch (error) {
+    if (error instanceof NoSuchKey) {
+      throw new SettlementReceiptNotFoundError();
+    }
+
+    throw error;
+  }
 
   if (!response.Body) {
     throw new Error(

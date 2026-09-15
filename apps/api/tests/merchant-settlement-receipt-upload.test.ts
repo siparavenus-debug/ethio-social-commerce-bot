@@ -34,14 +34,28 @@ import {
 } from "vitest";
 
 const storageMocks =
-  vi.hoisted(() => ({
-    uploadSettlementReceipt:
-      vi.fn(),
-    deleteSettlementReceipt:
-      vi.fn(),
-    getSettlementReceipt:
-      vi.fn()
-  }));
+  vi.hoisted(() => {
+    class SettlementReceiptNotFoundError extends Error {
+      constructor() {
+        super(
+          "Settlement receipt evidence is not available"
+        );
+
+        this.name =
+          "SettlementReceiptNotFoundError";
+      }
+    }
+
+    return {
+      uploadSettlementReceipt:
+        vi.fn(),
+      deleteSettlementReceipt:
+        vi.fn(),
+      getSettlementReceipt:
+        vi.fn(),
+      SettlementReceiptNotFoundError
+    };
+  });
 
 vi.mock(
   "../src/services/storage.js",
@@ -67,7 +81,11 @@ vi.mock(
       storageMocks.deleteSettlementReceipt,
 
     getSettlementReceipt:
-      storageMocks.getSettlementReceipt
+      storageMocks.getSettlementReceipt,
+
+    SettlementReceiptNotFoundError:
+      storageMocks.SettlementReceiptNotFoundError
+
   })
 );
 
@@ -1232,6 +1250,107 @@ describe(
     );
 
     it(
+      "returns 404 when merchant settlement receipt metadata points to missing private storage evidence",
+      async () => {
+        const fixture =
+          await createFixture(
+            "read-missing-storage-object"
+          );
+
+        const submitResponse =
+          await postSettlementReceipt(
+            fixture.merchant.id,
+            fixture.token,
+            createSettlementForm(
+              fixture.invoice.id,
+              "READ-MISSING-STORAGE-OBJECT"
+            )
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const settlement =
+          await prisma.merchantSettlement.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        storageMocks.getSettlementReceipt
+          .mockRejectedValueOnce(
+            new storageMocks.SettlementReceiptNotFoundError()
+          );
+
+        const response =
+          await getSettlementEvidence(
+            fixture.merchant.id,
+            settlement.id,
+            fixture.token
+          );
+
+        expect(
+          response.status
+        ).toBe(404);
+
+        const responseBody =
+          await response.json() as {
+            error?: string;
+          };
+
+        expect(
+          responseBody.error
+        ).toBe(
+          "Settlement receipt evidence is not available"
+        );
+
+        expect(
+          storageMocks.getSettlementReceipt
+        ).toHaveBeenCalledTimes(1);
+
+        const unchangedSettlement =
+          await prisma.merchantSettlement.findUniqueOrThrow({
+            where: {
+              id:
+                settlement.id
+            }
+          });
+
+        const unchangedInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          unchangedSettlement.status
+        ).toBe(
+          MerchantSettlementStatus.REVIEW_REQUIRED
+        );
+
+        expect(
+          unchangedSettlement.verifiedAt
+        ).toBeNull();
+
+        expect(
+          unchangedInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          unchangedInvoice.paidAt
+        ).toBeNull();
+      }
+    );
+
+    it(
       "allows a platform administrator to read private settlement evidence",
       async () => {
         const fixture =
@@ -1365,6 +1484,179 @@ describe(
         expect(
           unchangedInvoice.paidAt
         ).toBeNull();
+      }
+    );
+
+    it(
+      "returns 404 when platform settlement receipt metadata points to missing private storage evidence",
+      async () => {
+        const fixture =
+          await createFixture(
+            "platform-read-missing-storage-object"
+          );
+
+        const platform =
+          await createPlatformFixture(
+            "platform-read-missing-storage-object"
+          );
+
+        const submitResponse =
+          await postSettlementReceipt(
+            fixture.merchant.id,
+            fixture.token,
+            createSettlementForm(
+              fixture.invoice.id,
+              "PLATFORM-READ-MISSING-STORAGE-OBJECT"
+            )
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const settlement =
+          await prisma.merchantSettlement.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        storageMocks.getSettlementReceipt
+          .mockRejectedValueOnce(
+            new storageMocks.SettlementReceiptNotFoundError()
+          );
+
+        const response =
+          await getPlatformSettlementEvidence(
+            fixture.merchant.id,
+            settlement.id,
+            platform.token
+          );
+
+        expect(
+          response.status
+        ).toBe(404);
+
+        const responseBody =
+          await response.json() as {
+            error?: string;
+          };
+
+        expect(
+          responseBody.error
+        ).toBe(
+          "Settlement receipt evidence is not available"
+        );
+
+        expect(
+          storageMocks.getSettlementReceipt
+        ).toHaveBeenCalledTimes(1);
+
+        const unchangedSettlement =
+          await prisma.merchantSettlement.findUniqueOrThrow({
+            where: {
+              id:
+                settlement.id
+            }
+          });
+
+        const unchangedInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          unchangedSettlement.status
+        ).toBe(
+          MerchantSettlementStatus.REVIEW_REQUIRED
+        );
+
+        expect(
+          unchangedSettlement.verifiedAt
+        ).toBeNull();
+
+        expect(
+          unchangedInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          unchangedInvoice.paidAt
+        ).toBeNull();
+      }
+    );
+
+    it(
+      "returns 500 when merchant settlement receipt storage fails unexpectedly",
+      async () => {
+        const fixture =
+          await createFixture(
+            "read-storage-failure"
+          );
+
+        const submitResponse =
+          await postSettlementReceipt(
+            fixture.merchant.id,
+            fixture.token,
+            createSettlementForm(
+              fixture.invoice.id,
+              "READ-STORAGE-FAILURE"
+            )
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const settlement =
+          await prisma.merchantSettlement.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        storageMocks.getSettlementReceipt
+          .mockRejectedValueOnce(
+            new Error(
+              "Simulated private storage failure"
+            )
+          );
+
+        const response =
+          await getSettlementEvidence(
+            fixture.merchant.id,
+            settlement.id,
+            fixture.token
+          );
+
+        expect(
+          response.status
+        ).toBe(500);
+
+        const responseBody =
+          await response.json() as {
+            error?: string;
+          };
+
+        expect(
+          responseBody.error
+        ).toBe(
+          "Failed to read settlement receipt evidence"
+        );
+
+        expect(
+          storageMocks.getSettlementReceipt
+        ).toHaveBeenCalledTimes(1);
       }
     );
 

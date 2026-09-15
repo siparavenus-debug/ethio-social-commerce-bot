@@ -43,7 +43,8 @@ import {
 
 import {
   getSettlementReceipt,
-  isAllowedImageType
+  isAllowedImageType,
+  SettlementReceiptNotFoundError
 } from "../services/storage.js";
 
 const router = Router();
@@ -1173,6 +1174,14 @@ router.get(
         receipt.buffer
       );
     } catch (error) {
+      if (error instanceof SettlementReceiptNotFoundError) {
+        res.status(404).json({
+          error:
+            "Settlement receipt evidence is not available"
+        });
+
+        return;
+      }
       console.error(
         "Failed to read platform merchant settlement receipt evidence:",
         error
