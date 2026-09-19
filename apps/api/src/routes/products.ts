@@ -214,6 +214,141 @@ router.post(
 );
 
 /**
+ * Set, replace, or remove a product category image.
+ *
+ * PATCH /merchants/:merchantId/products/categories/:categoryId/image
+ *
+ * Body when setting/replacing:
+ * {
+ *   "imageUrl": "https://example.com/category.jpg",
+ *   "imageAltText": "Shoes"
+ * }
+ *
+ * Body when removing:
+ * {
+ *   "imageUrl": null,
+ *   "imageAltText": null
+ * }
+ */
+router.patch(
+  "/:merchantId/products/categories/:categoryId/image",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
+  async (req, res) => {
+    try {
+      const merchantId = String(req.params.merchantId);
+      const categoryId = String(req.params.categoryId);
+
+      const {
+        imageUrl,
+        imageAltText
+      } = req.body;
+
+      if (
+        imageUrl !== null &&
+        !isValidImageUrl(imageUrl)
+      ) {
+        res.status(400).json({
+          error:
+            "imageUrl must be a valid HTTP or HTTPS URL, or null"
+        });
+        return;
+      }
+
+      if (
+        imageAltText !== undefined &&
+        imageAltText !== null &&
+        typeof imageAltText !== "string"
+      ) {
+        res.status(400).json({
+          error:
+            "imageAltText must be a string or null"
+        });
+        return;
+      }
+
+      const trimmedAltText =
+        typeof imageAltText === "string"
+          ? imageAltText.trim()
+          : imageAltText;
+
+      if (
+        typeof trimmedAltText === "string" &&
+        trimmedAltText.length >
+          IMAGE_ALT_TEXT_MAX_LENGTH
+      ) {
+        res.status(400).json({
+          error:
+            `imageAltText must be ${IMAGE_ALT_TEXT_MAX_LENGTH} characters or fewer`
+        });
+        return;
+      }
+
+      if (
+        imageUrl === null &&
+        trimmedAltText
+      ) {
+        res.status(400).json({
+          error:
+            "imageAltText cannot be set when imageUrl is null"
+        });
+        return;
+      }
+
+      const category =
+        await prisma.productCategory.findFirst({
+          where: {
+            id: categoryId,
+            merchantId
+          },
+          select: {
+            id: true
+          }
+        });
+
+      if (!category) {
+        res.status(404).json({
+          error: "Category not found"
+        });
+        return;
+      }
+
+      const updatedCategory =
+        await prisma.productCategory.update({
+          where: {
+            id: category.id
+          },
+          data: {
+            imageUrl:
+              imageUrl === null
+                ? null
+                : imageUrl.trim(),
+            imageAltText:
+              imageUrl === null
+                ? null
+                : trimmedAltText || null
+          }
+        });
+
+      res.json(updatedCategory);
+    } catch (error) {
+      console.error(
+        "Failed to update product category image:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to update product category image"
+      });
+    }
+  }
+);
+
+/**
  * Delete a product category.
  *
  * Products assigned to this category keep their products,

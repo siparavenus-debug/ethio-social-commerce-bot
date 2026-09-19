@@ -132,6 +132,8 @@ type ProductCategory = {
   id: string;
   merchantId: string;
   name: string;
+  imageUrl: string | null;
+  imageAltText: string | null;
   createdAt: string;
   updatedAt: string;
   _count?: { products: number };
@@ -648,7 +650,65 @@ export default function App() {
     setImageFile
   ] = useState<File | null>(null);
 
+  const [
+    categoryImageCategoryId,
+    setCategoryImageCategoryId
+  ] = useState<string | null>(
+    null
+  );
 
+  const [
+    categoryImageFile,
+    setCategoryImageFile
+  ] = useState<File | null>(
+    null
+  );
+
+  const [
+    categoryImagePreview,
+    setCategoryImagePreview
+  ] = useState<{
+    url: string;
+    alt: string;
+  } | null>(
+    null
+  );
+
+  const [
+    categoryImageRemoval,
+    setCategoryImageRemoval
+  ] = useState<{
+    id: string;
+    name: string;
+  } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (!categoryImagePreview) {
+      return;
+    }
+
+    function handleKeyDown(
+      event: KeyboardEvent
+    ) {
+      if (event.key === "Escape") {
+        setCategoryImagePreview(null);
+      }
+    }
+
+    window.addEventListener(
+      "keydown",
+      handleKeyDown
+    );
+
+    return () => {
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown
+      );
+    };
+  }, [categoryImagePreview]);
 
   const [
     loadingReviews,
@@ -1475,6 +1535,145 @@ export default function App() {
         err instanceof Error
           ? err.message
           : "Failed to upload product image"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function uploadCategoryImage(
+    categoryId: string
+  ) {
+    if (!canManageProducts) {
+      setError(
+        "You do not have permission to manage category images."
+      );
+      return;
+    }
+
+    if (!categoryImageFile) {
+      setError(
+        "Please select a category image file."
+      );
+      return;
+    }
+
+    try {
+      setActionId(
+        `category-image-${categoryId}`
+      );
+      setError("");
+      setSuccess("");
+
+      const formData =
+        new FormData();
+
+      formData.append(
+        "image",
+        categoryImageFile
+      );
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/products/categories/${categoryId}/image/upload`,
+          {
+            method: "POST",
+            body: formData
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to upload category image"
+        );
+      }
+
+      setCategoryImageFile(null);
+      setCategoryImageCategoryId(null);
+
+      setSuccess(
+        "Category image uploaded successfully."
+      );
+
+      await loadCategories();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to upload category image"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function removeCategoryImage(
+    categoryId: string,
+    categoryName: string
+  ) {
+    if (!canManageProducts) {
+      setError(
+        "You do not have permission to manage category images."
+      );
+      return;
+    }
+
+    try {
+      setActionId(
+        `category-image-remove-${categoryId}`
+      );
+      setError("");
+      setSuccess("");
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/products/categories/${categoryId}/image`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              imageUrl: null,
+              imageAltText: null
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to remove category image"
+        );
+      }
+
+      if (
+        categoryImageCategoryId ===
+        categoryId
+      ) {
+        setCategoryImageCategoryId(
+          null
+        );
+
+        setCategoryImageFile(
+          null
+        );
+      }
+
+      setSuccess(
+        "Category image removed successfully."
+      );
+
+      await loadCategories();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to remove category image"
       );
     } finally {
       setActionId(null);
@@ -3129,86 +3328,110 @@ export default function App() {
 
 
   return (
-    <main style={styles.page}>
-      <header
-        style={styles.header}
-      >
-        <div>
-          <h1
-            style={styles.title}
-          >
-            Ethio Social Commerce
-          </h1>
-
-          <p
-            style={styles.subtitle}
-          >
-            Merchant Dashboard
-          </p>
-
-          <p
-            style={
-              styles.signedInUser
-            }
-          >
-            Signed in as{" "}
-            <strong>
-              {auth.user.displayName ||
-                auth.user.email}
-            </strong>
-          </p>
-        </div>
-
-        <div
-          style={styles.headerActions}
+    <>
+      <main style={styles.page}>
+        <header
+          style={styles.header}
         >
-          <button
-            type="button"
-            onClick={() =>
-              void refreshDashboard()
-            }
-            disabled={
-              (canReviewPayments &&
+          <div>
+            <h1
+              style={styles.title}
+            >
+              Ethio Social Commerce
+            </h1>
+
+            <p
+              style={styles.subtitle}
+            >
+              Merchant Dashboard
+            </p>
+
+            <p
+              style={
+                styles.signedInUser
+              }
+            >
+              Signed in as{" "}
+              <strong>
+                {auth.user.displayName ||
+                  auth.user.email}
+              </strong>
+            </p>
+          </div>
+
+          <div
+            style={styles.headerActions}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                void refreshDashboard()
+              }
+              disabled={
+                (canReviewPayments &&
+                  loadingReviews) ||
+                (canViewBilling &&
+                  loadingBilling) ||
+                loadingOrders ||
+                loadingProducts ||
+                actionId !== null
+              }
+              style={
+                styles.refreshButton
+              }
+            >
+              {(canReviewPayments &&
                 loadingReviews) ||
-              (canViewBilling &&
-                loadingBilling) ||
-              loadingOrders ||
-              loadingProducts ||
-              actionId !== null
-            }
-            style={
-              styles.refreshButton
-            }
-          >
-            {(canReviewPayments &&
-              loadingReviews) ||
-              (canViewBilling &&
-                loadingBilling) ||
-              loadingOrders ||
-              loadingProducts
-              ? "Refreshing..."
-              : "Refresh"}
-          </button>
+                (canViewBilling &&
+                  loadingBilling) ||
+                loadingOrders ||
+                loadingProducts
+                ? "Refreshing..."
+                : "Refresh"}
+            </button>
 
-          <button
-            type="button"
-            onClick={logout}
-            disabled={
-              actionId !== null
-            }
-            style={
-              styles.logoutButton
-            }
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
+            <button
+              type="button"
+              onClick={logout}
+              disabled={
+                actionId !== null
+              }
+              style={
+                styles.logoutButton
+              }
+            >
+              Sign out
+            </button>
+          </div>
+        </header>
 
-      <section
-        style={styles.summary}
-      >
-        {canReviewPayments && (
+        <section
+          style={styles.summary}
+        >
+          {canReviewPayments && (
+            <div
+              style={
+                styles.summaryCard
+              }
+            >
+              <span
+                style={
+                  styles.summaryLabel
+                }
+              >
+                Payments awaiting review
+              </span>
+
+              <strong
+                style={
+                  styles.summaryValue
+                }
+              >
+                {reviewCount}
+              </strong>
+            </div>
+          )}
+
           <div
             style={
               styles.summaryCard
@@ -3219,7 +3442,7 @@ export default function App() {
                 styles.summaryLabel
               }
             >
-              Payments awaiting review
+              Paid orders
             </span>
 
             <strong
@@ -3227,711 +3450,854 @@ export default function App() {
                 styles.summaryValue
               }
             >
-              {reviewCount}
+              {paidOrders}
             </strong>
+          </div>
+
+          <div
+            style={
+              styles.summaryCard
+            }
+          >
+            <span
+              style={
+                styles.summaryLabel
+              }
+            >
+              Orders being prepared
+            </span>
+
+            <strong
+              style={
+                styles.summaryValue
+              }
+            >
+              {fulfillingOrders}
+            </strong>
+          </div>
+
+          <div
+            style={
+              styles.summaryCard
+            }
+          >
+            <span
+              style={
+                styles.summaryLabel
+              }
+            >
+              Inventory alerts
+            </span>
+
+            <strong
+              style={
+                styles.summaryValue
+              }
+            >
+              {outOfStockProducts +
+                lowStockProducts}
+            </strong>
+
+            <span
+              style={
+                styles.summaryHint
+              }
+            >
+              {outOfStockProducts} out of stock
+              {" · "}
+              {lowStockProducts} low stock
+            </span>
+          </div>
+        </section>
+
+        <section
+          style={styles.tabs}
+        >
+          {canReviewPayments && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab(
+                  "payments"
+                );
+                setError("");
+                setSuccess("");
+              }}
+              style={{
+                ...styles.tab,
+                ...(activeTab ===
+                  "payments"
+                  ? styles.activeTab
+                  : {})
+              }}
+            >
+              Payment Review
+
+              {reviewCount > 0 && (
+                <span
+                  style={
+                    styles.tabCount
+                  }
+                >
+                  {reviewCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("orders");
+              setError("");
+              setSuccess("");
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab ===
+                "orders"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Orders
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(
+                "inventory"
+              );
+              setError("");
+              setSuccess("");
+              void loadProducts();
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab ===
+                "inventory"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Inventory
+
+            {outOfStockProducts >
+              0 && (
+                <span
+                  style={
+                    styles.inventoryWarningCount
+                  }
+                >
+                  {outOfStockProducts}
+                </span>
+              )}
+
+            {lowStockProducts >
+              0 && (
+                <span
+                  style={
+                    styles.inventoryLowCount
+                  }
+                >
+                  {lowStockProducts}
+                </span>
+              )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab(
+                "profile"
+              );
+              setError("");
+              setSuccess("");
+              void loadMerchantProfile();
+            }}
+            style={{
+              ...styles.tab,
+              ...(activeTab ===
+                "profile"
+                ? styles.activeTab
+                : {})
+            }}
+          >
+            Profile
+          </button>
+
+          {canViewBilling && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab(
+                  "billing"
+                );
+                setError("");
+                setSuccess("");
+                void loadBilling();
+              }}
+              style={{
+                ...styles.tab,
+                ...(activeTab ===
+                  "billing"
+                  ? styles.activeTab
+                  : {})
+              }}
+            >
+              Billing
+            </button>
+          )}
+
+          {canManageUsers && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab("users");
+                setError("");
+                setSuccess("");
+                void loadUsers();
+              }}
+              style={{
+                ...styles.tab,
+                ...(activeTab === "users"
+                  ? styles.activeTab
+                  : {})
+              }}
+            >
+              Users
+            </button>
+          )}
+
+        </section>
+
+        {error && (
+          <div
+            style={styles.error}
+          >
+            <strong>
+              Error:
+            </strong>{" "}
+            {error}
           </div>
         )}
 
-        <div
-          style={
-            styles.summaryCard
-          }
-        >
-          <span
-            style={
-              styles.summaryLabel
-            }
-          >
-            Paid orders
-          </span>
-
-          <strong
-            style={
-              styles.summaryValue
-            }
-          >
-            {paidOrders}
-          </strong>
-        </div>
-
-        <div
-          style={
-            styles.summaryCard
-          }
-        >
-          <span
-            style={
-              styles.summaryLabel
-            }
-          >
-            Orders being prepared
-          </span>
-
-          <strong
-            style={
-              styles.summaryValue
-            }
-          >
-            {fulfillingOrders}
-          </strong>
-        </div>
-
-        <div
-          style={
-            styles.summaryCard
-          }
-        >
-          <span
-            style={
-              styles.summaryLabel
-            }
-          >
-            Inventory alerts
-          </span>
-
-          <strong
-            style={
-              styles.summaryValue
-            }
-          >
-            {outOfStockProducts +
-              lowStockProducts}
-          </strong>
-
-          <span
-            style={
-              styles.summaryHint
-            }
-          >
-            {outOfStockProducts} out of stock
-            {" · "}
-            {lowStockProducts} low stock
-          </span>
-        </div>
-      </section>
-
-      <section
-        style={styles.tabs}
-      >
-        {canReviewPayments && (
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab(
-                "payments"
-              );
-              setError("");
-              setSuccess("");
-            }}
-            style={{
-              ...styles.tab,
-              ...(activeTab ===
-                "payments"
-                ? styles.activeTab
-                : {})
-            }}
-          >
-            Payment Review
-
-            {reviewCount > 0 && (
-              <span
-                style={
-                  styles.tabCount
-                }
-              >
-                {reviewCount}
-              </span>
-            )}
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab("orders");
-            setError("");
-            setSuccess("");
-          }}
-          style={{
-            ...styles.tab,
-            ...(activeTab ===
-              "orders"
-              ? styles.activeTab
-              : {})
-          }}
-        >
-          Orders
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab(
-              "inventory"
-            );
-            setError("");
-            setSuccess("");
-            void loadProducts();
-          }}
-          style={{
-            ...styles.tab,
-            ...(activeTab ===
-              "inventory"
-              ? styles.activeTab
-              : {})
-          }}
-        >
-          Inventory
-
-          {outOfStockProducts >
-            0 && (
-              <span
-                style={
-                  styles.inventoryWarningCount
-                }
-              >
-                {outOfStockProducts}
-              </span>
-            )}
-
-          {lowStockProducts >
-            0 && (
-              <span
-                style={
-                  styles.inventoryLowCount
-                }
-              >
-                {lowStockProducts}
-              </span>
-            )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab(
-              "profile"
-            );
-            setError("");
-            setSuccess("");
-            void loadMerchantProfile();
-          }}
-          style={{
-            ...styles.tab,
-            ...(activeTab ===
-              "profile"
-              ? styles.activeTab
-              : {})
-          }}
-        >
-          Profile
-        </button>
-
-        {canViewBilling && (
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab(
-                "billing"
-              );
-              setError("");
-              setSuccess("");
-              void loadBilling();
-            }}
-            style={{
-              ...styles.tab,
-              ...(activeTab ===
-                "billing"
-                ? styles.activeTab
-                : {})
-            }}
-          >
-            Billing
-          </button>
-        )}
-
-        {canManageUsers && (
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab("users");
-              setError("");
-              setSuccess("");
-              void loadUsers();
-            }}
-            style={{
-              ...styles.tab,
-              ...(activeTab === "users"
-                ? styles.activeTab
-                : {})
-            }}
-          >
-            Users
-          </button>
-        )}
-
-      </section>
-
-      {error && (
-        <div
-          style={styles.error}
-        >
-          <strong>
-            Error:
-          </strong>{" "}
-          {error}
-        </div>
-      )}
-
-      {success && (
-        <div
-          style={styles.success}
-        >
-          {success}
-        </div>
-      )}
-
-      {activeTab ===
-        "payments" ? (
-        <section
-          style={styles.section}
-        >
-
+        {success && (
           <div
-            style={{
-              ...styles.sectionHeader,
-              alignItems: "flex-end",
-            }}
+            style={styles.success}
           >
-            <div>
-              <h2
-                style={
-                  styles.sectionTitle
-                }
-              >
-                Payment Review
-              </h2>
+            {success}
+          </div>
+        )}
 
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Verify or reject customer payment
-                submissions.
-              </p>
-            </div>
+        {activeTab ===
+          "payments" ? (
+          <section
+            style={styles.section}
+          >
 
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                flexWrap: "wrap",
+                ...styles.sectionHeader,
+                alignItems: "flex-end",
               }}
             >
-              <label
-                htmlFor="payment-review-sort"
+              <div>
+                <h2
+                  style={
+                    styles.sectionTitle
+                  }
+                >
+                  Payment Review
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Verify or reject customer payment
+                  submissions.
+                </p>
+              </div>
+
+              <div
                 style={{
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  color: "#475569",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  flexWrap: "wrap",
                 }}
               >
-                Sort by
-              </label>
+                <label
+                  htmlFor="payment-review-sort"
+                  style={{
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    color: "#475569",
+                  }}
+                >
+                  Sort by
+                </label>
 
-              <select
-                id="payment-review-sort"
-                value={reviewSort}
-                onChange={(event) =>
-                  setReviewSort(
-                    event.target.value as ReviewSort
-                  )
+                <select
+                  id="payment-review-sort"
+                  value={reviewSort}
+                  onChange={(event) =>
+                    setReviewSort(
+                      event.target.value as ReviewSort
+                    )
+                  }
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: "8px",
+                    border: "1px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="newest">
+                    Newest first
+                  </option>
+
+                  <option value="oldest">
+                    Oldest first
+                  </option>
+
+                  <option value="amount-high">
+                    Amount: highest first
+                  </option>
+
+                  <option value="amount-low">
+                    Amount: lowest first
+                  </option>
+
+                  <option value="provider-az">
+                    Bank / provider: A–Z
+                  </option>
+
+                  <option value="provider-za">
+                    Bank / provider: Z–A
+                  </option>
+
+                  <option value="customer-az">
+                    Customer: A–Z
+                  </option>
+
+                  <option value="customer-za">
+                    Customer: Z–A
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            {loadingReviews ? (
+              <div
+                style={
+                  styles.emptyState
                 }
-                style={{
-                  padding: "9px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                  background: "#ffffff",
-                  color: "#0f172a",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
               >
-                <option value="newest">
-                  Newest first
-                </option>
+                Loading payment reviews...
+              </div>
+            ) : reviews.length ===
+              0 ? (
+              <div
+                style={
+                  styles.emptyState
+                }
+              >
+                <strong>
+                  No payments awaiting review.
+                </strong>
 
-                <option value="oldest">
-                  Oldest first
-                </option>
+                <p>
+                  New customer payment submissions
+                  will appear here.
+                </p>
+              </div>
+            ) : (
+              <div
+                style={
+                  styles.reviewList
+                }
+              >
+                {sortedReviews.map(
+                  (review) => {
+                    const customerName =
+                      review.order.customer
+                        ?.name ||
+                      "Unknown customer";
 
-                <option value="amount-high">
-                  Amount: highest first
-                </option>
+                    const product =
+                      review.order
+                        .items[0];
 
-                <option value="amount-low">
-                  Amount: lowest first
-                </option>
+                    const busy =
+                      actionId ===
+                      review.id;
 
-                <option value="provider-az">
-                  Bank / provider: A–Z
-                </option>
+                    const isRejecting =
+                      rejectingPaymentId ===
+                      review.id;
 
-                <option value="provider-za">
-                  Bank / provider: Z–A
-                </option>
+                    const isExpanded =
+                      expandedPaymentIds.has(review.id);
 
-                <option value="customer-az">
-                  Customer: A–Z
-                </option>
-
-                <option value="customer-za">
-                  Customer: Z–A
-                </option>
-              </select>
-            </div>
-          </div>
-
-          {loadingReviews ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              Loading payment reviews...
-            </div>
-          ) : reviews.length ===
-            0 ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              <strong>
-                No payments awaiting review.
-              </strong>
-
-              <p>
-                New customer payment submissions
-                will appear here.
-              </p>
-            </div>
-          ) : (
-            <div
-              style={
-                styles.reviewList
-              }
-            >
-              {sortedReviews.map(
-                (review) => {
-                  const customerName =
-                    review.order.customer
-                      ?.name ||
-                    "Unknown customer";
-
-                  const product =
-                    review.order
-                      .items[0];
-
-                  const busy =
-                    actionId ===
-                    review.id;
-
-                  const isRejecting =
-                    rejectingPaymentId ===
-                    review.id;
-
-                  const isExpanded =
-                    expandedPaymentIds.has(review.id);
-
-                  const extracted =
-                    review.receiptMetadata?.extracted;
+                    const extracted =
+                      review.receiptMetadata?.extracted;
 
 
 
-                  const expectedAmount = Number(review.amount);
-                  const extractedAmount =
-                    typeof extracted?.amount === "number"
-                      ? extracted.amount
-                      : null;
+                    const expectedAmount = Number(review.amount);
+                    const extractedAmount =
+                      typeof extracted?.amount === "number"
+                        ? extracted.amount
+                        : null;
 
-                  const expectedProvider =
-                    review.provider || "Not specified";
+                    const expectedProvider =
+                      review.provider || "Not specified";
 
-                  const extractedProvider =
-                    extracted?.provider || null;
+                    const extractedProvider =
+                      extracted?.provider || null;
 
-                  const normalizedExpectedProvider =
-                    expectedProvider
-                      .toLowerCase()
-                      .replace(/[\s_-]+/g, "");
+                    const normalizedExpectedProvider =
+                      expectedProvider
+                        .toLowerCase()
+                        .replace(/[\s_-]+/g, "");
 
-                  const normalizedExtractedProvider =
-                    extractedProvider
-                      ?.toLowerCase()
-                      .replace(/[\s_-]+/g, "") || "";
+                    const normalizedExtractedProvider =
+                      extractedProvider
+                        ?.toLowerCase()
+                        .replace(/[\s_-]+/g, "") || "";
 
-                  const providerMatches =
-                    extractedProvider !== null &&
-                    (
+                    const providerMatches =
+                      extractedProvider !== null &&
                       (
-                        normalizedExpectedProvider.includes("cbebirr") ||
-                        normalizedExpectedProvider === "cbe"
-                      ) &&
+                        (
+                          normalizedExpectedProvider.includes("cbebirr") ||
+                          normalizedExpectedProvider === "cbe"
+                        ) &&
+                        (
+                          normalizedExtractedProvider.includes("cbebirr") ||
+                          normalizedExtractedProvider.includes("commercialbankofethiopia") ||
+                          normalizedExtractedProvider === "cbe"
+                        )
+                      ) ||
                       (
-                        normalizedExtractedProvider.includes("cbebirr") ||
-                        normalizedExtractedProvider.includes("commercialbankofethiopia") ||
-                        normalizedExtractedProvider === "cbe"
-                      )
-                    ) ||
-                    (
-                      normalizedExpectedProvider.includes("telebirr") &&
-                      normalizedExtractedProvider.includes("telebirr")
-                    ) ||
-                    normalizedExpectedProvider ===
-                    normalizedExtractedProvider;
+                        normalizedExpectedProvider.includes("telebirr") &&
+                        normalizedExtractedProvider.includes("telebirr")
+                      ) ||
+                      normalizedExpectedProvider ===
+                      normalizedExtractedProvider;
 
-                  const amountMatches =
-                    extractedAmount !== null &&
-                    Number.isFinite(expectedAmount) &&
-                    extractedAmount === expectedAmount;
+                    const amountMatches =
+                      extractedAmount !== null &&
+                      Number.isFinite(expectedAmount) &&
+                      extractedAmount === expectedAmount;
 
-                  const expectedReference =
-                    review.transactionReference?.trim() || null;
+                    const expectedReference =
+                      review.transactionReference?.trim() || null;
 
-                  const extractedReference =
-                    extracted?.transactionReference?.trim() || null;
+                    const extractedReference =
+                      extracted?.transactionReference?.trim() || null;
 
-                  const referenceMatches =
-                    expectedReference !== null &&
-                    extractedReference !== null &&
-                    expectedReference === extractedReference;
+                    const referenceMatches =
+                      expectedReference !== null &&
+                      extractedReference !== null &&
+                      expectedReference === extractedReference;
 
-                  const currencyMatches =
-                    !extracted?.currency ||
-                    extracted.currency.toUpperCase() ===
-                    review.currency.toUpperCase();
+                    const currencyMatches =
+                      !extracted?.currency ||
+                      extracted.currency.toUpperCase() ===
+                      review.currency.toUpperCase();
 
-                  const findings: Array<{
-                    label: string;
-                    expected: string;
-                    actual: string;
-                    status: "MATCH" | "MISMATCH" | "UNAVAILABLE";
-                  }> = [
-                      {
-                        label: "Amount",
-                        expected: `${review.amount} ${review.currency}`,
-                        actual:
-                          extractedAmount !== null
-                            ? `${extractedAmount} ${extracted?.currency || review.currency
-                            }`
-                            : "Not available",
-                        status:
-                          extractedAmount === null
-                            ? "UNAVAILABLE"
-                            : amountMatches
-                              ? "MATCH"
-                              : "MISMATCH",
-                      },
-                      {
-                        label: "Payment provider",
-                        expected: expectedProvider,
-                        actual:
-                          extractedProvider || "Not available",
-                        status:
-                          !extractedProvider
-                            ? "UNAVAILABLE"
-                            : providerMatches
-                              ? "MATCH"
-                              : "MISMATCH",
-                      },
-                      {
-                        label: "Transaction reference",
-                        expected:
-                          expectedReference || "Not available",
-                        actual:
-                          extractedReference || "Not available",
-                        status:
-                          !expectedReference || !extractedReference
-                            ? "UNAVAILABLE"
-                            : referenceMatches
-                              ? "MATCH"
-                              : "MISMATCH",
-                      },
-                      {
-                        label: "Currency",
-                        expected: review.currency,
-                        actual:
-                          extracted?.currency || "Not available",
-                        status:
-                          !extracted?.currency
-                            ? "UNAVAILABLE"
-                            : currencyMatches
-                              ? "MATCH"
-                              : "MISMATCH",
-                      },
-                    ];
+                    const findings: Array<{
+                      label: string;
+                      expected: string;
+                      actual: string;
+                      status: "MATCH" | "MISMATCH" | "UNAVAILABLE";
+                    }> = [
+                        {
+                          label: "Amount",
+                          expected: `${review.amount} ${review.currency}`,
+                          actual:
+                            extractedAmount !== null
+                              ? `${extractedAmount} ${extracted?.currency || review.currency
+                              }`
+                              : "Not available",
+                          status:
+                            extractedAmount === null
+                              ? "UNAVAILABLE"
+                              : amountMatches
+                                ? "MATCH"
+                                : "MISMATCH",
+                        },
+                        {
+                          label: "Payment provider",
+                          expected: expectedProvider,
+                          actual:
+                            extractedProvider || "Not available",
+                          status:
+                            !extractedProvider
+                              ? "UNAVAILABLE"
+                              : providerMatches
+                                ? "MATCH"
+                                : "MISMATCH",
+                        },
+                        {
+                          label: "Transaction reference",
+                          expected:
+                            expectedReference || "Not available",
+                          actual:
+                            extractedReference || "Not available",
+                          status:
+                            !expectedReference || !extractedReference
+                              ? "UNAVAILABLE"
+                              : referenceMatches
+                                ? "MATCH"
+                                : "MISMATCH",
+                        },
+                        {
+                          label: "Currency",
+                          expected: review.currency,
+                          actual:
+                            extracted?.currency || "Not available",
+                          status:
+                            !extracted?.currency
+                              ? "UNAVAILABLE"
+                              : currencyMatches
+                                ? "MATCH"
+                                : "MISMATCH",
+                        },
+                      ];
 
-                  const mismatchCount =
-                    findings.filter(
-                      (finding) => finding.status === "MISMATCH"
-                    ).length;
+                    const mismatchCount =
+                      findings.filter(
+                        (finding) => finding.status === "MISMATCH"
+                      ).length;
 
-                  return (
-                    <article
-                      key={review.id}
-                      style={styles.reviewCard}
-                    >
-                      <div style={styles.cardTop}>
-                        <div>
-                          <span style={styles.orderLabel}>
-                            Order
+                    return (
+                      <article
+                        key={review.id}
+                        style={styles.reviewCard}
+                      >
+                        <div style={styles.cardTop}>
+                          <div>
+                            <span style={styles.orderLabel}>
+                              Order
+                            </span>
+
+                            <h3 style={styles.orderNumber}>
+                              {review.order.orderNumber}
+                            </h3>
+                          </div>
+
+                          <span style={styles.badge}>
+                            {review.status}
                           </span>
-
-                          <h3 style={styles.orderNumber}>
-                            {review.order.orderNumber}
-                          </h3>
                         </div>
 
-                        <span style={styles.badge}>
-                          {review.status}
-                        </span>
-                      </div>
+                        {/* ===================================================== */}
+                        {/* 1. MERCHANT / ORDER INFORMATION — EXPECTED           */}
+                        {/* ===================================================== */}
 
-                      {/* ===================================================== */}
-                      {/* 1. MERCHANT / ORDER INFORMATION — EXPECTED           */}
-                      {/* ===================================================== */}
-
-                      <section
-                        style={{
-                          marginTop: "18px",
-                          padding: "18px",
-                          border: "1px solid #dbe3ee",
-                          borderRadius: "12px",
-                          background: "#ffffff",
-                        }}
-                      >
-                        <div style={{ marginBottom: "14px" }}>
-                          <h4
-                            style={{
-                              margin: 0,
-                              color: "#0f172a",
-                              fontSize: "17px",
-                            }}
-                          >
-                            Merchant / Order Information
-                          </h4>
-
-                          <p
-                            style={{
-                              margin: "5px 0 0",
-                              color: "#64748b",
-                              fontSize: "13px",
-                            }}
-                          >
-                            Expected payment details from this order.
-                          </p>
-                        </div>
-
-                        <div style={styles.details}>
-                          <Detail
-                            label="Customer"
-                            value={customerName}
-                          />
-
-                          <Detail
-                            label="Product"
-                            value={
-                              product?.productName ||
-                              "Unknown product"
-                            }
-                          />
-
-                          <Detail
-                            label="Quantity"
-                            value={
-                              product?.quantity ?? "-"
-                            }
-                          />
-
-                          <Detail
-                            label="Order amount"
-                            value={`${review.amount} ${review.currency}`}
-                          />
-
-                          <Detail
-                            label="Expected provider"
-                            value={formatPaymentProvider(expectedProvider)}
-                          />
-
-                          <Detail
-                            label="Expected transaction reference"
-                            value={
-                              expectedReference ||
-                              "Not provided"
-                            }
-                          />
-                        </div>
-                      </section>
-
-                      {/* ===================================================== */}
-                      {/* 2. FINDINGS — COMPARISON / WARNING SECTION            */}
-                      {/* ===================================================== */}
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          togglePaymentReview(review.id)
-                        }
-                        style={{
-                          width: "100%",
-                          marginTop: "12px",
-                          padding: "11px 14px",
-                          borderRadius: "9px",
-                          border: "1px solid #cbd5e1",
-                          background: "#f8fafc",
-                          color: "#0f172a",
-                          fontWeight: 700,
-                          fontSize: "13px",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {isExpanded
-                          ? "Collapse review details ▲"
-                          : "Expand review details ▼"}
-                      </button>
-
-                      {isExpanded && (
-                        <>
-
-                          <section
-                            style={{
-                              marginTop: "18px",
-                              padding: "18px",
-                              borderRadius: "12px",
-                              border:
-                                mismatchCount > 0
-                                  ? "1px solid #fecaca"
-                                  : "1px solid #bbf7d0",
-                              background:
-                                mismatchCount > 0
-                                  ? "#fff7f7"
-                                  : "#f0fdf4",
-                            }}
-                          >
-                            <div
+                        <section
+                          style={{
+                            marginTop: "18px",
+                            padding: "18px",
+                            border: "1px solid #dbe3ee",
+                            borderRadius: "12px",
+                            background: "#ffffff",
+                          }}
+                        >
+                          <div style={{ marginBottom: "14px" }}>
+                            <h4
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: "12px",
-                                marginBottom: "14px",
+                                margin: 0,
+                                color: "#0f172a",
+                                fontSize: "17px",
                               }}
                             >
-                              <div>
+                              Merchant / Order Information
+                            </h4>
+
+                            <p
+                              style={{
+                                margin: "5px 0 0",
+                                color: "#64748b",
+                                fontSize: "13px",
+                              }}
+                            >
+                              Expected payment details from this order.
+                            </p>
+                          </div>
+
+                          <div style={styles.details}>
+                            <Detail
+                              label="Customer"
+                              value={customerName}
+                            />
+
+                            <Detail
+                              label="Product"
+                              value={
+                                product?.productName ||
+                                "Unknown product"
+                              }
+                            />
+
+                            <Detail
+                              label="Quantity"
+                              value={
+                                product?.quantity ?? "-"
+                              }
+                            />
+
+                            <Detail
+                              label="Order amount"
+                              value={`${review.amount} ${review.currency}`}
+                            />
+
+                            <Detail
+                              label="Expected provider"
+                              value={formatPaymentProvider(expectedProvider)}
+                            />
+
+                            <Detail
+                              label="Expected transaction reference"
+                              value={
+                                expectedReference ||
+                                "Not provided"
+                              }
+                            />
+                          </div>
+                        </section>
+
+                        {/* ===================================================== */}
+                        {/* 2. FINDINGS — COMPARISON / WARNING SECTION            */}
+                        {/* ===================================================== */}
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            togglePaymentReview(review.id)
+                          }
+                          style={{
+                            width: "100%",
+                            marginTop: "12px",
+                            padding: "11px 14px",
+                            borderRadius: "9px",
+                            border: "1px solid #cbd5e1",
+                            background: "#f8fafc",
+                            color: "#0f172a",
+                            fontWeight: 700,
+                            fontSize: "13px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {isExpanded
+                            ? "Collapse review details ▲"
+                            : "Expand review details ▼"}
+                        </button>
+
+                        {isExpanded && (
+                          <>
+
+                            <section
+                              style={{
+                                marginTop: "18px",
+                                padding: "18px",
+                                borderRadius: "12px",
+                                border:
+                                  mismatchCount > 0
+                                    ? "1px solid #fecaca"
+                                    : "1px solid #bbf7d0",
+                                background:
+                                  mismatchCount > 0
+                                    ? "#fff7f7"
+                                    : "#f0fdf4",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                  gap: "12px",
+                                  marginBottom: "14px",
+                                }}
+                              >
+                                <div>
+                                  <h4
+                                    style={{
+                                      margin: 0,
+                                      color: "#0f172a",
+                                      fontSize: "17px",
+                                    }}
+                                  >
+                                    Findings
+                                  </h4>
+
+                                  <p
+                                    style={{
+                                      margin: "5px 0 0",
+                                      color: "#64748b",
+                                      fontSize: "13px",
+                                    }}
+                                  >
+                                    Compare the order information with
+                                    what was extracted from the receipt.
+                                  </p>
+                                </div>
+
+                                <span
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: "999px",
+                                    fontSize: "12px",
+                                    fontWeight: 700,
+                                    background:
+                                      mismatchCount > 0
+                                        ? "#fee2e2"
+                                        : "#dcfce7",
+                                    color:
+                                      mismatchCount > 0
+                                        ? "#b91c1c"
+                                        : "#15803d",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                >
+                                  {mismatchCount > 0
+                                    ? `${mismatchCount} issue${mismatchCount === 1 ? "" : "s"
+                                    } found`
+                                    : "No detected mismatches"}
+                                </span>
+                              </div>
+
+                              {mismatchCount > 0 && (
+                                <div
+                                  style={{
+                                    marginBottom: "14px",
+                                    padding: "12px 14px",
+                                    borderRadius: "8px",
+                                    background: "#fef2f2",
+                                    color: "#991b1b",
+                                    fontSize: "13px",
+                                    lineHeight: 1.5,
+                                  }}
+                                >
+                                  <strong>Review carefully:</strong>{" "}
+                                  the receipt information does not fully
+                                  match the expected order information.
+                                  Check the original receipt before
+                                  verifying this payment.
+                                </div>
+                              )}
+
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gap: "10px",
+                                }}
+                              >
+                                {findings.map((finding) => {
+                                  const isMismatch =
+                                    finding.status === "MISMATCH";
+
+                                  const isUnavailable =
+                                    finding.status === "UNAVAILABLE";
+
+                                  return (
+                                    <div
+                                      key={finding.label}
+                                      style={{
+                                        padding: "13px",
+                                        borderRadius: "9px",
+                                        border: isMismatch
+                                          ? "1px solid #fecaca"
+                                          : "1px solid #e2e8f0",
+                                        background: "#ffffff",
+                                      }}
+                                    >
+                                      <div
+                                        style={{
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "space-between",
+                                          gap: "12px",
+                                          marginBottom: "8px",
+                                        }}
+                                      >
+                                        <strong
+                                          style={{
+                                            color: "#0f172a",
+                                            fontSize: "14px",
+                                          }}
+                                        >
+                                          {finding.label}
+                                        </strong>
+
+                                        <span
+                                          style={{
+                                            fontSize: "11px",
+                                            fontWeight: 700,
+                                            padding: "4px 8px",
+                                            borderRadius: "999px",
+                                            background: isMismatch
+                                              ? "#fee2e2"
+                                              : isUnavailable
+                                                ? "#f1f5f9"
+                                                : "#dcfce7",
+                                            color: isMismatch
+                                              ? "#b91c1c"
+                                              : isUnavailable
+                                                ? "#64748b"
+                                                : "#15803d",
+                                          }}
+                                        >
+                                          {finding.status}
+                                        </span>
+                                      </div>
+
+
+
+
+                                      {isMismatch && (
+                                        <div
+                                          style={{
+                                            marginTop: "9px",
+                                            fontSize: "12px",
+                                            color: "#991b1b",
+                                          }}
+                                        >
+                                          Check this value against the
+                                          original receipt before verifying.
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </section>
+
+                            {/* ===================================================== */}
+                            {/* 3. RECEIPT EVIDENCE — IMAGE + EXTRACTED INFORMATION */}
+                            {/* ===================================================== */}
+
+                            <section
+                              style={{
+                                marginTop: "18px",
+                                padding: "18px",
+                                border: "1px solid #dbe3ee",
+                                borderRadius: "12px",
+                                background: "#ffffff",
+                              }}
+                            >
+                              <div style={{ marginBottom: "14px" }}>
                                 <h4
                                   style={{
                                     margin: 0,
@@ -3939,7 +4305,7 @@ export default function App() {
                                     fontSize: "17px",
                                   }}
                                 >
-                                  Findings
+                                  Receipt Evidence
                                 </h4>
 
                                 <p
@@ -3949,2117 +4315,303 @@ export default function App() {
                                     fontSize: "13px",
                                   }}
                                 >
-                                  Compare the order information with
-                                  what was extracted from the receipt.
+                                  Review the original receipt alongside the
+                                  information extracted from it. Extracted
+                                  information is evidence for merchant review,
+                                  not an automatic verification decision.
                                 </p>
                               </div>
 
-                              <span
-                                style={{
-                                  padding: "6px 10px",
-                                  borderRadius: "999px",
-                                  fontSize: "12px",
-                                  fontWeight: 700,
-                                  background:
-                                    mismatchCount > 0
-                                      ? "#fee2e2"
-                                      : "#dcfce7",
-                                  color:
-                                    mismatchCount > 0
-                                      ? "#b91c1c"
-                                      : "#15803d",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {mismatchCount > 0
-                                  ? `${mismatchCount} issue${mismatchCount === 1 ? "" : "s"
-                                  } found`
-                                  : "No detected mismatches"}
-                              </span>
-                            </div>
-
-                            {mismatchCount > 0 && (
-                              <div
-                                style={{
-                                  marginBottom: "14px",
-                                  padding: "12px 14px",
-                                  borderRadius: "8px",
-                                  background: "#fef2f2",
-                                  color: "#991b1b",
-                                  fontSize: "13px",
-                                  lineHeight: 1.5,
-                                }}
-                              >
-                                <strong>Review carefully:</strong>{" "}
-                                the receipt information does not fully
-                                match the expected order information.
-                                Check the original receipt before
-                                verifying this payment.
-                              </div>
-                            )}
-
-                            <div
-                              style={{
-                                display: "grid",
-                                gap: "10px",
-                              }}
-                            >
-                              {findings.map((finding) => {
-                                const isMismatch =
-                                  finding.status === "MISMATCH";
-
-                                const isUnavailable =
-                                  finding.status === "UNAVAILABLE";
-
-                                return (
-                                  <div
-                                    key={finding.label}
-                                    style={{
-                                      padding: "13px",
-                                      borderRadius: "9px",
-                                      border: isMismatch
-                                        ? "1px solid #fecaca"
-                                        : "1px solid #e2e8f0",
-                                      background: "#ffffff",
-                                    }}
-                                  >
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "space-between",
-                                        gap: "12px",
-                                        marginBottom: "8px",
-                                      }}
-                                    >
-                                      <strong
-                                        style={{
-                                          color: "#0f172a",
-                                          fontSize: "14px",
-                                        }}
-                                      >
-                                        {finding.label}
-                                      </strong>
-
-                                      <span
-                                        style={{
-                                          fontSize: "11px",
-                                          fontWeight: 700,
-                                          padding: "4px 8px",
-                                          borderRadius: "999px",
-                                          background: isMismatch
-                                            ? "#fee2e2"
-                                            : isUnavailable
-                                              ? "#f1f5f9"
-                                              : "#dcfce7",
-                                          color: isMismatch
-                                            ? "#b91c1c"
-                                            : isUnavailable
-                                              ? "#64748b"
-                                              : "#15803d",
-                                        }}
-                                      >
-                                        {finding.status}
-                                      </span>
-                                    </div>
-
-
-
-
-                                    {isMismatch && (
-                                      <div
-                                        style={{
-                                          marginTop: "9px",
-                                          fontSize: "12px",
-                                          color: "#991b1b",
-                                        }}
-                                      >
-                                        Check this value against the
-                                        original receipt before verifying.
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </section>
-
-                          {/* ===================================================== */}
-                          {/* 3. RECEIPT EVIDENCE — IMAGE + EXTRACTED INFORMATION */}
-                          {/* ===================================================== */}
-
-                          <section
-                            style={{
-                              marginTop: "18px",
-                              padding: "18px",
-                              border: "1px solid #dbe3ee",
-                              borderRadius: "12px",
-                              background: "#ffffff",
-                            }}
-                          >
-                            <div style={{ marginBottom: "14px" }}>
-                              <h4
-                                style={{
-                                  margin: 0,
-                                  color: "#0f172a",
-                                  fontSize: "17px",
-                                }}
-                              >
-                                Receipt Evidence
-                              </h4>
-
-                              <p
-                                style={{
-                                  margin: "5px 0 0",
-                                  color: "#64748b",
-                                  fontSize: "13px",
-                                }}
-                              >
-                                Review the original receipt alongside the
-                                information extracted from it. Extracted
-                                information is evidence for merchant review,
-                                not an automatic verification decision.
-                              </p>
-                            </div>
-
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns:
-                                  "minmax(280px, 1fr) minmax(280px, 1fr)",
-                                gap: "18px",
-                                alignItems: "stretch",
-                              }}
-                            >
-                              {/* Receipt image */}
-                              <div
-                                style={{
-                                  height: "560px",
-                                  display: "flex",
-                                  flexDirection: "column",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    fontSize: "12px",
-                                    fontWeight: 700,
-                                    color: "#475569",
-                                    marginBottom: "8px",
-                                  }}
-                                >
-                                  Original receipt
-                                </div>
-
-                                {review.receiptUrl ? (
-                                  <>
-                                    <div
-                                      style={{
-                                        flex: 1,
-                                        minHeight: 0,
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        overflow: "hidden",
-                                        borderRadius: "8px",
-                                        border: "1px solid #cbd5e1",
-                                        background: "#f8fafc",
-                                      }}
-                                    >
-                                      <img
-                                        src={review.receiptUrl}
-                                        alt="Customer payment receipt"
-                                        style={{
-                                          display: "block",
-                                          width: "100%",
-                                          height: "100%",
-                                          objectFit: "contain",
-                                        }}
-                                      />
-                                    </div>
-
-                                    <a
-                                      href={review.receiptUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      style={{
-                                        display: "inline-flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        alignSelf: "flex-start",
-                                        marginTop: "10px",
-                                        padding: "9px 13px",
-                                        borderRadius: "8px",
-                                        border: "1px solid #cbd5e1",
-                                        background: "#ffffff",
-                                        color: "#0f172a",
-                                        fontWeight: 600,
-                                        textDecoration: "none",
-                                        cursor: "pointer",
-                                      }}
-                                    >
-                                      Open Full Receipt
-                                    </a>
-                                  </>
-                                ) : (
-                                  <div
-                                    style={{
-                                      flex: 1,
-                                      display: "flex",
-                                      alignItems: "center",
-                                      justifyContent: "center",
-                                      padding: "24px",
-                                      borderRadius: "8px",
-                                      border: "1px dashed #cbd5e1",
-                                      background: "#f8fafc",
-                                      color: "#64748b",
-                                      fontSize: "13px",
-                                    }}
-                                  >
-                                    Receipt image is not available.
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Extracted receipt information */}
-                              <div
-                                style={{
-                                  padding: "16px",
-                                  borderRadius: "10px",
-                                  border: "1px solid #e2e8f0",
-                                  background: "#f8fafc",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    marginBottom: "12px",
-                                  }}
-                                >
-                                  <h5
-                                    style={{
-                                      margin: 0,
-                                      color: "#0f172a",
-                                      fontSize: "15px",
-                                    }}
-                                  >
-                                    Extracted from receipt
-                                  </h5>
-
-                                  <p
-                                    style={{
-                                      margin: "4px 0 0",
-                                      color: "#64748b",
-                                      fontSize: "12px",
-                                    }}
-                                  >
-                                    Values read from the uploaded receipt image.
-                                  </p>
-                                </div>
-
-                                <div
-                                  style={{
-                                    display: "grid",
-                                    gap: "10px",
-                                  }}
-                                >
-                                  <Detail
-                                    label="Amount"
-                                    value={
-                                      extractedAmount !== null
-                                        ? `${extractedAmount} ${extracted?.currency ||
-                                        review.currency
-                                        }`
-                                        : "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Bank / provider"
-                                    value={
-                                      extractedProvider ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Transaction reference"
-                                    value={
-                                      extractedReference ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Currency"
-                                    value={
-                                      extracted?.currency ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Transaction date"
-                                    value={
-                                      extracted?.transactionDate ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Transaction time"
-                                    value={
-                                      extracted?.transactionTime ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Sender name"
-                                    value={
-                                      extracted?.senderName ||
-                                      "Not available"
-                                    }
-                                  />
-
-                                  <Detail
-                                    label="Sender account"
-                                    value={
-                                      extracted?.senderAccount ||
-                                      "Not available"
-                                    }
-                                  />
-                                </div>
-
-                                {typeof extracted?.confidence === "number" && (
-                                  <div
-                                    style={{
-                                      marginTop: "12px",
-                                      paddingTop: "10px",
-                                      borderTop: "1px solid #e2e8f0",
-                                      fontSize: "11px",
-                                      color: "#64748b",
-                                    }}
-                                  >
-                                    Extraction confidence:{" "}
-                                    {Math.round(
-                                      extracted.confidence * 100
-                                    )}
-                                    %
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </section>
-                        </>
-                      )}
-
-                      <div
-                        style={{
-                          marginTop: "18px",
-                          paddingTop: "16px",
-                          borderTop: "1px solid #e2e8f0",
-                        }}
-                      />
-
-                      {isRejecting && (
-
-                        <div
-                          style={
-                            styles.rejectPanel
-                          }
-                        >
-                          <strong
-                            style={
-                              styles.rejectTitle
-                            }
-                          >
-                            Reject payment
-                          </strong>
-
-                          <p
-                            style={
-                              styles.rejectDescription
-                            }
-                          >
-                            Enter a reason for rejecting
-                            this payment. The customer
-                            will receive this reason on
-                            Telegram.
-                          </p>
-
-                          <textarea
-                            value={
-                              rejectNote
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              setRejectNote(
-                                event
-                                  .target
-                                  .value
-                              )
-                            }
-                            placeholder="Example: Transaction reference could not be verified."
-                            disabled={
-                              busy
-                            }
-                            rows={4}
-                            style={
-                              styles.rejectTextarea
-                            }
-                          />
-
-                          <div
-                            style={
-                              styles.rejectActions
-                            }
-                          >
-                            <button
-                              type="button"
-                              disabled={
-                                busy
-                              }
-                              onClick={
-                                cancelReject
-                              }
-                              style={
-                                styles.cancelButton
-                              }
-                            >
-                              Cancel
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                !rejectNote.trim()
-                              }
-                              onClick={() =>
-                                void rejectPayment(
-                                  review.id,
-                                  rejectNote
-                                )
-                              }
-                              style={
-                                styles.confirmRejectButton
-                              }
-                            >
-                              {busy
-                                ? "Rejecting..."
-                                : "Confirm Rejection"}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      <div
-                        style={
-                          styles.cardFooter
-                        }
-                      >
-                        <span
-                          style={
-                            styles.date
-                          }
-                        >
-                          Submitted{" "}
-                          {new Date(
-                            review.createdAt
-                          ).toLocaleString()}
-                        </span>
-
-                        <div
-                          style={
-                            styles.actions
-                          }
-                        >
-                          <button
-                            type="button"
-                            disabled={
-                              busy ||
-                              rejectingPaymentId !==
-                              null ||
-                              actionId !==
-                              null
-                            }
-                            onClick={() =>
-                              void verifyPayment(
-                                review.id
-                              )
-                            }
-                            style={
-                              styles.verifyButton
-                            }
-                          >
-                            {busy
-                              ? "Processing..."
-                              : "Verify Payment"}
-                          </button>
-
-                          {!isRejecting && (
-                            <button
-                              type="button"
-                              disabled={
-                                busy ||
-                                rejectingPaymentId !==
-                                null ||
-                                actionId !==
-                                null
-                              }
-                              onClick={() =>
-                                openRejectForm(
-                                  review.id
-                                )
-                              }
-                              style={
-                                styles.rejectButton
-                              }
-                            >
-                              Reject
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  );
-                }
-              )}
-            </div>
-          )}
-        </section>
-      ) : activeTab ===
-        "orders" ? (
-        <section
-          style={styles.section}
-        >
-          <div
-            style={
-              styles.sectionHeader
-            }
-          >
-            <div>
-              <h2
-                style={
-                  styles.sectionTitle
-                }
-              >
-                Orders
-              </h2>
-
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Manage paid orders and fulfillment.
-              </p>
-            </div>
-          </div>
-
-          {loadingOrders ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              Loading orders...
-            </div>
-          ) : orders.length ===
-            0 ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              <strong>
-                No orders yet.
-              </strong>
-
-              <p>
-                Customer orders will appear here.
-              </p>
-            </div>
-          ) : (
-            <div
-              style={
-                styles.reviewList
-              }
-            >
-              {orders.map(
-                (order) => {
-                  const busy =
-                    actionId ===
-                    order.id;
-
-                  const payment =
-                    order.payments
-                      ?.filter(
-                        (item) =>
-                          item.status === "VERIFIED"
-                      )
-                      .at(-1) ||
-                    order.payments?.at(-1);
-                  return (
-                    <article
-                      key={
-                        order.id
-                      }
-                      style={
-                        styles.reviewCard
-                      }
-                    >
-                      <div
-                        style={
-                          styles.cardTop
-                        }
-                      >
-                        <div>
-                          <span
-                            style={
-                              styles.orderLabel
-                            }
-                          >
-                            Order
-                          </span>
-
-                          <h3
-                            style={
-                              styles.orderNumber
-                            }
-                          >
-                            {
-                              order.orderNumber
-                            }
-                          </h3>
-
-                          <span
-                            style={
-                              styles.customer
-                            }
-                          >
-                            {order
-                              .customer
-                              ?.name ||
-                              "Unknown customer"}
-                          </span>
-                        </div>
-
-                        <span
-                          style={{
-                            ...styles.orderBadge,
-                            ...getStatusStyle(
-                              order.status
-                            )
-                          }}
-                        >
-                          {
-                            order.status
-                          }
-                        </span>
-                      </div>
-
-                      <div
-                        style={
-                          styles.itemsBox
-                        }
-                      >
-                        {order.items.map(
-                          (item) => (
-                            <div
-                              key={
-                                item.id
-                              }
-                              style={
-                                styles.itemRow
-                              }
-                            >
-                              <span>
-                                {
-                                  item.productName
-                                }{" "}
-                                ×{" "}
-                                {
-                                  item.quantity
-                                }
-                              </span>
-
-                              <strong>
-                                {
-                                  item.lineTotal
-                                }{" "}
-                                {
-                                  order.currency
-                                }
-                              </strong>
-                            </div>
-                          )
-                        )}
-                      </div>
-
-                      <div
-                        style={
-                          styles.details
-                        }
-                      >
-                        <Detail
-                          label="Customer"
-                          value={
-                            order
-                              .customer
-                              ?.name ||
-                            "Unknown customer"
-                          }
-                        />
-
-                        <Detail
-                          label="Total"
-                          value={`${order.total} ${order.currency}`}
-                        />
-
-                        <Detail
-                          label="Payment"
-                          value={
-                            payment?.status ||
-                            "No payment"
-                          }
-                        />
-
-                        <Detail
-                          label="Provider"
-                          value={
-                            payment?.provider ||
-                            "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Transaction reference"
-                          value={
-                            payment?.transactionReference ||
-                            "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Created"
-                          value={new Date(
-                            order.createdAt
-                          ).toLocaleString()}
-                        />
-
-                        <Detail
-                          label="Recipient"
-                          value={
-                            order.deliveryName ||
-                            "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Delivery phone"
-                          value={
-                            order.deliveryPhone ||
-                            "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Delivery address"
-                          value={
-                            order.deliveryAddress ||
-                            "-"
-                          }
-                        />
-                      </div>
-
-                      <div
-                        style={
-                          styles.cardFooter
-                        }
-                      >
-                        <span
-                          style={
-                            styles.date
-                          }
-                        >
-                          Updated{" "}
-                          {new Date(
-                            order.updatedAt
-                          ).toLocaleString()}
-                        </span>
-
-                        <div
-                          style={
-                            styles.actions
-                          }
-                        >
-                          {canFulfillOrders && order.status ===
-                            "PAID" && (
-                              <button
-                                type="button"
-                                disabled={
-                                  busy ||
-                                  actionId !==
-                                  null
-                                }
-                                onClick={() =>
-                                  void updateOrderStatus(
-                                    order.id
-                                  )
-                                }
-                                style={
-                                  styles.fulfillButton
-                                }
-                              >
-                                {busy
-                                  ? "Processing..."
-                                  : "Start Fulfillment"}
-                              </button>
-                            )}
-
-                          {canFulfillOrders &&
-                            order.status ===
-                            "FULFILLING" && (
-                              <>
-                                {confirmingDeliveryOrderId ===
-                                order.id ? (
-                                  <div
-                                    style={{
-                                      display: "flex",
-                                      gap: "8px",
-                                      alignItems:
-                                        "center",
-                                      flexWrap: "wrap"
-                                    }}
-                                  >
-                                    <input
-                                      type="text"
-                                      inputMode="numeric"
-                                      autoComplete="off"
-                                      maxLength={6}
-                                      value={
-                                        deliveryConfirmationCode
-                                      }
-                                      onChange={(
-                                        event
-                                      ) => {
-                                        const value =
-                                          event.target.value.replace(
-                                            /\D/g,
-                                            ""
-                                          );
-
-                                        setDeliveryConfirmationCode(
-                                          value
-                                        );
-                                      }}
-                                      disabled={
-                                        busy ||
-                                        actionId !==
-                                          null
-                                      }
-                                      placeholder="6-digit code"
-                                      aria-label="Delivery confirmation code"
-                                      style={{
-                                        ...styles.formInput,
-                                        width: "150px",
-                                        margin: 0
-                                      }}
-                                    />
-
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        busy ||
-                                        actionId !==
-                                          null ||
-                                        deliveryConfirmationCode
-                                          .length !==
-                                          6
-                                      }
-                                      onClick={() =>
-                                        void confirmDelivery(
-                                          order.id
-                                        )
-                                      }
-                                      style={
-                                        styles.fulfillButton
-                                      }
-                                    >
-                                      {busy
-                                        ? "Confirming..."
-                                        : "Confirm Delivery"}
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      disabled={
-                                        actionId !==
-                                        null
-                                      }
-                                      onClick={() => {
-                                        setConfirmingDeliveryOrderId(
-                                          null
-                                        );
-                                        setDeliveryConfirmationCode(
-                                          ""
-                                        );
-                                        setError(
-                                          ""
-                                        );
-                                      }}
-                                      style={
-                                        styles.cancelButton
-                                      }
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      actionId !==
-                                      null
-                                    }
-                                    onClick={() => {
-                                      setConfirmingDeliveryOrderId(
-                                        order.id
-                                      );
-                                      setDeliveryConfirmationCode(
-                                        ""
-                                      );
-                                      setError(
-                                        ""
-                                      );
-                                      setSuccess(
-                                        ""
-                                      );
-                                    }}
-                                    style={
-                                      styles.fulfillButton
-                                    }
-                                  >
-                                    Confirm Delivery
-                                  </button>
-                                )}
-
-                                <button
-                                  type="button"
-                                  disabled={
-                                    actionId !==
-                                    null
-                                  }
-                                  onClick={() =>
-                                    void resendDeliveryConfirmationCode(
-                                      order.id
-                                    )
-                                  }
-                                  style={
-                                    styles.cancelButton
-                                  }
-                                  >
-                                  {actionId ===
-                                  `delivery-resend-${order.id}`
-                                    ? "Sending..."
-                                    : "Send New Code"}
-                                </button>
-                              </>
-                            )}
-
-                          {order.status ===
-                            "FULFILLED" && (
-                              <span
-                                style={
-                                  styles.completed
-                                }
-                              >
-                                Completed ?
-                              </span>
-                            )}
-                        </div>
-                      </div>
-                    </article>
-                  );
-                }
-              )}
-            </div>
-          )}
-        </section>
-      ) : activeTab ===
-        "inventory" ? (
-        <section
-          style={styles.section}
-        >
-          <div
-            style={
-              styles.sectionHeader
-            }
-          >
-            <div>
-              <h2
-                style={
-                  styles.sectionTitle
-                }
-              >
-                Inventory
-              </h2>
-
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Monitor product stock and replenish
-                inventory when new stock arrives.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                void loadProducts()
-              }
-              disabled={
-                loadingProducts ||
-                actionId !== null
-              }
-              style={
-                styles.inventoryRefreshButton
-              }
-            >
-              {loadingProducts
-                ? "Loading..."
-                : "Refresh Inventory"}
-            </button>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "minmax(0, 1.5fr) minmax(280px, 1fr)",
-              gap: "16px",
-              marginBottom: "20px"
-            }}
-          >
-            <section
-              style={{
-                border: "1px solid #dbe3ee",
-                borderRadius: "14px",
-                padding: "18px",
-                background: "#ffffff"
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: "12px",
-                  marginBottom: "14px"
-                }}
-              >
-                <div>
-                  <strong>Product Catalog</strong>
-                  <div
-                    style={{
-                      color: "#64748b",
-                      fontSize: "13px",
-                      marginTop: "4px"
-                    }}
-                  >
-                    Create products and manage pricing,
-                    stock, status, and categories.
-                  </div>
-                </div>
-
-                {canManageProducts && (
-                  <button
-                    type="button"
-                    onClick={openNewProductForm}
-                    disabled={actionId !== null}
-                    style={styles.restockButton}
-                  >
-                    + Add Product
-                  </button>
-                )}
-              </div>
-
-              {canManageProducts && productFormOpen && (
-                <div
-                  style={{
-                    borderTop: "1px solid #e2e8f0",
-                    paddingTop: "16px"
-                  }}
-                >
-                  <h3
-                    style={{
-                      margin: "0 0 14px",
-                      fontSize: "16px"
-                    }}
-                  >
-                    {editingProductId
-                      ? "Edit Product"
-                      : "Create Product"}
-                  </h3>
-
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(2, minmax(0, 1fr))",
-                      gap: "12px"
-                    }}
-                  >
-                    <div>
-                      <label style={styles.formLabel}>
-                        Name
-                      </label>
-                      <input
-                        value={productName}
-                        maxLength={200}
-                        onChange={(event) =>
-                          setProductName(
-                            event.target.value
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                        placeholder="Product name"
-                      />
-                    </div>
-
-                    <div>
-                      <label style={styles.formLabel}>
-                        Category
-                      </label>
-                      <select
-                        value={productCategoryId}
-                        onChange={(event) =>
-                          setProductCategoryId(
-                            event.target.value
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                      >
-                        <option value="">
-                          Uncategorized
-                        </option>
-                        {categories.map(
-                          (category) => (
-                            <option
-                              key={category.id}
-                              value={category.id}
-                            >
-                              {category.name}
-                            </option>
-                          )
-                        )}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label style={styles.formLabel}>
-                        Price
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={productPrice}
-                        onChange={(event) =>
-                          setProductPrice(
-                            event.target.value
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                        placeholder="0.00"
-                      />
-                    </div>
-
-                    <div>
-                      <label style={styles.formLabel}>
-                        Currency
-                      </label>
-                      <input
-                        value={productCurrency}
-                        maxLength={3}
-                        onChange={(event) =>
-                          setProductCurrency(
-                            event.target.value.toUpperCase()
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={styles.formLabel}>
-                        Stock
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={productStock}
-                        onChange={(event) =>
-                          setProductStock(
-                            event.target.value
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={styles.formLabel}>
-                        Status
-                      </label>
-                      <select
-                        value={productStatus}
-                        onChange={(event) =>
-                          setProductStatus(
-                            event.target.value
-                          )
-                        }
-                        disabled={actionId !== null}
-                        style={styles.formInput}
-                      >
-                        <option value="DRAFT">
-                          DRAFT
-                        </option>
-                        <option value="ACTIVE">
-                          ACTIVE
-                        </option>
-                        <option value="ARCHIVED">
-                          ARCHIVED
-                        </option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <label style={styles.formLabel}>
-                    Description
-                  </label>
-                  <textarea
-                    value={productDescription}
-                    maxLength={5000}
-                    rows={4}
-                    onChange={(event) =>
-                      setProductDescription(
-                        event.target.value
-                      )
-                    }
-                    disabled={actionId !== null}
-                    style={styles.formTextarea}
-                    placeholder="Optional product description"
-                  />
-
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      gap: "8px",
-                      marginTop: "12px"
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={closeProductForm}
-                      disabled={actionId !== null}
-                      style={styles.cancelButton}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void saveProduct()}
-                      disabled={actionId !== null}
-                      style={styles.confirmRestockButton}
-                    >
-                      {actionId
-                        ? "Saving..."
-                        : editingProductId
-                          ? "Save Changes"
-                          : "Create Product"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <section
-              style={{
-                border: "1px solid #dbe3ee",
-                borderRadius: "14px",
-                padding: "18px",
-                background: "#ffffff"
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "12px"
-                }}
-              >
-                <strong>Categories</strong>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void loadCategories()
-                  }
-                  disabled={
-                    loadingCategories ||
-                    actionId !== null
-                  }
-                  style={{
-                    ...styles.cancelButton,
-                    padding: "7px 10px"
-                  }}
-                >
-                  {loadingCategories
-                    ? "Loading..."
-                    : "Refresh"}
-                </button>
-              </div>
-
-              {canManageProducts && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    marginBottom: "12px"
-                  }}
-                >
-                  <input
-                    value={categoryName}
-                    maxLength={100}
-                    onChange={(event) =>
-                      setCategoryName(
-                        event.target.value
-                      )
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        void createCategory();
-                      }
-                    }}
-                    disabled={actionId !== null}
-                    style={{
-                      ...styles.formInput,
-                      margin: 0
-                    }}
-                    placeholder="New category"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void createCategory()}
-                    disabled={
-                      actionId !== null ||
-                      !categoryName.trim()
-                    }
-                    style={styles.confirmRestockButton}
-                  >
-                    Add
-                  </button>
-                </div>
-              )}
-
-              {categories.length === 0 ? (
-                <div
-                  style={{
-                    color: "#64748b",
-                    fontSize: "13px"
-                  }}
-                >
-                  No categories yet.
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: "8px"
-                  }}
-                >
-                  {categories.map(
-                    (category) => (
-                      <div
-                        key={category.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "7px",
-                          border:
-                            "1px solid #dbe3ee",
-                          borderRadius: "999px",
-                          padding:
-                            "6px 8px 6px 10px",
-                          fontSize: "13px"
-                        }}
-                      >
-                        <span>
-                          {category.name}{" "}
-                          <span
-                            style={{
-                              color: "#64748b"
-                            }}
-                          >
-                            ({category._count?.products ?? 0})
-                          </span>
-                        </span>
-                        {canManageProducts && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void deleteCategory(
-                                category.id,
-                                category.name
-                              )
-                            }
-                            disabled={actionId !== null}
-                            style={{
-                              border: "none",
-                              background: "transparent",
-                              cursor: "pointer",
-                              color: "#b91c1c",
-                              padding: "0 3px"
-                            }}
-                            title="Delete category"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </section>
-          </div>
-
-          {(outOfStockProducts >
-            0 ||
-            lowStockProducts >
-            0) && (
-              <div
-                style={
-                  styles.inventoryAlert
-                }
-              >
-                <strong>
-                  Inventory attention needed
-                </strong>
-
-                <span>
-                  {outOfStockProducts >
-                    0
-                    ? `${outOfStockProducts} product${outOfStockProducts ===
-                      1
-                      ? ""
-                      : "s"
-                    } out of stock`
-                    : "No products are out of stock"}
-                  {" · "}
-                  {lowStockProducts >
-                    0
-                    ? `${lowStockProducts} low-stock product${lowStockProducts ===
-                      1
-                      ? ""
-                      : "s"
-                    }`
-                    : "No other low-stock products"}
-                </span>
-              </div>
-            )}
-
-          {loadingProducts ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              Loading inventory...
-            </div>
-          ) : products.length ===
-            0 ? (
-            <div
-              style={
-                styles.emptyState
-              }
-            >
-              <strong>
-                No products found.
-              </strong>
-
-              <p>
-                Products created for this merchant
-                will appear here.
-              </p>
-            </div>
-          ) : (
-            <div
-              style={
-                styles.productGrid
-              }
-            >
-              {products.map(
-                (product) => {
-                  const busy =
-                    actionId ===
-                    product.id;
-
-                  const isRestocking =
-                    restockingProductId ===
-                    product.id;
-
-                  const isOutOfStock =
-                    product.stock ===
-                    0;
-
-                  const isLowStock =
-                    product.stock >
-                    0 &&
-                    product.stock <=
-                    5;
-
-                  const quantityNumber =
-                    Number(
-                      restockQuantity
-                    );
-
-                  const validQuantity =
-                    Number.isInteger(
-                      quantityNumber
-                    ) &&
-                    quantityNumber >
-                    0;
-
-                  const projectedStock =
-                    validQuantity
-                      ? product.stock +
-                      quantityNumber
-                      : product.stock;
-
-                  const exceedsQuantityLimit =
-                    validQuantity &&
-                    quantityNumber >
-                    100000;
-
-                  const exceedsStockLimit =
-                    validQuantity &&
-                    projectedStock >
-                    1000000;
-
-                  return (
-                    <article
-                      key={
-                        product.id
-                      }
-                      style={{
-                        ...styles.productCard,
-                        ...(isOutOfStock
-                          ? styles.outOfStockCard
-                          : isLowStock
-                            ? styles.lowStockCard
-                            : {})
-                      }}
-                    >
-                      <div
-                        style={
-                          styles.productTop
-                        }
-                      >
-                        <div>
-                          <span
-                            style={
-                              styles.productStatusLabel
-                            }
-                          >
-                            {
-                              product.status
-                            }
-                          </span>
-
-                          <h3
-                            style={
-                              styles.productName
-                            }
-                          >
-                            {
-                              product.name
-                            }
-                          </h3>
-
-                          {product.category && (
-                            <span
-                              style={{
-                                display: "inline-block",
-                                marginTop: "4px",
-                                color: "#475569",
-                                fontSize: "12px"
-                              }}
-                            >
-                              {product.category.name}
-                            </span>
-                          )}
-                        </div>
-
-                        <span
-                          style={{
-                            ...styles.stockBadge,
-                            ...(isOutOfStock
-                              ? styles.stockBadgeOut
-                              : isLowStock
-                                ? styles.stockBadgeLow
-                                : styles.stockBadgeGood)
-                          }}
-                        >
-                          {isOutOfStock
-                            ? "OUT OF STOCK"
-                            : isLowStock
-                              ? "LOW STOCK"
-                              : "IN STOCK"}
-                        </span>
-                      </div>
-
-                      {product.description && (
-                        <p
-                          style={
-                            styles.productDescription
-                          }
-                        >
-                          {
-                            product.description
-                          }
-                        </p>
-                      )}
-
-                      <div
-                        style={
-                          styles.productStats
-                        }
-                      >
-                        <div>
-                          <span
-                            style={
-                              styles.productStatLabel
-                            }
-                          >
-                            Price
-                          </span>
-
-                          <strong
-                            style={
-                              styles.productStatValue
-                            }
-                          >
-                            {
-                              product.price
-                            }{" "}
-                            {
-                              product.currency
-                            }
-                          </strong>
-                        </div>
-
-                        <div>
-                          <span
-                            style={
-                              styles.productStatLabel
-                            }
-                          >
-                            Current stock
-                          </span>
-
-                          <strong
-                            style={{
-                              ...styles.productStatValue,
-                              ...(isOutOfStock
-                                ? styles.stockNumberOut
-                                : isLowStock
-                                  ? styles.stockNumberLow
-                                  : {})
-                            }}
-                          >
-                            {
-                              product.stock
-                            }
-                          </strong>
-                        </div>
-                      </div>
-
-                      {canManageProducts && imageProductId === product.id && (
-                        <div
-                          style={{
-                            borderTop: "1px solid #e2e8f0",
-                            paddingTop: "14px",
-                            marginTop: "14px"
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              gap: "10px",
-                              marginBottom: "10px"
-                            }}
-                          >
-                            <strong>
-                              Product Images
-                            </strong>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setImageProductId(null);
-                                setImageFile(null);
-                                setError("");
-                              }}
-                              disabled={actionId !== null}
-                              style={{
-                                ...styles.cancelButton,
-                                fontSize: "11px",
-                                padding: "4px 8px"
-                              }}
-                            >
-                              Hide Images
-                            </button>
-                          </div>
-
-                          {product.images &&
-                            product.images.length > 0 && (
                               <div
                                 style={{
                                   display: "grid",
                                   gridTemplateColumns:
-                                    "repeat(auto-fill, minmax(110px, 1fr))",
-                                  gap: "8px",
-                                  marginBottom: "12px"
+                                    "minmax(280px, 1fr) minmax(280px, 1fr)",
+                                  gap: "18px",
+                                  alignItems: "stretch",
                                 }}
                               >
-                                {product.images.map(
-                                  (image) => (
-                                    <div
-                                      key={image.id}
-                                      style={{
-                                        border:
-                                          "1px solid #dbe3ee",
-                                        borderRadius: "10px",
-                                        padding: "6px"
-                                      }}
-                                    >
-                                      <img
-                                        src={image.url}
-                                        alt={
-                                          image.altText ||
-                                          product.name
-                                        }
-                                        style={{
-                                          width: "100%",
-                                          height: "80px",
-                                          objectFit: "cover",
-                                          borderRadius: "7px",
-                                          display: "block"
-                                        }}
-                                      />
-                                      <div
-                                        style={{
-                                          fontSize: "11px",
-                                          marginTop: "5px",
-                                          color: image.isPrimary
-                                            ? "#166534"
-                                            : "#64748b"
-                                        }}
-                                      >
-                                        {image.isPrimary
-                                          ? "Primary"
-                                          : "Image"}
-                                      </div>
-                                      <div
-                                        style={{
-                                          display: "flex",
-                                          gap: "4px",
-                                          marginTop: "5px",
-                                          flexWrap: "wrap"
-                                        }}
-                                      >
-                                        {!image.isPrimary && (
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              void setPrimaryImage(
-                                                product.id,
-                                                image.id
-                                              )
-                                            }
-                                            disabled={
-                                              actionId !== null
-                                            }
-                                            style={{
-                                              ...styles.cancelButton,
-                                              fontSize: "11px",
-                                              padding: "4px 6px"
-                                            }}
-                                          >
-                                            Primary
-                                          </button>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            void deleteProductImage(
-                                              product.id,
-                                              image.id
-                                            )
-                                          }
-                                          disabled={
-                                            actionId !== null
-                                          }
-                                          style={{
-                                            ...styles.cancelButton,
-                                            color: "#b91c1c",
-                                            fontSize: "11px",
-                                            padding: "4px 6px"
-                                          }}
-                                        >
-                                          Delete
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )
-                                )}
-                              </div>
-                            )}
-
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns:
-                                "minmax(0, 1fr) auto",
-                              gap: "8px",
-                              alignItems: "end"
-                            }}
-                          >
-                            <div>
-                              <label style={styles.formLabel}>
-                                Image file
-                              </label>
-                              <input
-                                type="file"
-                                accept="image/jpeg,image/png,image/webp"
-                                onChange={(event) =>
-                                  setImageFile(
-                                    event.target.files?.[0] ?? null
-                                  )
-                                }
-                                disabled={
-                                  actionId !== null
-                                }
-                                style={styles.formInput}
-                              />
-                              {imageFile && (
+                                {/* Receipt image */}
                                 <div
                                   style={{
-                                    marginTop: "5px",
-                                    fontSize: "12px",
-                                    color: "#64748b"
+                                    height: "560px",
+                                    display: "flex",
+                                    flexDirection: "column",
                                   }}
                                 >
-                                  Selected: {imageFile.name}
+                                  <div
+                                    style={{
+                                      fontSize: "12px",
+                                      fontWeight: 700,
+                                      color: "#475569",
+                                      marginBottom: "8px",
+                                    }}
+                                  >
+                                    Original receipt
+                                  </div>
+
+                                  {review.receiptUrl ? (
+                                    <>
+                                      <div
+                                        style={{
+                                          flex: 1,
+                                          minHeight: 0,
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          overflow: "hidden",
+                                          borderRadius: "8px",
+                                          border: "1px solid #cbd5e1",
+                                          background: "#f8fafc",
+                                        }}
+                                      >
+                                        <img
+                                          src={review.receiptUrl}
+                                          alt="Customer payment receipt"
+                                          style={{
+                                            display: "block",
+                                            width: "100%",
+                                            height: "100%",
+                                            objectFit: "contain",
+                                          }}
+                                        />
+                                      </div>
+
+                                      <a
+                                        href={review.receiptUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          alignSelf: "flex-start",
+                                          marginTop: "10px",
+                                          padding: "9px 13px",
+                                          borderRadius: "8px",
+                                          border: "1px solid #cbd5e1",
+                                          background: "#ffffff",
+                                          color: "#0f172a",
+                                          fontWeight: 600,
+                                          textDecoration: "none",
+                                          cursor: "pointer",
+                                        }}
+                                      >
+                                        Open Full Receipt
+                                      </a>
+                                    </>
+                                  ) : (
+                                    <div
+                                      style={{
+                                        flex: 1,
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        padding: "24px",
+                                        borderRadius: "8px",
+                                        border: "1px dashed #cbd5e1",
+                                        background: "#f8fafc",
+                                        color: "#64748b",
+                                        fontSize: "13px",
+                                      }}
+                                    >
+                                      Receipt image is not available.
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void addProductImage(
-                                  product.id
-                                )
-                              }
-                              disabled={
-                                actionId !== null ||
-                                !imageFile
-                              }
-                              style={
-                                styles.confirmRestockButton
-                              }
-                            >
-                              Upload Image
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                                {/* Extracted receipt information */}
+                                <div
+                                  style={{
+                                    padding: "16px",
+                                    borderRadius: "10px",
+                                    border: "1px solid #e2e8f0",
+                                    background: "#f8fafc",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      marginBottom: "12px",
+                                    }}
+                                  >
+                                    <h5
+                                      style={{
+                                        margin: 0,
+                                        color: "#0f172a",
+                                        fontSize: "15px",
+                                      }}
+                                    >
+                                      Extracted from receipt
+                                    </h5>
 
-                      {/* Hide the normal product footer while image panel is open */}
-                      {imageProductId !== product.id && (
-                        isRestocking ? (
+                                    <p
+                                      style={{
+                                        margin: "4px 0 0",
+                                        color: "#64748b",
+                                        fontSize: "12px",
+                                      }}
+                                    >
+                                      Values read from the uploaded receipt image.
+                                    </p>
+                                  </div>
+
+                                  <div
+                                    style={{
+                                      display: "grid",
+                                      gap: "10px",
+                                    }}
+                                  >
+                                    <Detail
+                                      label="Amount"
+                                      value={
+                                        extractedAmount !== null
+                                          ? `${extractedAmount} ${extracted?.currency ||
+                                          review.currency
+                                          }`
+                                          : "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Bank / provider"
+                                      value={
+                                        extractedProvider ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Transaction reference"
+                                      value={
+                                        extractedReference ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Currency"
+                                      value={
+                                        extracted?.currency ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Transaction date"
+                                      value={
+                                        extracted?.transactionDate ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Transaction time"
+                                      value={
+                                        extracted?.transactionTime ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Sender name"
+                                      value={
+                                        extracted?.senderName ||
+                                        "Not available"
+                                      }
+                                    />
+
+                                    <Detail
+                                      label="Sender account"
+                                      value={
+                                        extracted?.senderAccount ||
+                                        "Not available"
+                                      }
+                                    />
+                                  </div>
+
+                                  {typeof extracted?.confidence === "number" && (
+                                    <div
+                                      style={{
+                                        marginTop: "12px",
+                                        paddingTop: "10px",
+                                        borderTop: "1px solid #e2e8f0",
+                                        fontSize: "11px",
+                                        color: "#64748b",
+                                      }}
+                                    >
+                                      Extraction confidence:{" "}
+                                      {Math.round(
+                                        extracted.confidence * 100
+                                      )}
+                                      %
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </section>
+                          </>
+                        )}
+
+                        <div
+                          style={{
+                            marginTop: "18px",
+                            paddingTop: "16px",
+                            borderTop: "1px solid #e2e8f0",
+                          }}
+                        />
+
+                        {isRejecting && (
+
                           <div
                             style={
-                              styles.restockPanel
+                              styles.rejectPanel
                             }
                           >
                             <strong
                               style={
-                                styles.restockTitle
+                                styles.rejectTitle
                               }
                             >
-                              Restock{" "}
-                              {
-                                product.name
-                              }
+                              Reject payment
                             </strong>
 
                             <p
                               style={
-                                styles.restockCurrentStock
+                                styles.rejectDescription
                               }
                             >
-                              Current stock:{" "}
-                              <strong>
-                                {
-                                  product.stock
-                                }
-                              </strong>
+                              Enter a reason for rejecting
+                              this payment. The customer
+                              will receive this reason on
+                              Telegram.
                             </p>
-
-                            <label
-                              style={
-                                styles.formLabel
-                              }
-                            >
-                              Quantity to add
-                            </label>
-
-                            <input
-                              type="number"
-                              min="1"
-                              max="100000"
-                              step="1"
-                              value={
-                                restockQuantity
-                              }
-                              onChange={(
-                                event
-                              ) =>
-                                setRestockQuantity(
-                                  event
-                                    .target
-                                    .value
-                                )
-                              }
-                              placeholder="Example: 10"
-                              disabled={
-                                busy
-                              }
-                              style={
-                                styles.formInput
-                              }
-                            />
-
-                            {validQuantity && (
-                              <div
-                                style={
-                                  styles.projectedStock
-                                }
-                              >
-                                <span>
-                                  New stock after restock
-                                </span>
-
-                                <strong>
-                                  {
-                                    projectedStock
-                                  }
-                                </strong>
-                              </div>
-                            )}
-
-                            {exceedsQuantityLimit && (
-                              <p
-                                style={
-                                  styles.formWarning
-                                }
-                              >
-                                Maximum restock quantity
-                                is 100,000 units.
-                              </p>
-                            )}
-
-                            {exceedsStockLimit && (
-                              <p
-                                style={
-                                  styles.formWarning
-                                }
-                              >
-                                Resulting stock cannot
-                                exceed 1,000,000 units.
-                              </p>
-                            )}
-
-                            <label
-                              style={
-                                styles.formLabel
-                              }
-                            >
-                              Note{" "}
-                              <span
-                                style={
-                                  styles.optionalLabel
-                                }
-                              >
-                                (optional)
-                              </span>
-                            </label>
 
                             <textarea
                               value={
-                                restockNote
+                                rejectNote
                               }
                               onChange={(
                                 event
                               ) =>
-                                setRestockNote(
+                                setRejectNote(
                                   event
                                     .target
                                     .value
                                 )
                               }
-                              placeholder="Example: New shipment received"
+                              placeholder="Example: Transaction reference could not be verified."
                               disabled={
                                 busy
                               }
-                              rows={3}
-                              maxLength={500}
+                              rows={4}
                               style={
-                                styles.formTextarea
+                                styles.rejectTextarea
                               }
                             />
 
-                            <span
-                              style={
-                                styles.characterCount
-                              }
-                            >
-                              {
-                                restockNote.length
-                              }
-                              /500
-                            </span>
-
                             <div
                               style={
-                                styles.restockActions
+                                styles.rejectActions
                               }
                             >
                               <button
@@ -6068,7 +4620,7 @@ export default function App() {
                                   busy
                                 }
                                 onClick={
-                                  cancelRestock
+                                  cancelReject
                                 }
                                 style={
                                   styles.cancelButton
@@ -6081,420 +4633,105 @@ export default function App() {
                                 type="button"
                                 disabled={
                                   busy ||
-                                  !validQuantity ||
-                                  exceedsQuantityLimit ||
-                                  exceedsStockLimit
+                                  !rejectNote.trim()
                                 }
                                 onClick={() =>
-                                  void restockProduct(
-                                    product.id
+                                  void rejectPayment(
+                                    review.id,
+                                    rejectNote
                                   )
                                 }
                                 style={
-                                  styles.confirmRestockButton
+                                  styles.confirmRejectButton
                                 }
                               >
                                 {busy
-                                  ? "Adding Stock..."
-                                  : `Add ${validQuantity ? quantityNumber : ""} Stock`}
+                                  ? "Rejecting..."
+                                  : "Confirm Rejection"}
                               </button>
                             </div>
                           </div>
-                        ) : (
-                          <div
+                        )}
+
+                        <div
+                          style={
+                            styles.cardFooter
+                          }
+                        >
+                          <span
                             style={
-                              styles.productFooter
+                              styles.date
                             }
                           >
-                            <span
+                            Submitted{" "}
+                            {new Date(
+                              review.createdAt
+                            ).toLocaleString()}
+                          </span>
+
+                          <div
+                            style={
+                              styles.actions
+                            }
+                          >
+                            <button
+                              type="button"
+                              disabled={
+                                busy ||
+                                rejectingPaymentId !==
+                                null ||
+                                actionId !==
+                                null
+                              }
+                              onClick={() =>
+                                void verifyPayment(
+                                  review.id
+                                )
+                              }
                               style={
-                                styles.productUpdated
+                                styles.verifyButton
                               }
                             >
-                              Updated{" "}
-                              {new Date(
-                                product.updatedAt
-                              ).toLocaleString()}
-                            </span>
+                              {busy
+                                ? "Processing..."
+                                : "Verify Payment"}
+                            </button>
 
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: "7px",
-                                flexWrap: "wrap",
-                                justifyContent: "flex-end"
-                              }}
-                            >
-                              {canManageProducts && (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      busy ||
-                                      actionId !== null
-                                    }
-                                    onClick={() =>
-                                      openEditProductForm(product)
-                                    }
-                                    style={styles.cancelButton}
-                                  >
-                                    Edit
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      busy ||
-                                      actionId !== null
-                                    }
-                                    onClick={() => {
-                                      setImageProductId(
-                                        imageProductId === product.id
-                                          ? null
-                                          : product.id
-                                      );
-                                      setImageFile(null);
-                                      setError("");
-                                    }}
-                                    style={styles.cancelButton}
-                                  >
-                                    {imageProductId === product.id
-                                      ? "Hide Images"
-                                      : "Images"}
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      busy ||
-                                      actionId !== null
-                                    }
-                                    onClick={() =>
-                                      openRestockForm(product.id)
-                                    }
-                                    style={styles.restockButton}
-                                  >
-                                    Restock
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      busy ||
-                                      actionId !== null
-                                    }
-                                    onClick={() =>
-                                      void deleteProduct(
-                                        product.id,
-                                        product.name
-                                      )
-                                    }
-                                    style={{
-                                      ...styles.cancelButton,
-                                      color: "#b91c1c"
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
+                            {!isRejecting && (
+                              <button
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  rejectingPaymentId !==
+                                  null ||
+                                  actionId !==
+                                  null
+                                }
+                                onClick={() =>
+                                  openRejectForm(
+                                    review.id
+                                  )
+                                }
+                                style={
+                                  styles.rejectButton
+                                }
+                              >
+                                Reject
+                              </button>
+                            )}
                           </div>
-                        )
-                      )}
-                    </article>
-                  );
-                }
-              )}
-            </div>
-          )}
-        </section>
-      ) : activeTab === "billing" ? (
-        <section
-          style={styles.section}
-        >
-          <div
-            style={
-              styles.sectionHeader
-            }
-          >
-            <div>
-              <h2
-                style={
-                  styles.sectionTitle
-                }
-              >
-                Billing
-              </h2>
-
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Review your subscription,
-                commissions, invoices, and
-                settlements.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                void loadBilling()
-              }
-              disabled={loadingBilling}
-              style={
-                styles.refreshButton
-              }
-            >
-              {loadingBilling
-                ? "Loading..."
-                : "Refresh Billing"}
-            </button>
-          </div>
-
-          {loadingBilling &&
-            !billingSummary ? (
-            <div
-              style={styles.emptyState}
-            >
-              Loading billing information...
-            </div>
-          ) : !billingSummary ? (
-            <div
-              style={styles.emptyState}
-            >
-              Billing information is not
-              available.
-            </div>
-          ) : billingSummary.currentPeriod
-            .status ===
-            "NO_SUBSCRIPTION" ? (
-            <div
-              style={styles.emptyState}
-            >
-              No subscription is currently
-              configured for this merchant.
-            </div>
-          ) : billingSummary.subscription ? (
-            <>
-              <div
-                style={styles.summary}
-              >
-                <div
-                  style={
-                    styles.summaryCard
+                        </div>
+                      </article>
+                    );
                   }
-                >
-                  <Detail
-                    label="Plan"
-                    value={
-                      `${billingSummary.subscription.plan.name} (${billingSummary.subscription.plan.code})`
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Subscription status"
-                    value={
-                      billingSummary
-                        .subscription.status
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Billing interval"
-                    value={
-                      billingSummary
-                        .subscription
-                        .billingInterval
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label={
-                      billingSummary
-                        .subscription
-                        .billingInterval ===
-                        "MONTHLY"
-                        ? "Monthly subscription"
-                        : billingSummary
-                          .subscription
-                          .billingInterval ===
-                          "ANNUAL"
-                          ? "Annual subscription"
-                          : "Subscription price"
-                    }
-                    value={
-                      `${billingSummary.subscription.priceSnapshot} ${billingSummary.subscription.currency}`
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Commission rate"
-                    value={
-                      `${Number(
-                        billingSummary
-                          .subscription
-                          .commissionRateSnapshot
-                      ) * 100}%`
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Current period"
-                    value={
-                      `${new Date(
-                        billingSummary
-                          .subscription
-                          .currentPeriodStart
-                      ).toLocaleDateString()} - ${new Date(
-                        billingSummary
-                          .subscription
-                          .currentPeriodEnd
-                      ).toLocaleDateString()}`
-                    }
-                  />
-                </div>
-              </div>
-
-              <div
-                style={styles.summary}
-              >
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Subscription amount"
-                    value={
-                      billingSummary
-                        .currentPeriod
-                        .subscriptionAmount !==
-                        null
-                        ? `${billingSummary.currentPeriod.subscriptionAmount} ${billingSummary.currentPeriod.currency}`
-                        : "-"
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label="Commission accrued"
-                    value={
-                      billingSummary
-                        .currentPeriod
-                        .commissionAmount !==
-                        null
-                        ? `${billingSummary.currentPeriod.commissionAmount} ${billingSummary.currentPeriod.currency}`
-                        : "-"
-                    }
-                  />
-                </div>
-
-                <div
-                  style={
-                    styles.summaryCard
-                  }
-                >
-                  <Detail
-                    label={
-                      billingSummary
-                        .currentPeriod
-                        .status ===
-                        "INVOICED"
-                        ? "Invoice total"
-                        : "Estimated current bill"
-                    }
-                    value={
-                      billingSummary
-                        .currentPeriod
-                        .totalAmount !== null
-                        ? `${billingSummary.currentPeriod.totalAmount} ${billingSummary.currentPeriod.currency}`
-                        : "-"
-                    }
-                  />
-                </div>
-              </div>
-
-              {billingSummary.currentPeriod
-                .status ===
-                "INVOICED" && (
-                  <div
-                    style={styles.emptyState}
-                  >
-                    Current period invoice:{" "}
-                    {billingSummary.currentPeriod
-                      .invoiceNumber ||
-                      billingSummary.currentPeriod
-                        .invoiceId ||
-                      "Invoice"}{" "}
-                    —{" "}
-                    {billingSummary.currentPeriod
-                      .invoiceStatus ||
-                      "status unavailable"}
-                  </div>
                 )}
-
-              {billingSummary.currentPeriod
-                .status ===
-                "NEGATIVE_TOTAL_REQUIRES_REVIEW" && (
-                  <div
-                    style={styles.emptyState}
-                  >
-                    This billing period requires
-                    review before an invoice can
-                    be finalized.
-                  </div>
-                )}
-            </>
-          ) : (
-            <div
-              style={styles.emptyState}
-            >
-              Billing subscription information
-              is unavailable.
-            </div>
-          )}
-          <div
-            style={{
-              marginTop: "28px"
-            }}
+              </div>
+            )}
+          </section>
+        ) : activeTab ===
+          "orders" ? (
+          <section
+            style={styles.section}
           >
             <div
               style={
@@ -6502,1371 +4739,3834 @@ export default function App() {
               }
             >
               <div>
-                <h3
-                  style={{
-                    ...styles.sectionTitle,
-                    fontSize: "18px"
-                  }}
+                <h2
+                  style={
+                    styles.sectionTitle
+                  }
                 >
-                  Commission History
-                </h3>
+                  Orders
+                </h2>
 
                 <p
                   style={
                     styles.sectionDescription
                   }
                 >
-                  Verified transaction
-                  commissions and append-only
-                  billing adjustments.
+                  Manage paid orders and fulfillment.
                 </p>
               </div>
             </div>
 
-            {billingCommissions.length ===
+            {loadingOrders ? (
+              <div
+                style={
+                  styles.emptyState
+                }
+              >
+                Loading orders...
+              </div>
+            ) : orders.length ===
               0 ? (
               <div
-                style={styles.emptyState}
+                style={
+                  styles.emptyState
+                }
               >
-                No commission transactions
-                found.
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: "12px"
-                }}
-              >
-                {billingCommissions.map(
-                  (commission) => (
-                    <article
-                      key={commission.id}
-                      style={
-                        styles.summaryCard
-                      }
-                    >
-                      <div
-                        style={styles.summary}
-                      >
-                        <Detail
-                          label="Transaction amount"
-                          value={`${commission.transactionAmount} ${commission.currency}`}
-                        />
+                <strong>
+                  No orders yet.
+                </strong>
 
-                        <Detail
-                          label="Commission rate"
-                          value={`${Number(
-                            commission.commissionRate
-                          ) * 100}%`}
-                        />
-
-                        <Detail
-                          label="Original commission"
-                          value={`${commission.commissionAmount} ${commission.currency}`}
-                        />
-
-                        <Detail
-                          label="Adjustments"
-                          value={`${commission.adjustmentAmount} ${commission.currency}`}
-                        />
-
-                        <Detail
-                          label="Net commission"
-                          value={`${commission.netCommissionAmount} ${commission.currency}`}
-                        />
-
-                        <Detail
-                          label="Status"
-                          value={commission.status}
-                        />
-
-                        <Detail
-                          label="Recorded"
-                          value={new Date(
-                            commission.createdAt
-                          ).toLocaleString()}
-                        />
-                      </div>
-
-                      {commission.adjustments
-                        .length > 0 && (
-                          <div
-                            style={{
-                              marginTop:
-                                "16px"
-                            }}
-                          >
-                            <strong>
-                              Adjustments
-                            </strong>
-
-                            <div
-                              style={{
-                                display:
-                                  "grid",
-                                gap: "8px",
-                                marginTop:
-                                  "8px"
-                              }}
-                            >
-                              {commission.adjustments.map(
-                                (
-                                  adjustment
-                                ) => (
-                                  <div
-                                    key={
-                                      adjustment.id
-                                    }
-                                    style={
-                                      styles.emptyState
-                                    }
-                                  >
-                                    <div>
-                                      {
-                                        adjustment.type
-                                      }
-                                      {" — "}
-                                      {
-                                        adjustment.amount
-                                      }{" "}
-                                      {
-                                        adjustment.currency
-                                      }
-                                    </div>
-
-                                    <div>
-                                      {
-                                        adjustment.reason
-                                      }
-                                    </div>
-
-                                    <div>
-                                      {new Date(
-                                        adjustment.createdAt
-                                      ).toLocaleString()}
-                                    </div>
-                                  </div>
-                                )
-                              )}
-                            </div>
-                          </div>
-                        )}
-                    </article>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-
-          <div
-            style={{
-              marginTop: "28px"
-            }}
-          >
-            <div
-              style={
-                styles.sectionHeader
-              }
-            >
-              <div>
-                <h3
-                  style={{
-                    ...styles.sectionTitle,
-                    fontSize: "18px"
-                  }}
-                >
-                  Invoice History
-                </h3>
-
-                <p
-                  style={
-                    styles.sectionDescription
-                  }
-                >
-                  Finalized billing records and
-                  their persisted totals.
+                <p>
+                  Customer orders will appear here.
                 </p>
               </div>
-            </div>
-
-            {billingInvoices.length === 0 ? (
-              <div
-                style={styles.emptyState}
-              >
-                No invoices found.
-              </div>
             ) : (
               <div
-                style={{
-                  display: "grid",
-                  gap: "12px"
-                }}
+                style={
+                  styles.reviewList
+                }
               >
-                {billingInvoices.map(
-                  (invoice) => (
-                    <article
-                      key={invoice.id}
-                      style={
-                        styles.summaryCard
-                      }
-                    >
-                      <div
-                        style={styles.summary}
-                      >
-                        <Detail
-                          label="Invoice"
-                          value={
-                            invoice.invoiceNumber
-                          }
-                        />
+                {orders.map(
+                  (order) => {
+                    const busy =
+                      actionId ===
+                      order.id;
 
-                        <Detail
-                          label="Status"
-                          value={invoice.status}
-                        />
-
-                        <Detail
-                          label="Billing period"
-                          value={`${new Date(
-                            invoice.periodStart
-                          ).toLocaleDateString()} - ${new Date(
-                            invoice.periodEnd
-                          ).toLocaleDateString()}`}
-                        />
-
-                        <Detail
-                          label="Subscription amount"
-                          value={`${invoice.subscriptionAmount} ${invoice.currency}`}
-                        />
-
-                        <Detail
-                          label="Commission amount"
-                          value={`${invoice.commissionAmount} ${invoice.currency}`}
-                        />
-
-                        <Detail
-                          label="Invoice total"
-                          value={`${invoice.totalAmount} ${invoice.currency}`}
-                        />
-
-                        <Detail
-                          label="Created"
-                          value={new Date(
-                            invoice.createdAt
-                          ).toLocaleString()}
-                        />
-
-                        <Detail
-                          label="Opened"
-                          value={
-                            invoice.openedAt
-                              ? new Date(
-                                invoice.openedAt
-                              ).toLocaleString()
-                              : "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Due"
-                          value={
-                            invoice.dueAt
-                              ? new Date(
-                                invoice.dueAt
-                              ).toLocaleString()
-                              : "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Paid"
-                          value={
-                            invoice.paidAt
-                              ? new Date(
-                                invoice.paidAt
-                              ).toLocaleString()
-                              : "-"
-                          }
-                        />
-                      </div>
-                    </article>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-          <div
-            style={{
-              marginTop: "28px"
-            }}
-          >
-            <div style={styles.sectionHeader}>
-              <div>
-                <h3
-                  style={{
-                    ...styles.sectionTitle,
-                    fontSize: "18px"
-                  }}
-                >
-                  Submit Settlement
-                </h3>
-
-                <p
-                  style={
-                    styles.sectionDescription
-                  }
-                >
-                  Submit payment evidence for an
-                  open platform invoice. Submission
-                  requires review before the invoice
-                  can be marked paid.
-                </p>
-              </div>
-            </div>
-
-            {billingInvoices.filter(
-              (invoice) =>
-                invoice.status === "OPEN"
-            ).length === 0 ? (
-              <div style={styles.emptyState}>
-                No open invoices require settlement.
-              </div>
-            ) : (
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submitSettlement();
-                }}
-                style={{
-                  display: "grid",
-                  gap: "16px"
-                }}
-              >
-                <label
-                  style={{
-                    display: "grid",
-                    gap: "6px"
-                  }}
-                >
-                  <span>
-                    Open invoice
-                  </span>
-
-                  <select
-                    style={styles.formInput}
-                    value={
-                      settlementInvoiceId
-                    }
-                    onChange={(event) => {
-                      setSettlementInvoiceId(
-                        event.target.value
-                      );
-
-                      setSettlementIdempotencyKey(
-                        ""
-                      );
-                    }}
-                    disabled={
-                      submittingSettlement
-                    }
-                    required
-                  >
-                    <option value="">
-                      Select an invoice
-                    </option>
-
-                    {billingInvoices
-                      .filter(
-                        (invoice) =>
-                          invoice.status ===
-                          "OPEN"
-                      )
-                      .map((invoice) => (
-                        <option
-                          key={invoice.id}
-                          value={invoice.id}
-                        >
-                          {invoice.invoiceNumber} -{" "}
-                          {invoice.totalAmount}{" "}
-                          {invoice.currency}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-
-                {settlementInvoiceId &&
-                  (() => {
-                    const selectedInvoice =
-                      billingInvoices.find(
-                        (invoice) =>
-                          invoice.id ===
-                          settlementInvoiceId &&
-                          invoice.status ===
-                          "OPEN"
-                      );
-
-                    if (!selectedInvoice) {
-                      return null;
-                    }
-
+                    const payment =
+                      order.payments
+                        ?.filter(
+                          (item) =>
+                            item.status === "VERIFIED"
+                        )
+                        .at(-1) ||
+                      order.payments?.at(-1);
                     return (
-                      <div
+                      <article
+                        key={
+                          order.id
+                        }
                         style={
-                          styles.summaryCard
+                          styles.reviewCard
                         }
                       >
                         <div
                           style={
-                            styles.summary
+                            styles.cardTop
                           }
                         >
-                          <Detail
-                            label="Invoice"
-                            value={
-                              selectedInvoice.invoiceNumber
-                            }
-                          />
+                          <div>
+                            <span
+                              style={
+                                styles.orderLabel
+                              }
+                            >
+                              Order
+                            </span>
 
-                          <Detail
-                            label="Amount due"
-                            value={`${selectedInvoice.totalAmount} ${selectedInvoice.currency}`}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })()}
+                            <h3
+                              style={
+                                styles.orderNumber
+                              }
+                            >
+                              {
+                                order.orderNumber
+                              }
+                            </h3>
 
-                <label
-                  style={{
-                    display: "grid",
-                    gap: "6px"
-                  }}
-                >
-                  <span>
-                    Provider
-                  </span>
+                            <span
+                              style={
+                                styles.customer
+                              }
+                            >
+                              {order
+                                .customer
+                                ?.name ||
+                                "Unknown customer"}
+                            </span>
+                          </div>
 
-                  <select
-                    style={styles.formInput}
-                    value={
-                      settlementProvider
-                    }
-                    onChange={(event) => {
-                      setSettlementProvider(
-                        event.target.value as
-                        | "TELEBIRR"
-                        | "CBE_BIRR"
-                        | "OTHER"
-                      );
-
-                      setSettlementIdempotencyKey(
-                        ""
-                      );
-                    }}
-                    disabled={
-                      submittingSettlement
-                    }
-                  >
-                    <option value="TELEBIRR">
-                      Telebirr
-                    </option>
-
-                    <option value="CBE_BIRR">
-                      CBE Birr
-                    </option>
-
-                    <option value="OTHER">
-                      Other
-                    </option>
-                  </select>
-                </label>
-
-                <label
-                  style={{
-                    display: "grid",
-                    gap: "6px"
-                  }}
-                >
-                  <span>
-                    Transaction reference
-                  </span>
-
-                  <input
-                    style={styles.formInput}
-                    type="text"
-                    value={
-                      settlementTransactionReference
-                    }
-                    onChange={(event) => {
-                      setSettlementTransactionReference(
-                        event.target.value
-                      );
-
-                      setSettlementIdempotencyKey(
-                        ""
-                      );
-                    }}
-                    disabled={
-                      submittingSettlement
-                    }
-                    placeholder="Transaction reference"
-                  />
-                </label>
-
-                <label
-                  style={{
-                    display: "grid",
-                    gap: "6px"
-                  }}
-                >
-                  <span>
-                    Settlement receipt
-                  </span>
-
-                  <input
-                    style={styles.formInput}
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    onChange={(event) => {
-                      setSettlementReceiptFile(
-                        event.target.files?.[0] ??
-                        null
-                      );
-
-                      setSettlementIdempotencyKey(
-                        ""
-                      );
-                    }}
-                    disabled={
-                      submittingSettlement
-                    }
-                  />
-                </label>
-
-                <div
-                  style={
-                    styles.sectionDescription
-                  }
-                >
-                  Enter a transaction reference or upload
-                  a JPEG, PNG, or WebP settlement receipt.
-                  Amount and currency come directly from
-                  the selected invoice and cannot be
-                  changed here.
-                </div>
-
-                <div>
-                  <button
-                    type="submit"
-                    disabled={
-                      submittingSettlement ||
-                      !settlementInvoiceId ||
-                      (
-                        !settlementTransactionReference.trim() &&
-                        !settlementReceiptFile
-                      )
-                    }
-                    style={
-                      styles.refreshButton
-                    }
-                  >
-                    {submittingSettlement
-                      ? "Submitting..."
-                      : "Submit for Review"}
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-          <div
-            style={{
-              marginTop: "28px"
-            }}
-          >
-            <div
-              style={
-                styles.sectionHeader
-              }
-            >
-              <div>
-                <h3
-                  style={{
-                    ...styles.sectionTitle,
-                    fontSize: "18px"
-                  }}
-                >
-                  Settlement History
-                </h3>
-
-                <p
-                  style={
-                    styles.sectionDescription
-                  }
-                >
-                  Merchant payments submitted
-                  toward platform invoices.
-                </p>
-              </div>
-            </div>
-
-            {billingSettlements.length ===
-              0 ? (
-              <div
-                style={styles.emptyState}
-              >
-                No settlements found.
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: "12px"
-                }}
-              >
-                {billingSettlements.map(
-                  (settlement) => (
-                    <article
-                      key={settlement.id}
-                      style={
-                        styles.summaryCard
-                      }
-                    >
-                      <div
-                        style={styles.summary}
-                      >
-                        <Detail
-                          label="Provider"
-                          value={
-                            settlement.provider
-                          }
-                        />
-
-                        <Detail
-                          label="Status"
-                          value={
-                            settlement.status
-                          }
-                        />
-
-                        <Detail
-                          label="Amount"
-                          value={`${settlement.amount} ${settlement.currency}`}
-                        />
-
-                        <Detail
-                          label="Transaction reference"
-                          value={
-                            settlement.transactionReference ||
-                            "-"
-                          }
-                        />
-
-                        <Detail
-                          label="Submitted"
-                          value={new Date(
-                            settlement.submittedAt
-                          ).toLocaleString()}
-                        />
-
-                        <Detail
-                          label="Verified"
-                          value={
-                            settlement.verifiedAt
-                              ? new Date(
-                                settlement.verifiedAt
-                              ).toLocaleString()
-                              : "-"
-                          }
-                        />
-                      </div>
-
-                      {settlement.hasReceiptEvidence && (
-                        <div
-                          style={{
-                            marginTop: "12px"
-                          }}
-                        >
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void openSettlementEvidence(
-                                settlement
+                          <span
+                            style={{
+                              ...styles.orderBadge,
+                              ...getStatusStyle(
+                                order.status
                               )
-                            }
+                            }}
                           >
-                            View settlement evidence
-                          </button>
-                        </div>
-                      )}
-
-                      {settlement.reviewNote && (
-                        <div
-                          style={{
-                            marginTop: "12px"
-                          }}
-                        >
-                          <strong>
-                            Review note
-                          </strong>
-
-                          <div>
                             {
-                              settlement.reviewNote
+                              order.status
                             }
-                          </div>
-                        </div>
-                      )}
-                    </article>
-                  )
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-      ) : activeTab === "profile" ? (
-        <section
-          style={styles.section}
-        >
-          <div
-            style={styles.sectionHeader}
-          >
-            <div>
-              <h2
-                style={styles.sectionTitle}
-              >
-                Merchant Profile
-              </h2>
-
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Business contact information
-                used for merchant operations.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                void loadMerchantProfile()
-              }
-              disabled={loadingProfile}
-              style={
-                styles.inventoryRefreshButton
-              }
-            >
-              {loadingProfile
-                ? "Loading..."
-                : "Refresh"}
-            </button>
-          </div>
-
-          {loadingProfile &&
-            !merchantProfile ? (
-            <p>
-              Loading merchant profile...
-            </p>
-          ) : !merchantProfile ? (
-            <p>
-              Merchant profile is not
-              available.
-            </p>
-          ) : (
-            <>
-              <div style={styles.summary}>
-                <Detail
-                  label="Merchant"
-                  value={merchantProfile.name}
-                />
-
-                <Detail
-                  label="Currency"
-                  value={
-                    merchantProfile.currency
-                  }
-                />
-              </div>
-
-              {canManageProfile ? (
-                <div
-                  style={{
-                    marginTop: "24px"
-                  }}
-                >
-                  <label
-                    style={styles.formLabel}
-                  >
-                    Phone
-                  </label>
-
-                  <input
-                    type="tel"
-                    value={profilePhone}
-                    onChange={(event) =>
-                      setProfilePhone(
-                        event.target.value
-                      )
-                    }
-                    maxLength={50}
-                    style={styles.formInput}
-                  />
-
-                  <label
-                    style={styles.formLabel}
-                  >
-                    Alternate phone
-                    <span
-                      style={
-                        styles.optionalLabel
-                      }
-                    >
-                      {" "}
-                      Optional
-                    </span>
-                  </label>
-
-                  <input
-                    type="tel"
-                    value={
-                      profileAlternatePhone
-                    }
-                    onChange={(event) =>
-                      setProfileAlternatePhone(
-                        event.target.value
-                      )
-                    }
-                    maxLength={50}
-                    style={styles.formInput}
-                  />
-
-                  <label
-                    style={styles.formLabel}
-                  >
-                    Address
-                    <span
-                      style={
-                        styles.optionalLabel
-                      }
-                    >
-                      {" "}
-                      Optional
-                    </span>
-                  </label>
-
-                  <textarea
-                    value={profileAddress}
-                    onChange={(event) =>
-                      setProfileAddress(
-                        event.target.value
-                      )
-                    }
-                    maxLength={1000}
-                    rows={5}
-                    style={
-                      styles.formTextarea
-                    }
-                  />
-
-                  <div
-                    style={
-                      styles.characterCount
-                    }
-                  >
-                    {profileAddress.length}
-                    /1000
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void saveMerchantProfile()
-                    }
-                    disabled={savingProfile}
-                  >
-                    {savingProfile
-                      ? "Saving..."
-                      : "Save Profile"}
-                  </button>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    ...styles.summary,
-                    marginTop: "24px"
-                  }}
-                >
-                  <Detail
-                    label="Phone"
-                    value={
-                      merchantProfile.phone ||
-                      "-"
-                    }
-                  />
-
-                  <Detail
-                    label="Alternate phone"
-                    value={
-                      merchantProfile.alternatePhone ||
-                      "-"
-                    }
-                  />
-
-                  <Detail
-                    label="Address"
-                    value={
-                      merchantProfile.address ||
-                      "-"
-                    }
-                  />
-                </div>
-              )}
-            </>
-          )}
-        </section>
-      ) : (
-        <section
-          style={styles.section}
-        >
-          <div
-            style={styles.sectionHeader}
-          >
-            <div>
-              <h2
-                style={styles.sectionTitle}
-              >
-                Users
-              </h2>
-
-              <p
-                style={
-                  styles.sectionDescription
-                }
-              >
-                Manage the people who can access
-                this merchant account.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                void loadUsers()
-              }
-              disabled={loadingUsers}
-              style={
-                styles.inventoryRefreshButton
-              }
-            >
-              {loadingUsers
-                ? "Loading..."
-                : "Refresh Users"}
-            </button>
-          </div>
-
-          <div
-            style={{
-              marginBottom: "20px",
-              padding: "16px",
-              border: "1px solid #dbe3ee",
-              borderRadius: "14px"
-            }}
-          >
-            <h3
-              style={{
-                ...styles.sectionTitle,
-                fontSize: "18px",
-                marginTop: 0
-              }}
-            >
-              Create User
-            </h3>
-
-            <div
-              style={{
-                display: "grid",
-                gap: "12px",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(220px, 1fr))"
-              }}
-            >
-              <div>
-                <label
-                  style={styles.formLabel}
-                >
-                  Display name
-                </label>
-
-                <input
-                  type="text"
-                  value={newUserDisplayName}
-                  onChange={(event) =>
-                    setNewUserDisplayName(
-                      event.target.value
-                    )
-                  }
-                  disabled={creatingUser}
-                  style={styles.formInput}
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div>
-                <label
-                  style={styles.formLabel}
-                >
-                  Email
-                </label>
-
-                <input
-                  type="email"
-                  value={newUserEmail}
-                  onChange={(event) =>
-                    setNewUserEmail(
-                      event.target.value
-                    )
-                  }
-                  disabled={creatingUser}
-                  style={styles.formInput}
-                  placeholder="employee@example.com"
-                />
-              </div>
-
-              <div>
-                <label
-                  style={styles.formLabel}
-                >
-                  Password
-                </label>
-
-                <input
-                  type="password"
-                  value={newUserPassword}
-                  onChange={(event) =>
-                    setNewUserPassword(
-                      event.target.value
-                    )
-                  }
-                  disabled={creatingUser}
-                  style={styles.formInput}
-                  placeholder="Minimum 8 characters"
-                />
-              </div>
-
-              <div>
-                <label
-                  style={styles.formLabel}
-                >
-                  Role
-                </label>
-
-                <select
-                  value={newUserRole}
-                  onChange={(event) =>
-                    setNewUserRole(
-                      event.target.value as
-                      | "ADMIN"
-                      | "STAFF"
-                    )
-                  }
-                  disabled={creatingUser}
-                  style={styles.formInput}
-                >
-                  <option value="STAFF">
-                    STAFF
-                  </option>
-
-                  <option value="ADMIN">
-                    ADMIN
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <div
-              style={{
-                marginTop: "16px"
-              }}
-            >
-              <button
-                type="button"
-                onClick={() =>
-                  void createUser()
-                }
-                disabled={creatingUser}
-                style={
-                  styles.inventoryRefreshButton
-                }
-              >
-                {creatingUser
-                  ? "Creating..."
-                  : "Create User"}
-              </button>
-            </div>
-          </div>
-
-          {loadingUsers &&
-            merchantUsers.length === 0 ? (
-            <div
-              style={styles.emptyState}
-            >
-              Loading users...
-            </div>
-          ) : merchantUsers.length === 0 ? (
-            <div
-              style={styles.emptyState}
-            >
-              No users found.
-            </div>
-          ) : (
-            <div
-              style={{
-                display: "grid",
-                gap: "12px"
-              }}
-            >
-              {merchantUsers.map(
-                (merchantUser) => (
-                  <article
-                    key={merchantUser.id}
-                    style={
-                      styles.summaryCard
-                    }
-                  >
-                    {editingUserId ===
-                      merchantUser.id &&
-                      merchantUser.role !== "OWNER" ? (
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: "16px"
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "grid",
-                            gap: "12px",
-                            gridTemplateColumns:
-                              "repeat(auto-fit, minmax(220px, 1fr))"
-                          }}
-                        >
-                          <div>
-                            <label
-                              style={styles.formLabel}
-                            >
-                              Display name
-                            </label>
-
-                            <input
-                              type="text"
-                              value={editUserDisplayName}
-                              onChange={(event) =>
-                                setEditUserDisplayName(
-                                  event.target.value
-                                )
-                              }
-                              disabled={savingUser}
-                              style={styles.formInput}
-                              placeholder="Optional"
-                            />
-                          </div>
-
-                          <div>
-                            <label
-                              style={styles.formLabel}
-                            >
-                              Role
-                            </label>
-
-                            <select
-                              value={editUserRole}
-                              onChange={(event) =>
-                                setEditUserRole(
-                                  event.target.value as
-                                  | "ADMIN"
-                                  | "STAFF"
-                                )
-                              }
-                              disabled={savingUser}
-                              style={styles.formInput}
-                            >
-                              <option value="STAFF">
-                                STAFF
-                              </option>
-
-                              <option value="ADMIN">
-                                ADMIN
-                              </option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label
-                              style={styles.formLabel}
-                            >
-                              New password
-                            </label>
-
-                            <input
-                              type="password"
-                              value={editUserPassword}
-                              onChange={(event) =>
-                                setEditUserPassword(
-                                  event.target.value
-                                )
-                              }
-                              disabled={savingUser}
-                              style={styles.formInput}
-                              placeholder="Leave blank to keep current password"
-                            />
-                          </div>
-                        </div>
-
-                        <div style={styles.summary}>
-                          <Detail
-                            label="Email"
-                            value={merchantUser.email}
-                          />
-
-                          <Detail
-                            label="Created"
-                            value={new Date(
-                              merchantUser.createdAt
-                            ).toLocaleDateString()}
-                          />
+                          </span>
                         </div>
 
                         <div
-                          style={{
-                            display: "flex",
-                            gap: "10px",
-                            flexWrap: "wrap"
-                          }}
+                          style={
+                            styles.itemsBox
+                          }
                         >
-                          <button
-                            type="button"
-                            onClick={() =>
-                              void updateUser()
-                            }
-                            disabled={savingUser}
-                            style={
-                              styles.inventoryRefreshButton
-                            }
-                          >
-                            {savingUser
-                              ? "Saving..."
-                              : "Save Changes"}
-                          </button>
+                          {order.items.map(
+                            (item) => (
+                              <div
+                                key={
+                                  item.id
+                                }
+                                style={
+                                  styles.itemRow
+                                }
+                              >
+                                <span>
+                                  {
+                                    item.productName
+                                  }{" "}
+                                  ×{" "}
+                                  {
+                                    item.quantity
+                                  }
+                                </span>
 
-                          <button
-                            type="button"
-                            onClick={cancelEditingUser}
-                            disabled={savingUser}
-                            style={
-                              styles.inventoryRefreshButton
-                            }
-                          >
-                            Cancel
-                          </button>
+                                <strong>
+                                  {
+                                    item.lineTotal
+                                  }{" "}
+                                  {
+                                    order.currency
+                                  }
+                                </strong>
+                              </div>
+                            )
+                          )}
                         </div>
-                      </div>
-                    ) : (
-                      <>
+
                         <div
-                          style={styles.summary}
+                          style={
+                            styles.details
+                          }
                         >
                           <Detail
-                            label="Display name"
+                            label="Customer"
                             value={
-                              merchantUser.displayName ||
+                              order
+                                .customer
+                                ?.name ||
+                              "Unknown customer"
+                            }
+                          />
+
+                          <Detail
+                            label="Total"
+                            value={`${order.total} ${order.currency}`}
+                          />
+
+                          <Detail
+                            label="Payment"
+                            value={
+                              payment?.status ||
+                              "No payment"
+                            }
+                          />
+
+                          <Detail
+                            label="Provider"
+                            value={
+                              payment?.provider ||
                               "-"
                             }
                           />
 
                           <Detail
-                            label="Email"
+                            label="Transaction reference"
                             value={
-                              merchantUser.email
-                            }
-                          />
-
-                          <Detail
-                            label="Role"
-                            value={
-                              merchantUser.role
+                              payment?.transactionReference ||
+                              "-"
                             }
                           />
 
                           <Detail
                             label="Created"
                             value={new Date(
-                              merchantUser.createdAt
-                            ).toLocaleDateString()}
+                              order.createdAt
+                            ).toLocaleString()}
+                          />
+
+                          <Detail
+                            label="Recipient"
+                            value={
+                              order.deliveryName ||
+                              "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Delivery phone"
+                            value={
+                              order.deliveryPhone ||
+                              "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Delivery address"
+                            value={
+                              order.deliveryAddress ||
+                              "-"
+                            }
                           />
                         </div>
 
-                        {merchantUser.role !==
-                          "OWNER" && (
+                        <div
+                          style={
+                            styles.cardFooter
+                          }
+                        >
+                          <span
+                            style={
+                              styles.date
+                            }
+                          >
+                            Updated{" "}
+                            {new Date(
+                              order.updatedAt
+                            ).toLocaleString()}
+                          </span>
+
+                          <div
+                            style={
+                              styles.actions
+                            }
+                          >
+                            {canFulfillOrders && order.status ===
+                              "PAID" && (
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busy ||
+                                    actionId !==
+                                    null
+                                  }
+                                  onClick={() =>
+                                    void updateOrderStatus(
+                                      order.id
+                                    )
+                                  }
+                                  style={
+                                    styles.fulfillButton
+                                  }
+                                >
+                                  {busy
+                                    ? "Processing..."
+                                    : "Start Fulfillment"}
+                                </button>
+                              )}
+
+                            {canFulfillOrders &&
+                              order.status ===
+                              "FULFILLING" && (
+                                <>
+                                  {confirmingDeliveryOrderId ===
+                                    order.id ? (
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: "8px",
+                                        alignItems:
+                                          "center",
+                                        flexWrap: "wrap"
+                                      }}
+                                    >
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        autoComplete="off"
+                                        maxLength={6}
+                                        value={
+                                          deliveryConfirmationCode
+                                        }
+                                        onChange={(
+                                          event
+                                        ) => {
+                                          const value =
+                                            event.target.value.replace(
+                                              /\D/g,
+                                              ""
+                                            );
+
+                                          setDeliveryConfirmationCode(
+                                            value
+                                          );
+                                        }}
+                                        disabled={
+                                          busy ||
+                                          actionId !==
+                                          null
+                                        }
+                                        placeholder="6-digit code"
+                                        aria-label="Delivery confirmation code"
+                                        style={{
+                                          ...styles.formInput,
+                                          width: "150px",
+                                          margin: 0
+                                        }}
+                                      />
+
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          busy ||
+                                          actionId !==
+                                          null ||
+                                          deliveryConfirmationCode
+                                            .length !==
+                                          6
+                                        }
+                                        onClick={() =>
+                                          void confirmDelivery(
+                                            order.id
+                                          )
+                                        }
+                                        style={
+                                          styles.fulfillButton
+                                        }
+                                      >
+                                        {busy
+                                          ? "Confirming..."
+                                          : "Confirm Delivery"}
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        disabled={
+                                          actionId !==
+                                          null
+                                        }
+                                        onClick={() => {
+                                          setConfirmingDeliveryOrderId(
+                                            null
+                                          );
+                                          setDeliveryConfirmationCode(
+                                            ""
+                                          );
+                                          setError(
+                                            ""
+                                          );
+                                        }}
+                                        style={
+                                          styles.cancelButton
+                                        }
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        actionId !==
+                                        null
+                                      }
+                                      onClick={() => {
+                                        setConfirmingDeliveryOrderId(
+                                          order.id
+                                        );
+                                        setDeliveryConfirmationCode(
+                                          ""
+                                        );
+                                        setError(
+                                          ""
+                                        );
+                                        setSuccess(
+                                          ""
+                                        );
+                                      }}
+                                      style={
+                                        styles.fulfillButton
+                                      }
+                                    >
+                                      Confirm Delivery
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      actionId !==
+                                      null
+                                    }
+                                    onClick={() =>
+                                      void resendDeliveryConfirmationCode(
+                                        order.id
+                                      )
+                                    }
+                                    style={
+                                      styles.cancelButton
+                                    }
+                                  >
+                                    {actionId ===
+                                      `delivery-resend-${order.id}`
+                                      ? "Sending..."
+                                      : "Send New Code"}
+                                  </button>
+                                </>
+                              )}
+
+                            {order.status ===
+                              "FULFILLED" && (
+                                <span
+                                  style={
+                                    styles.completed
+                                  }
+                                >
+                                  Completed ?
+                                </span>
+                              )}
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  }
+                )}
+              </div>
+            )}
+          </section>
+        ) : activeTab ===
+          "inventory" ? (
+          <section
+            style={styles.section}
+          >
+            <div
+              style={
+                styles.sectionHeader
+              }
+            >
+              <div>
+                <h2
+                  style={
+                    styles.sectionTitle
+                  }
+                >
+                  Inventory
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Monitor product stock and replenish
+                  inventory when new stock arrives.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadProducts()
+                }
+                disabled={
+                  loadingProducts ||
+                  actionId !== null
+                }
+                style={
+                  styles.inventoryRefreshButton
+                }
+              >
+                {loadingProducts
+                  ? "Loading..."
+                  : "Refresh Inventory"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "minmax(0, 1.5fr) minmax(280px, 1fr)",
+                gap: "16px",
+                marginBottom: "20px"
+              }}
+            >
+              <section
+                style={{
+                  border: "1px solid #dbe3ee",
+                  borderRadius: "14px",
+                  padding: "18px",
+                  background: "#ffffff"
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "12px",
+                    marginBottom: "14px"
+                  }}
+                >
+                  <div>
+                    <strong>Product Catalog</strong>
+                    <div
+                      style={{
+                        color: "#64748b",
+                        fontSize: "13px",
+                        marginTop: "4px"
+                      }}
+                    >
+                      Create products and manage pricing,
+                      stock, status, and categories.
+                    </div>
+                  </div>
+
+                  {canManageProducts && (
+                    <button
+                      type="button"
+                      onClick={openNewProductForm}
+                      disabled={actionId !== null}
+                      style={styles.restockButton}
+                    >
+                      + Add Product
+                    </button>
+                  )}
+                </div>
+
+                {canManageProducts && productFormOpen && (
+                  <div
+                    style={{
+                      borderTop: "1px solid #e2e8f0",
+                      paddingTop: "16px"
+                    }}
+                  >
+                    <h3
+                      style={{
+                        margin: "0 0 14px",
+                        fontSize: "16px"
+                      }}
+                    >
+                      {editingProductId
+                        ? "Edit Product"
+                        : "Create Product"}
+                    </h3>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns:
+                          "repeat(2, minmax(0, 1fr))",
+                        gap: "12px"
+                      }}
+                    >
+                      <div>
+                        <label style={styles.formLabel}>
+                          Name
+                        </label>
+                        <input
+                          value={productName}
+                          maxLength={200}
+                          onChange={(event) =>
+                            setProductName(
+                              event.target.value
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                          placeholder="Product name"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>
+                          Category
+                        </label>
+                        <select
+                          value={productCategoryId}
+                          onChange={(event) =>
+                            setProductCategoryId(
+                              event.target.value
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                        >
+                          <option value="">
+                            Uncategorized
+                          </option>
+                          {categories.map(
+                            (category) => (
+                              <option
+                                key={category.id}
+                                value={category.id}
+                              >
+                                {category.name}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>
+                          Price
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={productPrice}
+                          onChange={(event) =>
+                            setProductPrice(
+                              event.target.value
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                          placeholder="0.00"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>
+                          Currency
+                        </label>
+                        <input
+                          value={productCurrency}
+                          maxLength={3}
+                          onChange={(event) =>
+                            setProductCurrency(
+                              event.target.value.toUpperCase()
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>
+                          Stock
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={productStock}
+                          onChange={(event) =>
+                            setProductStock(
+                              event.target.value
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={styles.formLabel}>
+                          Status
+                        </label>
+                        <select
+                          value={productStatus}
+                          onChange={(event) =>
+                            setProductStatus(
+                              event.target.value
+                            )
+                          }
+                          disabled={actionId !== null}
+                          style={styles.formInput}
+                        >
+                          <option value="DRAFT">
+                            DRAFT
+                          </option>
+                          <option value="ACTIVE">
+                            ACTIVE
+                          </option>
+                          <option value="ARCHIVED">
+                            ARCHIVED
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <label style={styles.formLabel}>
+                      Description
+                    </label>
+                    <textarea
+                      value={productDescription}
+                      maxLength={5000}
+                      rows={4}
+                      onChange={(event) =>
+                        setProductDescription(
+                          event.target.value
+                        )
+                      }
+                      disabled={actionId !== null}
+                      style={styles.formTextarea}
+                      placeholder="Optional product description"
+                    />
+
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        gap: "8px",
+                        marginTop: "12px"
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={closeProductForm}
+                        disabled={actionId !== null}
+                        style={styles.cancelButton}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void saveProduct()}
+                        disabled={actionId !== null}
+                        style={styles.confirmRestockButton}
+                      >
+                        {actionId
+                          ? "Saving..."
+                          : editingProductId
+                            ? "Save Changes"
+                            : "Create Product"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <section
+                style={{
+                  border: "1px solid #dbe3ee",
+                  borderRadius: "14px",
+                  padding: "18px",
+                  background: "#ffffff"
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: "12px"
+                  }}
+                >
+                  <strong>Categories</strong>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void loadCategories()
+                    }
+                    disabled={
+                      loadingCategories ||
+                      actionId !== null
+                    }
+                    style={{
+                      ...styles.cancelButton,
+                      padding: "7px 10px"
+                    }}
+                  >
+                    {loadingCategories
+                      ? "Loading..."
+                      : "Refresh"}
+                  </button>
+                </div>
+
+                {canManageProducts && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      marginBottom: "12px"
+                    }}
+                  >
+                    <input
+                      value={categoryName}
+                      maxLength={100}
+                      onChange={(event) =>
+                        setCategoryName(
+                          event.target.value
+                        )
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void createCategory();
+                        }
+                      }}
+                      disabled={actionId !== null}
+                      style={{
+                        ...styles.formInput,
+                        margin: 0
+                      }}
+                      placeholder="New category"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void createCategory()}
+                      disabled={
+                        actionId !== null ||
+                        !categoryName.trim()
+                      }
+                      style={styles.confirmRestockButton}
+                    >
+                      Add
+                    </button>
+                  </div>
+                )}
+
+                {categories.length === 0 ? (
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "13px"
+                    }}
+                  >
+                    No categories yet.
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fill, minmax(220px, 1fr))",
+                      gap: "12px"
+                    }}
+                  >
+                    {categories.map(
+                      (category) => {
+                        const editingImage =
+                          categoryImageCategoryId ===
+                          category.id;
+
+                        const uploadingImage =
+                          actionId ===
+                          `category-image-${category.id}`;
+
+                        const removingImage =
+                          actionId ===
+                          `category-image-remove-${category.id}`;
+
+                        return (
+                          <div
+                            key={category.id}
+                            style={{
+                              border:
+                                "1px solid #dbe3ee",
+                              borderRadius: "12px",
+                              overflow: "hidden",
+                              background: "#ffffff"
+                            }}
+                          >
                             <div
                               style={{
-                                marginTop: "16px",
+                                height: "140px",
+                                background: "#f8fafc",
                                 display: "flex",
-                                gap: "10px",
-                                flexWrap: "wrap"
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderBottom:
+                                  "1px solid #e2e8f0"
                               }}
                             >
+                              {category.imageUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCategoryImagePreview({
+                                      url: category.imageUrl!,
+                                      alt:
+                                        category.imageAltText ||
+                                        category.name
+                                    })
+                                  }
+                                  disabled={actionId !== null}
+                                  title="View full image"
+                                  aria-label={
+                                    `View full image for ${category.name}`
+                                  }
+                                  style={{
+                                    width: "100%",
+                                    height: "100%",
+                                    padding: 0,
+                                    border: "none",
+                                    background: "transparent",
+                                    cursor:
+                                      actionId !== null
+                                        ? "default"
+                                        : "zoom-in",
+                                    display: "block"
+                                  }}
+                                >
+                                  <img
+                                    src={category.imageUrl}
+                                    alt={
+                                      category.imageAltText ||
+                                      category.name
+                                    }
+                                    style={{
+                                      width: "100%",
+                                      height: "100%",
+                                      objectFit: "cover",
+                                      display: "block"
+                                    }}
+                                  />
+                                </button>
+                              ) : (
+                                <span
+                                  style={{
+                                    color: "#94a3b8",
+                                    fontSize: "13px"
+                                  }}
+                                >
+                                  No category image
+                                </span>
+                              )}
+                            </div>
+
+                            <div
+                              style={{
+                                padding: "12px"
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  justifyContent:
+                                    "space-between",
+                                  alignItems:
+                                    "flex-start",
+                                  gap: "8px"
+                                }}
+                              >
+                                <div>
+                                  <strong
+                                    style={{
+                                      display: "block",
+                                      fontSize: "14px"
+                                    }}
+                                  >
+                                    {category.name}
+                                  </strong>
+
+                                  <span
+                                    style={{
+                                      color: "#64748b",
+                                      fontSize: "12px"
+                                    }}
+                                  >
+                                    {category._count
+                                      ?.products ?? 0}{" "}
+                                    product
+                                    {(category._count
+                                      ?.products ?? 0) ===
+                                      1
+                                      ? ""
+                                      : "s"}
+                                  </span>
+                                </div>
+
+                                {canManageProducts && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void deleteCategory(
+                                        category.id,
+                                        category.name
+                                      )
+                                    }
+                                    disabled={
+                                      actionId !== null
+                                    }
+                                    style={{
+                                      border: "none",
+                                      background:
+                                        "transparent",
+                                      cursor:
+                                        actionId !== null
+                                          ? "not-allowed"
+                                          : "pointer",
+                                      color: "#b91c1c",
+                                      padding: "0 3px",
+                                      fontSize: "18px",
+                                      lineHeight: 1
+                                    }}
+                                    title="Delete category"
+                                    aria-label={
+                                      `Delete ${category.name} category`
+                                    }
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
+
+                              {canManageProducts && (
+                                <div
+                                  style={{
+                                    marginTop: "12px"
+                                  }}
+                                >
+                                  {editingImage ? (
+                                    <>
+                                      <input
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp"
+                                        onChange={(
+                                          event
+                                        ) =>
+                                          setCategoryImageFile(
+                                            event.target
+                                              .files?.[0] ??
+                                            null
+                                          )
+                                        }
+                                        disabled={
+                                          actionId !== null
+                                        }
+                                        style={
+                                          styles.formInput
+                                        }
+                                      />
+
+                                      {categoryImageFile && (
+                                        <div
+                                          style={{
+                                            marginTop:
+                                              "5px",
+                                            fontSize:
+                                              "12px",
+                                            color:
+                                              "#64748b",
+                                            overflow:
+                                              "hidden",
+                                            textOverflow:
+                                              "ellipsis",
+                                            whiteSpace:
+                                              "nowrap"
+                                          }}
+                                          title={
+                                            categoryImageFile.name
+                                          }
+                                        >
+                                          Selected:{" "}
+                                          {
+                                            categoryImageFile.name
+                                          }
+                                        </div>
+                                      )}
+
+                                      <div
+                                        style={{
+                                          display:
+                                            "flex",
+                                          gap: "7px",
+                                          marginTop:
+                                            "8px",
+                                          flexWrap:
+                                            "wrap"
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            void uploadCategoryImage(
+                                              category.id
+                                            )
+                                          }
+                                          disabled={
+                                            actionId !==
+                                            null ||
+                                            !categoryImageFile
+                                          }
+                                          style={
+                                            styles.confirmRestockButton
+                                          }
+                                        >
+                                          {uploadingImage
+                                            ? "Uploading..."
+                                            : "Upload Image"}
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setCategoryImageCategoryId(
+                                              null
+                                            );
+                                            setCategoryImageFile(
+                                              null
+                                            );
+                                            setError("");
+                                          }}
+                                          disabled={
+                                            actionId !== null
+                                          }
+                                          style={
+                                            styles.cancelButton
+                                          }
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        gap: "7px",
+                                        flexWrap: "wrap"
+                                      }}
+                                    >
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setCategoryImageCategoryId(
+                                            category.id
+                                          );
+                                          setCategoryImageFile(
+                                            null
+                                          );
+                                          setError("");
+                                        }}
+                                        disabled={
+                                          actionId !== null
+                                        }
+                                        style={
+                                          styles.cancelButton
+                                        }
+                                      >
+                                        {category.imageUrl
+                                          ? "Replace Image"
+                                          : "Add Image"}
+                                      </button>
+
+                                      {category.imageUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setCategoryImageRemoval({
+                                              id: category.id,
+                                              name: category.name
+                                            })
+                                          }
+                                          disabled={
+                                            actionId !==
+                                            null
+                                          }
+                                          style={{
+                                            ...styles.cancelButton,
+                                            color:
+                                              "#b91c1c"
+                                          }}
+                                        >
+                                          {removingImage
+                                            ? "Removing..."
+                                            : "Remove Image"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            {(outOfStockProducts >
+              0 ||
+              lowStockProducts >
+              0) && (
+                <div
+                  style={
+                    styles.inventoryAlert
+                  }
+                >
+                  <strong>
+                    Inventory attention needed
+                  </strong>
+
+                  <span>
+                    {outOfStockProducts >
+                      0
+                      ? `${outOfStockProducts} product${outOfStockProducts ===
+                        1
+                        ? ""
+                        : "s"
+                      } out of stock`
+                      : "No products are out of stock"}
+                    {" · "}
+                    {lowStockProducts >
+                      0
+                      ? `${lowStockProducts} low-stock product${lowStockProducts ===
+                        1
+                        ? ""
+                        : "s"
+                      }`
+                      : "No other low-stock products"}
+                  </span>
+                </div>
+              )}
+
+            {loadingProducts ? (
+              <div
+                style={
+                  styles.emptyState
+                }
+              >
+                Loading inventory...
+              </div>
+            ) : products.length ===
+              0 ? (
+              <div
+                style={
+                  styles.emptyState
+                }
+              >
+                <strong>
+                  No products found.
+                </strong>
+
+                <p>
+                  Products created for this merchant
+                  will appear here.
+                </p>
+              </div>
+            ) : (
+              <div
+                style={
+                  styles.productGrid
+                }
+              >
+                {products.map(
+                  (product) => {
+                    const busy =
+                      actionId ===
+                      product.id;
+
+                    const isRestocking =
+                      restockingProductId ===
+                      product.id;
+
+                    const isOutOfStock =
+                      product.stock ===
+                      0;
+
+                    const isLowStock =
+                      product.stock >
+                      0 &&
+                      product.stock <=
+                      5;
+
+                    const quantityNumber =
+                      Number(
+                        restockQuantity
+                      );
+
+                    const validQuantity =
+                      Number.isInteger(
+                        quantityNumber
+                      ) &&
+                      quantityNumber >
+                      0;
+
+                    const projectedStock =
+                      validQuantity
+                        ? product.stock +
+                        quantityNumber
+                        : product.stock;
+
+                    const exceedsQuantityLimit =
+                      validQuantity &&
+                      quantityNumber >
+                      100000;
+
+                    const exceedsStockLimit =
+                      validQuantity &&
+                      projectedStock >
+                      1000000;
+
+                    return (
+                      <article
+                        key={
+                          product.id
+                        }
+                        style={{
+                          ...styles.productCard,
+                          ...(isOutOfStock
+                            ? styles.outOfStockCard
+                            : isLowStock
+                              ? styles.lowStockCard
+                              : {})
+                        }}
+                      >
+                        <div
+                          style={
+                            styles.productTop
+                          }
+                        >
+                          <div>
+                            <span
+                              style={
+                                styles.productStatusLabel
+                              }
+                            >
+                              {
+                                product.status
+                              }
+                            </span>
+
+                            <h3
+                              style={
+                                styles.productName
+                              }
+                            >
+                              {
+                                product.name
+                              }
+                            </h3>
+
+                            {product.category && (
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  marginTop: "4px",
+                                  color: "#475569",
+                                  fontSize: "12px"
+                                }}
+                              >
+                                {product.category.name}
+                              </span>
+                            )}
+                          </div>
+
+                          <span
+                            style={{
+                              ...styles.stockBadge,
+                              ...(isOutOfStock
+                                ? styles.stockBadgeOut
+                                : isLowStock
+                                  ? styles.stockBadgeLow
+                                  : styles.stockBadgeGood)
+                            }}
+                          >
+                            {isOutOfStock
+                              ? "OUT OF STOCK"
+                              : isLowStock
+                                ? "LOW STOCK"
+                                : "IN STOCK"}
+                          </span>
+                        </div>
+
+                        {product.description && (
+                          <p
+                            style={
+                              styles.productDescription
+                            }
+                          >
+                            {
+                              product.description
+                            }
+                          </p>
+                        )}
+
+                        <div
+                          style={
+                            styles.productStats
+                          }
+                        >
+                          <div>
+                            <span
+                              style={
+                                styles.productStatLabel
+                              }
+                            >
+                              Price
+                            </span>
+
+                            <strong
+                              style={
+                                styles.productStatValue
+                              }
+                            >
+                              {
+                                product.price
+                              }{" "}
+                              {
+                                product.currency
+                              }
+                            </strong>
+                          </div>
+
+                          <div>
+                            <span
+                              style={
+                                styles.productStatLabel
+                              }
+                            >
+                              Current stock
+                            </span>
+
+                            <strong
+                              style={{
+                                ...styles.productStatValue,
+                                ...(isOutOfStock
+                                  ? styles.stockNumberOut
+                                  : isLowStock
+                                    ? styles.stockNumberLow
+                                    : {})
+                              }}
+                            >
+                              {
+                                product.stock
+                              }
+                            </strong>
+                          </div>
+                        </div>
+
+                        {canManageProducts && imageProductId === product.id && (
+                          <div
+                            style={{
+                              borderTop: "1px solid #e2e8f0",
+                              paddingTop: "14px",
+                              marginTop: "14px"
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: "10px",
+                                marginBottom: "10px"
+                              }}
+                            >
+                              <strong>
+                                Product Images
+                              </strong>
                               <button
                                 type="button"
-                                onClick={() =>
-                                  startEditingUser(
-                                    merchantUser
-                                  )
-                                }
-                                disabled={
-                                  savingUser ||
-                                  deletingUserId !== null
-                                }
-                                style={
-                                  styles.inventoryRefreshButton
-                                }
+                                onClick={() => {
+                                  setImageProductId(null);
+                                  setImageFile(null);
+                                  setError("");
+                                }}
+                                disabled={actionId !== null}
+                                style={{
+                                  ...styles.cancelButton,
+                                  fontSize: "11px",
+                                  padding: "4px 8px"
+                                }}
                               >
-                                Edit
+                                Hide Images
                               </button>
+                            </div>
+
+                            {product.images &&
+                              product.images.length > 0 && (
+                                <div
+                                  style={{
+                                    display: "grid",
+                                    gridTemplateColumns:
+                                      "repeat(auto-fill, minmax(110px, 1fr))",
+                                    gap: "8px",
+                                    marginBottom: "12px"
+                                  }}
+                                >
+                                  {product.images.map(
+                                    (image) => (
+                                      <div
+                                        key={image.id}
+                                        style={{
+                                          border:
+                                            "1px solid #dbe3ee",
+                                          borderRadius: "10px",
+                                          padding: "6px"
+                                        }}
+                                      >
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setCategoryImagePreview({
+                                              url: image.url,
+                                              alt:
+                                                image.altText ||
+                                                product.name
+                                            })
+                                          }
+                                          disabled={actionId !== null}
+                                          title="View full image"
+                                          aria-label={
+                                            `View full image for ${product.name}`
+                                          }
+                                          style={{
+                                            width: "100%",
+                                            padding: 0,
+                                            border: "none",
+                                            borderRadius: "7px",
+                                            background: "transparent",
+                                            cursor:
+                                              actionId !== null
+                                                ? "default"
+                                                : "zoom-in",
+                                            display: "block"
+                                          }}
+                                        >
+                                          <img
+                                            src={image.url}
+                                            alt={
+                                              image.altText ||
+                                              product.name
+                                            }
+                                            style={{
+                                              width: "100%",
+                                              height: "80px",
+                                              objectFit: "cover",
+                                              borderRadius: "7px",
+                                              display: "block"
+                                            }}
+                                          />
+                                        </button>
+                                        <div
+                                          style={{
+                                            fontSize: "11px",
+                                            marginTop: "5px",
+                                            color: image.isPrimary
+                                              ? "#166534"
+                                              : "#64748b"
+                                          }}
+                                        >
+                                          {image.isPrimary
+                                            ? "Primary"
+                                            : "Image"}
+                                        </div>
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            gap: "4px",
+                                            marginTop: "5px",
+                                            flexWrap: "wrap"
+                                          }}
+                                        >
+                                          {!image.isPrimary && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                void setPrimaryImage(
+                                                  product.id,
+                                                  image.id
+                                                )
+                                              }
+                                              disabled={
+                                                actionId !== null
+                                              }
+                                              style={{
+                                                ...styles.cancelButton,
+                                                fontSize: "11px",
+                                                padding: "4px 6px"
+                                              }}
+                                            >
+                                              Primary
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              void deleteProductImage(
+                                                product.id,
+                                                image.id
+                                              )
+                                            }
+                                            disabled={
+                                              actionId !== null
+                                            }
+                                            style={{
+                                              ...styles.cancelButton,
+                                              color: "#b91c1c",
+                                              fontSize: "11px",
+                                              padding: "4px 6px"
+                                            }}
+                                          >
+                                            Delete
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )
+                                  )}
+                                </div>
+                              )}
+
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns:
+                                  "minmax(0, 1fr) auto",
+                                gap: "8px",
+                                alignItems: "end"
+                              }}
+                            >
+                              <div>
+                                <label style={styles.formLabel}>
+                                  Image file
+                                </label>
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  onChange={(event) =>
+                                    setImageFile(
+                                      event.target.files?.[0] ?? null
+                                    )
+                                  }
+                                  disabled={
+                                    actionId !== null
+                                  }
+                                  style={styles.formInput}
+                                />
+                                {imageFile && (
+                                  <div
+                                    style={{
+                                      marginTop: "5px",
+                                      fontSize: "12px",
+                                      color: "#64748b"
+                                    }}
+                                  >
+                                    Selected: {imageFile.name}
+                                  </div>
+                                )}
+                              </div>
 
                               <button
                                 type="button"
                                 onClick={() =>
-                                  void deleteUser(
-                                    merchantUser
+                                  void addProductImage(
+                                    product.id
                                   )
                                 }
                                 disabled={
-                                  savingUser ||
-                                  deletingUserId !== null
+                                  actionId !== null ||
+                                  !imageFile
                                 }
                                 style={
-                                  styles.inventoryRefreshButton
+                                  styles.confirmRestockButton
                                 }
                               >
-                                {deletingUserId ===
-                                  merchantUser.id
-                                  ? "Deleting..."
-                                  : "Delete"}
+                                Upload Image
                               </button>
                             </div>
+                          </div>
+                        )}
+
+                        {/* Hide the normal product footer while image panel is open */}
+                        {imageProductId !== product.id && (
+                          isRestocking ? (
+                            <div
+                              style={
+                                styles.restockPanel
+                              }
+                            >
+                              <strong
+                                style={
+                                  styles.restockTitle
+                                }
+                              >
+                                Restock{" "}
+                                {
+                                  product.name
+                                }
+                              </strong>
+
+                              <p
+                                style={
+                                  styles.restockCurrentStock
+                                }
+                              >
+                                Current stock:{" "}
+                                <strong>
+                                  {
+                                    product.stock
+                                  }
+                                </strong>
+                              </p>
+
+                              <label
+                                style={
+                                  styles.formLabel
+                                }
+                              >
+                                Quantity to add
+                              </label>
+
+                              <input
+                                type="number"
+                                min="1"
+                                max="100000"
+                                step="1"
+                                value={
+                                  restockQuantity
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  setRestockQuantity(
+                                    event
+                                      .target
+                                      .value
+                                  )
+                                }
+                                placeholder="Example: 10"
+                                disabled={
+                                  busy
+                                }
+                                style={
+                                  styles.formInput
+                                }
+                              />
+
+                              {validQuantity && (
+                                <div
+                                  style={
+                                    styles.projectedStock
+                                  }
+                                >
+                                  <span>
+                                    New stock after restock
+                                  </span>
+
+                                  <strong>
+                                    {
+                                      projectedStock
+                                    }
+                                  </strong>
+                                </div>
+                              )}
+
+                              {exceedsQuantityLimit && (
+                                <p
+                                  style={
+                                    styles.formWarning
+                                  }
+                                >
+                                  Maximum restock quantity
+                                  is 100,000 units.
+                                </p>
+                              )}
+
+                              {exceedsStockLimit && (
+                                <p
+                                  style={
+                                    styles.formWarning
+                                  }
+                                >
+                                  Resulting stock cannot
+                                  exceed 1,000,000 units.
+                                </p>
+                              )}
+
+                              <label
+                                style={
+                                  styles.formLabel
+                                }
+                              >
+                                Note{" "}
+                                <span
+                                  style={
+                                    styles.optionalLabel
+                                  }
+                                >
+                                  (optional)
+                                </span>
+                              </label>
+
+                              <textarea
+                                value={
+                                  restockNote
+                                }
+                                onChange={(
+                                  event
+                                ) =>
+                                  setRestockNote(
+                                    event
+                                      .target
+                                      .value
+                                  )
+                                }
+                                placeholder="Example: New shipment received"
+                                disabled={
+                                  busy
+                                }
+                                rows={3}
+                                maxLength={500}
+                                style={
+                                  styles.formTextarea
+                                }
+                              />
+
+                              <span
+                                style={
+                                  styles.characterCount
+                                }
+                              >
+                                {
+                                  restockNote.length
+                                }
+                                /500
+                              </span>
+
+                              <div
+                                style={
+                                  styles.restockActions
+                                }
+                              >
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busy
+                                  }
+                                  onClick={
+                                    cancelRestock
+                                  }
+                                  style={
+                                    styles.cancelButton
+                                  }
+                                >
+                                  Cancel
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={
+                                    busy ||
+                                    !validQuantity ||
+                                    exceedsQuantityLimit ||
+                                    exceedsStockLimit
+                                  }
+                                  onClick={() =>
+                                    void restockProduct(
+                                      product.id
+                                    )
+                                  }
+                                  style={
+                                    styles.confirmRestockButton
+                                  }
+                                >
+                                  {busy
+                                    ? "Adding Stock..."
+                                    : `Add ${validQuantity ? quantityNumber : ""} Stock`}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              style={
+                                styles.productFooter
+                              }
+                            >
+                              <span
+                                style={
+                                  styles.productUpdated
+                                }
+                              >
+                                Updated{" "}
+                                {new Date(
+                                  product.updatedAt
+                                ).toLocaleString()}
+                              </span>
+
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: "7px",
+                                  flexWrap: "wrap",
+                                  justifyContent: "flex-end"
+                                }}
+                              >
+                                {canManageProducts && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busy ||
+                                        actionId !== null
+                                      }
+                                      onClick={() =>
+                                        openEditProductForm(product)
+                                      }
+                                      style={styles.cancelButton}
+                                    >
+                                      Edit
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busy ||
+                                        actionId !== null
+                                      }
+                                      onClick={() => {
+                                        setImageProductId(
+                                          imageProductId === product.id
+                                            ? null
+                                            : product.id
+                                        );
+                                        setImageFile(null);
+                                        setError("");
+                                      }}
+                                      style={styles.cancelButton}
+                                    >
+                                      {imageProductId === product.id
+                                        ? "Hide Images"
+                                        : "Images"}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busy ||
+                                        actionId !== null
+                                      }
+                                      onClick={() =>
+                                        openRestockForm(product.id)
+                                      }
+                                      style={styles.restockButton}
+                                    >
+                                      Restock
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busy ||
+                                        actionId !== null
+                                      }
+                                      onClick={() =>
+                                        void deleteProduct(
+                                          product.id,
+                                          product.name
+                                        )
+                                      }
+                                      style={{
+                                        ...styles.cancelButton,
+                                        color: "#b91c1c"
+                                      }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </article>
+                    );
+                  }
+                )}
+              </div>
+            )}
+          </section>
+        ) : activeTab === "billing" ? (
+          <section
+            style={styles.section}
+          >
+            <div
+              style={
+                styles.sectionHeader
+              }
+            >
+              <div>
+                <h2
+                  style={
+                    styles.sectionTitle
+                  }
+                >
+                  Billing
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Review your subscription,
+                  commissions, invoices, and
+                  settlements.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadBilling()
+                }
+                disabled={loadingBilling}
+                style={
+                  styles.refreshButton
+                }
+              >
+                {loadingBilling
+                  ? "Loading..."
+                  : "Refresh Billing"}
+              </button>
+            </div>
+
+            {loadingBilling &&
+              !billingSummary ? (
+              <div
+                style={styles.emptyState}
+              >
+                Loading billing information...
+              </div>
+            ) : !billingSummary ? (
+              <div
+                style={styles.emptyState}
+              >
+                Billing information is not
+                available.
+              </div>
+            ) : billingSummary.currentPeriod
+              .status ===
+              "NO_SUBSCRIPTION" ? (
+              <div
+                style={styles.emptyState}
+              >
+                No subscription is currently
+                configured for this merchant.
+              </div>
+            ) : billingSummary.subscription ? (
+              <>
+                <div
+                  style={styles.summary}
+                >
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Plan"
+                      value={
+                        `${billingSummary.subscription.plan.name} (${billingSummary.subscription.plan.code})`
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Subscription status"
+                      value={
+                        billingSummary
+                          .subscription.status
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Billing interval"
+                      value={
+                        billingSummary
+                          .subscription
+                          .billingInterval
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label={
+                        billingSummary
+                          .subscription
+                          .billingInterval ===
+                          "MONTHLY"
+                          ? "Monthly subscription"
+                          : billingSummary
+                            .subscription
+                            .billingInterval ===
+                            "ANNUAL"
+                            ? "Annual subscription"
+                            : "Subscription price"
+                      }
+                      value={
+                        `${billingSummary.subscription.priceSnapshot} ${billingSummary.subscription.currency}`
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Commission rate"
+                      value={
+                        `${Number(
+                          billingSummary
+                            .subscription
+                            .commissionRateSnapshot
+                        ) * 100}%`
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Current period"
+                      value={
+                        `${new Date(
+                          billingSummary
+                            .subscription
+                            .currentPeriodStart
+                        ).toLocaleDateString()} - ${new Date(
+                          billingSummary
+                            .subscription
+                            .currentPeriodEnd
+                        ).toLocaleDateString()}`
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div
+                  style={styles.summary}
+                >
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Subscription amount"
+                      value={
+                        billingSummary
+                          .currentPeriod
+                          .subscriptionAmount !==
+                          null
+                          ? `${billingSummary.currentPeriod.subscriptionAmount} ${billingSummary.currentPeriod.currency}`
+                          : "-"
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label="Commission accrued"
+                      value={
+                        billingSummary
+                          .currentPeriod
+                          .commissionAmount !==
+                          null
+                          ? `${billingSummary.currentPeriod.commissionAmount} ${billingSummary.currentPeriod.currency}`
+                          : "-"
+                      }
+                    />
+                  </div>
+
+                  <div
+                    style={
+                      styles.summaryCard
+                    }
+                  >
+                    <Detail
+                      label={
+                        billingSummary
+                          .currentPeriod
+                          .status ===
+                          "INVOICED"
+                          ? "Invoice total"
+                          : "Estimated current bill"
+                      }
+                      value={
+                        billingSummary
+                          .currentPeriod
+                          .totalAmount !== null
+                          ? `${billingSummary.currentPeriod.totalAmount} ${billingSummary.currentPeriod.currency}`
+                          : "-"
+                      }
+                    />
+                  </div>
+                </div>
+
+                {billingSummary.currentPeriod
+                  .status ===
+                  "INVOICED" && (
+                    <div
+                      style={styles.emptyState}
+                    >
+                      Current period invoice:{" "}
+                      {billingSummary.currentPeriod
+                        .invoiceNumber ||
+                        billingSummary.currentPeriod
+                          .invoiceId ||
+                        "Invoice"}{" "}
+                      —{" "}
+                      {billingSummary.currentPeriod
+                        .invoiceStatus ||
+                        "status unavailable"}
+                    </div>
+                  )}
+
+                {billingSummary.currentPeriod
+                  .status ===
+                  "NEGATIVE_TOTAL_REQUIRES_REVIEW" && (
+                    <div
+                      style={styles.emptyState}
+                    >
+                      This billing period requires
+                      review before an invoice can
+                      be finalized.
+                    </div>
+                  )}
+              </>
+            ) : (
+              <div
+                style={styles.emptyState}
+              >
+                Billing subscription information
+                is unavailable.
+              </div>
+            )}
+            <div
+              style={{
+                marginTop: "28px"
+              }}
+            >
+              <div
+                style={
+                  styles.sectionHeader
+                }
+              >
+                <div>
+                  <h3
+                    style={{
+                      ...styles.sectionTitle,
+                      fontSize: "18px"
+                    }}
+                  >
+                    Commission History
+                  </h3>
+
+                  <p
+                    style={
+                      styles.sectionDescription
+                    }
+                  >
+                    Verified transaction
+                    commissions and append-only
+                    billing adjustments.
+                  </p>
+                </div>
+              </div>
+
+              {billingCommissions.length ===
+                0 ? (
+                <div
+                  style={styles.emptyState}
+                >
+                  No commission transactions
+                  found.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gap: "12px"
+                  }}
+                >
+                  {billingCommissions.map(
+                    (commission) => (
+                      <article
+                        key={commission.id}
+                        style={
+                          styles.summaryCard
+                        }
+                      >
+                        <div
+                          style={styles.summary}
+                        >
+                          <Detail
+                            label="Transaction amount"
+                            value={`${commission.transactionAmount} ${commission.currency}`}
+                          />
+
+                          <Detail
+                            label="Commission rate"
+                            value={`${Number(
+                              commission.commissionRate
+                            ) * 100}%`}
+                          />
+
+                          <Detail
+                            label="Original commission"
+                            value={`${commission.commissionAmount} ${commission.currency}`}
+                          />
+
+                          <Detail
+                            label="Adjustments"
+                            value={`${commission.adjustmentAmount} ${commission.currency}`}
+                          />
+
+                          <Detail
+                            label="Net commission"
+                            value={`${commission.netCommissionAmount} ${commission.currency}`}
+                          />
+
+                          <Detail
+                            label="Status"
+                            value={commission.status}
+                          />
+
+                          <Detail
+                            label="Recorded"
+                            value={new Date(
+                              commission.createdAt
+                            ).toLocaleString()}
+                          />
+                        </div>
+
+                        {commission.adjustments
+                          .length > 0 && (
+                            <div
+                              style={{
+                                marginTop:
+                                  "16px"
+                              }}
+                            >
+                              <strong>
+                                Adjustments
+                              </strong>
+
+                              <div
+                                style={{
+                                  display:
+                                    "grid",
+                                  gap: "8px",
+                                  marginTop:
+                                    "8px"
+                                }}
+                              >
+                                {commission.adjustments.map(
+                                  (
+                                    adjustment
+                                  ) => (
+                                    <div
+                                      key={
+                                        adjustment.id
+                                      }
+                                      style={
+                                        styles.emptyState
+                                      }
+                                    >
+                                      <div>
+                                        {
+                                          adjustment.type
+                                        }
+                                        {" — "}
+                                        {
+                                          adjustment.amount
+                                        }{" "}
+                                        {
+                                          adjustment.currency
+                                        }
+                                      </div>
+
+                                      <div>
+                                        {
+                                          adjustment.reason
+                                        }
+                                      </div>
+
+                                      <div>
+                                        {new Date(
+                                          adjustment.createdAt
+                                        ).toLocaleString()}
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>
+                            </div>
                           )}
-                      </>
-                    )}
-                  </article>
-                )
+                      </article>
+                    )
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </section>
+
+            <div
+              style={{
+                marginTop: "28px"
+              }}
+            >
+              <div
+                style={
+                  styles.sectionHeader
+                }
+              >
+                <div>
+                  <h3
+                    style={{
+                      ...styles.sectionTitle,
+                      fontSize: "18px"
+                    }}
+                  >
+                    Invoice History
+                  </h3>
+
+                  <p
+                    style={
+                      styles.sectionDescription
+                    }
+                  >
+                    Finalized billing records and
+                    their persisted totals.
+                  </p>
+                </div>
+              </div>
+
+              {billingInvoices.length === 0 ? (
+                <div
+                  style={styles.emptyState}
+                >
+                  No invoices found.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gap: "12px"
+                  }}
+                >
+                  {billingInvoices.map(
+                    (invoice) => (
+                      <article
+                        key={invoice.id}
+                        style={
+                          styles.summaryCard
+                        }
+                      >
+                        <div
+                          style={styles.summary}
+                        >
+                          <Detail
+                            label="Invoice"
+                            value={
+                              invoice.invoiceNumber
+                            }
+                          />
+
+                          <Detail
+                            label="Status"
+                            value={invoice.status}
+                          />
+
+                          <Detail
+                            label="Billing period"
+                            value={`${new Date(
+                              invoice.periodStart
+                            ).toLocaleDateString()} - ${new Date(
+                              invoice.periodEnd
+                            ).toLocaleDateString()}`}
+                          />
+
+                          <Detail
+                            label="Subscription amount"
+                            value={`${invoice.subscriptionAmount} ${invoice.currency}`}
+                          />
+
+                          <Detail
+                            label="Commission amount"
+                            value={`${invoice.commissionAmount} ${invoice.currency}`}
+                          />
+
+                          <Detail
+                            label="Invoice total"
+                            value={`${invoice.totalAmount} ${invoice.currency}`}
+                          />
+
+                          <Detail
+                            label="Created"
+                            value={new Date(
+                              invoice.createdAt
+                            ).toLocaleString()}
+                          />
+
+                          <Detail
+                            label="Opened"
+                            value={
+                              invoice.openedAt
+                                ? new Date(
+                                  invoice.openedAt
+                                ).toLocaleString()
+                                : "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Due"
+                            value={
+                              invoice.dueAt
+                                ? new Date(
+                                  invoice.dueAt
+                                ).toLocaleString()
+                                : "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Paid"
+                            value={
+                              invoice.paidAt
+                                ? new Date(
+                                  invoice.paidAt
+                                ).toLocaleString()
+                                : "-"
+                            }
+                          />
+                        </div>
+                      </article>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+            <div
+              style={{
+                marginTop: "28px"
+              }}
+            >
+              <div style={styles.sectionHeader}>
+                <div>
+                  <h3
+                    style={{
+                      ...styles.sectionTitle,
+                      fontSize: "18px"
+                    }}
+                  >
+                    Submit Settlement
+                  </h3>
+
+                  <p
+                    style={
+                      styles.sectionDescription
+                    }
+                  >
+                    Submit payment evidence for an
+                    open platform invoice. Submission
+                    requires review before the invoice
+                    can be marked paid.
+                  </p>
+                </div>
+              </div>
+
+              {billingInvoices.filter(
+                (invoice) =>
+                  invoice.status === "OPEN"
+              ).length === 0 ? (
+                <div style={styles.emptyState}>
+                  No open invoices require settlement.
+                </div>
+              ) : (
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitSettlement();
+                  }}
+                  style={{
+                    display: "grid",
+                    gap: "16px"
+                  }}
+                >
+                  <label
+                    style={{
+                      display: "grid",
+                      gap: "6px"
+                    }}
+                  >
+                    <span>
+                      Open invoice
+                    </span>
+
+                    <select
+                      style={styles.formInput}
+                      value={
+                        settlementInvoiceId
+                      }
+                      onChange={(event) => {
+                        setSettlementInvoiceId(
+                          event.target.value
+                        );
+
+                        setSettlementIdempotencyKey(
+                          ""
+                        );
+                      }}
+                      disabled={
+                        submittingSettlement
+                      }
+                      required
+                    >
+                      <option value="">
+                        Select an invoice
+                      </option>
+
+                      {billingInvoices
+                        .filter(
+                          (invoice) =>
+                            invoice.status ===
+                            "OPEN"
+                        )
+                        .map((invoice) => (
+                          <option
+                            key={invoice.id}
+                            value={invoice.id}
+                          >
+                            {invoice.invoiceNumber} -{" "}
+                            {invoice.totalAmount}{" "}
+                            {invoice.currency}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+
+                  {settlementInvoiceId &&
+                    (() => {
+                      const selectedInvoice =
+                        billingInvoices.find(
+                          (invoice) =>
+                            invoice.id ===
+                            settlementInvoiceId &&
+                            invoice.status ===
+                            "OPEN"
+                        );
+
+                      if (!selectedInvoice) {
+                        return null;
+                      }
+
+                      return (
+                        <div
+                          style={
+                            styles.summaryCard
+                          }
+                        >
+                          <div
+                            style={
+                              styles.summary
+                            }
+                          >
+                            <Detail
+                              label="Invoice"
+                              value={
+                                selectedInvoice.invoiceNumber
+                              }
+                            />
+
+                            <Detail
+                              label="Amount due"
+                              value={`${selectedInvoice.totalAmount} ${selectedInvoice.currency}`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                  <label
+                    style={{
+                      display: "grid",
+                      gap: "6px"
+                    }}
+                  >
+                    <span>
+                      Provider
+                    </span>
+
+                    <select
+                      style={styles.formInput}
+                      value={
+                        settlementProvider
+                      }
+                      onChange={(event) => {
+                        setSettlementProvider(
+                          event.target.value as
+                          | "TELEBIRR"
+                          | "CBE_BIRR"
+                          | "OTHER"
+                        );
+
+                        setSettlementIdempotencyKey(
+                          ""
+                        );
+                      }}
+                      disabled={
+                        submittingSettlement
+                      }
+                    >
+                      <option value="TELEBIRR">
+                        Telebirr
+                      </option>
+
+                      <option value="CBE_BIRR">
+                        CBE Birr
+                      </option>
+
+                      <option value="OTHER">
+                        Other
+                      </option>
+                    </select>
+                  </label>
+
+                  <label
+                    style={{
+                      display: "grid",
+                      gap: "6px"
+                    }}
+                  >
+                    <span>
+                      Transaction reference
+                    </span>
+
+                    <input
+                      style={styles.formInput}
+                      type="text"
+                      value={
+                        settlementTransactionReference
+                      }
+                      onChange={(event) => {
+                        setSettlementTransactionReference(
+                          event.target.value
+                        );
+
+                        setSettlementIdempotencyKey(
+                          ""
+                        );
+                      }}
+                      disabled={
+                        submittingSettlement
+                      }
+                      placeholder="Transaction reference"
+                    />
+                  </label>
+
+                  <label
+                    style={{
+                      display: "grid",
+                      gap: "6px"
+                    }}
+                  >
+                    <span>
+                      Settlement receipt
+                    </span>
+
+                    <input
+                      style={styles.formInput}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) => {
+                        setSettlementReceiptFile(
+                          event.target.files?.[0] ??
+                          null
+                        );
+
+                        setSettlementIdempotencyKey(
+                          ""
+                        );
+                      }}
+                      disabled={
+                        submittingSettlement
+                      }
+                    />
+                  </label>
+
+                  <div
+                    style={
+                      styles.sectionDescription
+                    }
+                  >
+                    Enter a transaction reference or upload
+                    a JPEG, PNG, or WebP settlement receipt.
+                    Amount and currency come directly from
+                    the selected invoice and cannot be
+                    changed here.
+                  </div>
+
+                  <div>
+                    <button
+                      type="submit"
+                      disabled={
+                        submittingSettlement ||
+                        !settlementInvoiceId ||
+                        (
+                          !settlementTransactionReference.trim() &&
+                          !settlementReceiptFile
+                        )
+                      }
+                      style={
+                        styles.refreshButton
+                      }
+                    >
+                      {submittingSettlement
+                        ? "Submitting..."
+                        : "Submit for Review"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+            <div
+              style={{
+                marginTop: "28px"
+              }}
+            >
+              <div
+                style={
+                  styles.sectionHeader
+                }
+              >
+                <div>
+                  <h3
+                    style={{
+                      ...styles.sectionTitle,
+                      fontSize: "18px"
+                    }}
+                  >
+                    Settlement History
+                  </h3>
+
+                  <p
+                    style={
+                      styles.sectionDescription
+                    }
+                  >
+                    Merchant payments submitted
+                    toward platform invoices.
+                  </p>
+                </div>
+              </div>
+
+              {billingSettlements.length ===
+                0 ? (
+                <div
+                  style={styles.emptyState}
+                >
+                  No settlements found.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gap: "12px"
+                  }}
+                >
+                  {billingSettlements.map(
+                    (settlement) => (
+                      <article
+                        key={settlement.id}
+                        style={
+                          styles.summaryCard
+                        }
+                      >
+                        <div
+                          style={styles.summary}
+                        >
+                          <Detail
+                            label="Provider"
+                            value={
+                              settlement.provider
+                            }
+                          />
+
+                          <Detail
+                            label="Status"
+                            value={
+                              settlement.status
+                            }
+                          />
+
+                          <Detail
+                            label="Amount"
+                            value={`${settlement.amount} ${settlement.currency}`}
+                          />
+
+                          <Detail
+                            label="Transaction reference"
+                            value={
+                              settlement.transactionReference ||
+                              "-"
+                            }
+                          />
+
+                          <Detail
+                            label="Submitted"
+                            value={new Date(
+                              settlement.submittedAt
+                            ).toLocaleString()}
+                          />
+
+                          <Detail
+                            label="Verified"
+                            value={
+                              settlement.verifiedAt
+                                ? new Date(
+                                  settlement.verifiedAt
+                                ).toLocaleString()
+                                : "-"
+                            }
+                          />
+                        </div>
+
+                        {settlement.hasReceiptEvidence && (
+                          <div
+                            style={{
+                              marginTop: "12px"
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void openSettlementEvidence(
+                                  settlement
+                                )
+                              }
+                            >
+                              View settlement evidence
+                            </button>
+                          </div>
+                        )}
+
+                        {settlement.reviewNote && (
+                          <div
+                            style={{
+                              marginTop: "12px"
+                            }}
+                          >
+                            <strong>
+                              Review note
+                            </strong>
+
+                            <div>
+                              {
+                                settlement.reviewNote
+                              }
+                            </div>
+                          </div>
+                        )}
+                      </article>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        ) : activeTab === "profile" ? (
+          <section
+            style={styles.section}
+          >
+            <div
+              style={styles.sectionHeader}
+            >
+              <div>
+                <h2
+                  style={styles.sectionTitle}
+                >
+                  Merchant Profile
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Business contact information
+                  used for merchant operations.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadMerchantProfile()
+                }
+                disabled={loadingProfile}
+                style={
+                  styles.inventoryRefreshButton
+                }
+              >
+                {loadingProfile
+                  ? "Loading..."
+                  : "Refresh"}
+              </button>
+            </div>
+
+            {loadingProfile &&
+              !merchantProfile ? (
+              <p>
+                Loading merchant profile...
+              </p>
+            ) : !merchantProfile ? (
+              <p>
+                Merchant profile is not
+                available.
+              </p>
+            ) : (
+              <>
+                <div style={styles.summary}>
+                  <Detail
+                    label="Merchant"
+                    value={merchantProfile.name}
+                  />
+
+                  <Detail
+                    label="Currency"
+                    value={
+                      merchantProfile.currency
+                    }
+                  />
+                </div>
+
+                {canManageProfile ? (
+                  <div
+                    style={{
+                      marginTop: "24px"
+                    }}
+                  >
+                    <label
+                      style={styles.formLabel}
+                    >
+                      Phone
+                    </label>
+
+                    <input
+                      type="tel"
+                      value={profilePhone}
+                      onChange={(event) =>
+                        setProfilePhone(
+                          event.target.value
+                        )
+                      }
+                      maxLength={50}
+                      style={styles.formInput}
+                    />
+
+                    <label
+                      style={styles.formLabel}
+                    >
+                      Alternate phone
+                      <span
+                        style={
+                          styles.optionalLabel
+                        }
+                      >
+                        {" "}
+                        Optional
+                      </span>
+                    </label>
+
+                    <input
+                      type="tel"
+                      value={
+                        profileAlternatePhone
+                      }
+                      onChange={(event) =>
+                        setProfileAlternatePhone(
+                          event.target.value
+                        )
+                      }
+                      maxLength={50}
+                      style={styles.formInput}
+                    />
+
+                    <label
+                      style={styles.formLabel}
+                    >
+                      Address
+                      <span
+                        style={
+                          styles.optionalLabel
+                        }
+                      >
+                        {" "}
+                        Optional
+                      </span>
+                    </label>
+
+                    <textarea
+                      value={profileAddress}
+                      onChange={(event) =>
+                        setProfileAddress(
+                          event.target.value
+                        )
+                      }
+                      maxLength={1000}
+                      rows={5}
+                      style={
+                        styles.formTextarea
+                      }
+                    />
+
+                    <div
+                      style={
+                        styles.characterCount
+                      }
+                    >
+                      {profileAddress.length}
+                      /1000
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void saveMerchantProfile()
+                      }
+                      disabled={savingProfile}
+                    >
+                      {savingProfile
+                        ? "Saving..."
+                        : "Save Profile"}
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      ...styles.summary,
+                      marginTop: "24px"
+                    }}
+                  >
+                    <Detail
+                      label="Phone"
+                      value={
+                        merchantProfile.phone ||
+                        "-"
+                      }
+                    />
+
+                    <Detail
+                      label="Alternate phone"
+                      value={
+                        merchantProfile.alternatePhone ||
+                        "-"
+                      }
+                    />
+
+                    <Detail
+                      label="Address"
+                      value={
+                        merchantProfile.address ||
+                        "-"
+                      }
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        ) : (
+          <section
+            style={styles.section}
+          >
+            <div
+              style={styles.sectionHeader}
+            >
+              <div>
+                <h2
+                  style={styles.sectionTitle}
+                >
+                  Users
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Manage the people who can access
+                  this merchant account.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadUsers()
+                }
+                disabled={loadingUsers}
+                style={
+                  styles.inventoryRefreshButton
+                }
+              >
+                {loadingUsers
+                  ? "Loading..."
+                  : "Refresh Users"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "16px",
+                border: "1px solid #dbe3ee",
+                borderRadius: "14px"
+              }}
+            >
+              <h3
+                style={{
+                  ...styles.sectionTitle,
+                  fontSize: "18px",
+                  marginTop: 0
+                }}
+              >
+                Create User
+              </h3>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(220px, 1fr))"
+                }}
+              >
+                <div>
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Display name
+                  </label>
+
+                  <input
+                    type="text"
+                    value={newUserDisplayName}
+                    onChange={(event) =>
+                      setNewUserDisplayName(
+                        event.target.value
+                      )
+                    }
+                    disabled={creatingUser}
+                    style={styles.formInput}
+                    placeholder="Optional"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Email
+                  </label>
+
+                  <input
+                    type="email"
+                    value={newUserEmail}
+                    onChange={(event) =>
+                      setNewUserEmail(
+                        event.target.value
+                      )
+                    }
+                    disabled={creatingUser}
+                    style={styles.formInput}
+                    placeholder="employee@example.com"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Password
+                  </label>
+
+                  <input
+                    type="password"
+                    value={newUserPassword}
+                    onChange={(event) =>
+                      setNewUserPassword(
+                        event.target.value
+                      )
+                    }
+                    disabled={creatingUser}
+                    style={styles.formInput}
+                    placeholder="Minimum 8 characters"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Role
+                  </label>
+
+                  <select
+                    value={newUserRole}
+                    onChange={(event) =>
+                      setNewUserRole(
+                        event.target.value as
+                        | "ADMIN"
+                        | "STAFF"
+                      )
+                    }
+                    disabled={creatingUser}
+                    style={styles.formInput}
+                  >
+                    <option value="STAFF">
+                      STAFF
+                    </option>
+
+                    <option value="ADMIN">
+                      ADMIN
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  marginTop: "16px"
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    void createUser()
+                  }
+                  disabled={creatingUser}
+                  style={
+                    styles.inventoryRefreshButton
+                  }
+                >
+                  {creatingUser
+                    ? "Creating..."
+                    : "Create User"}
+                </button>
+              </div>
+            </div>
+
+            {loadingUsers &&
+              merchantUsers.length === 0 ? (
+              <div
+                style={styles.emptyState}
+              >
+                Loading users...
+              </div>
+            ) : merchantUsers.length === 0 ? (
+              <div
+                style={styles.emptyState}
+              >
+                No users found.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "12px"
+                }}
+              >
+                {merchantUsers.map(
+                  (merchantUser) => (
+                    <article
+                      key={merchantUser.id}
+                      style={
+                        styles.summaryCard
+                      }
+                    >
+                      {editingUserId ===
+                        merchantUser.id &&
+                        merchantUser.role !== "OWNER" ? (
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: "16px"
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: "12px",
+                              gridTemplateColumns:
+                                "repeat(auto-fit, minmax(220px, 1fr))"
+                            }}
+                          >
+                            <div>
+                              <label
+                                style={styles.formLabel}
+                              >
+                                Display name
+                              </label>
+
+                              <input
+                                type="text"
+                                value={editUserDisplayName}
+                                onChange={(event) =>
+                                  setEditUserDisplayName(
+                                    event.target.value
+                                  )
+                                }
+                                disabled={savingUser}
+                                style={styles.formInput}
+                                placeholder="Optional"
+                              />
+                            </div>
+
+                            <div>
+                              <label
+                                style={styles.formLabel}
+                              >
+                                Role
+                              </label>
+
+                              <select
+                                value={editUserRole}
+                                onChange={(event) =>
+                                  setEditUserRole(
+                                    event.target.value as
+                                    | "ADMIN"
+                                    | "STAFF"
+                                  )
+                                }
+                                disabled={savingUser}
+                                style={styles.formInput}
+                              >
+                                <option value="STAFF">
+                                  STAFF
+                                </option>
+
+                                <option value="ADMIN">
+                                  ADMIN
+                                </option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label
+                                style={styles.formLabel}
+                              >
+                                New password
+                              </label>
+
+                              <input
+                                type="password"
+                                value={editUserPassword}
+                                onChange={(event) =>
+                                  setEditUserPassword(
+                                    event.target.value
+                                  )
+                                }
+                                disabled={savingUser}
+                                style={styles.formInput}
+                                placeholder="Leave blank to keep current password"
+                              />
+                            </div>
+                          </div>
+
+                          <div style={styles.summary}>
+                            <Detail
+                              label="Email"
+                              value={merchantUser.email}
+                            />
+
+                            <Detail
+                              label="Created"
+                              value={new Date(
+                                merchantUser.createdAt
+                              ).toLocaleDateString()}
+                            />
+                          </div>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              gap: "10px",
+                              flexWrap: "wrap"
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void updateUser()
+                              }
+                              disabled={savingUser}
+                              style={
+                                styles.inventoryRefreshButton
+                              }
+                            >
+                              {savingUser
+                                ? "Saving..."
+                                : "Save Changes"}
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={cancelEditingUser}
+                              disabled={savingUser}
+                              style={
+                                styles.inventoryRefreshButton
+                              }
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div
+                            style={styles.summary}
+                          >
+                            <Detail
+                              label="Display name"
+                              value={
+                                merchantUser.displayName ||
+                                "-"
+                              }
+                            />
+
+                            <Detail
+                              label="Email"
+                              value={
+                                merchantUser.email
+                              }
+                            />
+
+                            <Detail
+                              label="Role"
+                              value={
+                                merchantUser.role
+                              }
+                            />
+
+                            <Detail
+                              label="Created"
+                              value={new Date(
+                                merchantUser.createdAt
+                              ).toLocaleDateString()}
+                            />
+                          </div>
+
+                          {merchantUser.role !==
+                            "OWNER" && (
+                              <div
+                                style={{
+                                  marginTop: "16px",
+                                  display: "flex",
+                                  gap: "10px",
+                                  flexWrap: "wrap"
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    startEditingUser(
+                                      merchantUser
+                                    )
+                                  }
+                                  disabled={
+                                    savingUser ||
+                                    deletingUserId !== null
+                                  }
+                                  style={
+                                    styles.inventoryRefreshButton
+                                  }
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteUser(
+                                      merchantUser
+                                    )
+                                  }
+                                  disabled={
+                                    savingUser ||
+                                    deletingUserId !== null
+                                  }
+                                  style={
+                                    styles.inventoryRefreshButton
+                                  }
+                                >
+                                  {deletingUserId ===
+                                    merchantUser.id
+                                    ? "Deleting..."
+                                    : "Delete"}
+                                </button>
+                              </div>
+                            )}
+                        </>
+                      )}
+                    </article>
+                  )
+                )}
+              </div>
+            )}
+          </section>
+        )}
+      </main>
+
+      {categoryImagePreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Category image preview"
+          onClick={() =>
+            setCategoryImagePreview(null)
+          }
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background:
+              "rgba(15, 23, 42, 0.82)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px"
+          }}
+        >
+          <div
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+            style={{
+              position: "relative",
+              width: "min(100%, 1100px)",
+              maxHeight:
+                "calc(100vh - 48px)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center"
+            }}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                setCategoryImagePreview(
+                  null
+                )
+              }
+              aria-label="Close image preview"
+              style={{
+                alignSelf: "flex-end",
+                marginBottom: "10px",
+                border:
+                  "1px solid rgba(255, 255, 255, 0.35)",
+                borderRadius: "8px",
+                background:
+                  "rgba(15, 23, 42, 0.75)",
+                color: "#ffffff",
+                padding: "8px 12px",
+                cursor: "pointer",
+                fontWeight: 700
+              }}
+            >
+              Close
+            </button>
+
+            <img
+              src={
+                categoryImagePreview.url
+              }
+              alt={
+                categoryImagePreview.alt
+              }
+              style={{
+                display: "block",
+                maxWidth: "100%",
+                maxHeight:
+                  "calc(100vh - 110px)",
+                objectFit: "contain",
+                borderRadius: "10px",
+                background: "#ffffff"
+              }}
+            />
+          </div>
+        </div>
       )}
-    </main>
+
+      {categoryImageRemoval && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirm category image removal"
+          onClick={() =>
+            setCategoryImageRemoval(null)
+          }
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1001,
+            background:
+              "rgba(15, 23, 42, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px"
+          }}
+        >
+          <div
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+            style={{
+              width: "min(100%, 440px)",
+              borderRadius: "12px",
+              background: "#ffffff",
+              padding: "24px",
+              boxShadow:
+                "0 20px 50px rgba(15, 23, 42, 0.3)"
+            }}
+          >
+            <h3
+              style={{
+                margin: "0 0 10px"
+              }}
+            >
+              Remove Category Image?
+            </h3>
+
+            <p
+              style={{
+                margin: "0 0 20px",
+                lineHeight: 1.5
+              }}
+            >
+              Remove the image from{" "}
+              <strong>
+                {categoryImageRemoval.name}
+              </strong>
+              ? The category and its products
+              will not be deleted.
+            </p>
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: "10px"
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setCategoryImageRemoval(null)
+                }
+                disabled={actionId !== null}
+                style={styles.cancelButton}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const removal =
+                    categoryImageRemoval;
+
+                  setCategoryImageRemoval(null);
+
+                  void removeCategoryImage(
+                    removal.id,
+                    removal.name
+                  );
+                }}
+                disabled={actionId !== null}
+                style={{
+                  ...styles.cancelButton,
+                  color: "#b91c1c"
+                }}
+              >
+                Remove Image
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

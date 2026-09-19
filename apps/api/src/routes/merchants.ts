@@ -1,4 +1,7 @@
-import { Router } from "express";
+import {
+  Router,
+  type RequestHandler
+} from "express";
 
 import {
   prisma,
@@ -16,6 +19,10 @@ import {
   requireMerchantAccess,
   requireRole
 } from "../middleware/auth.js";
+
+import {
+  requireMerchantEntitlement
+} from "../middleware/subscription-entitlement.js";
 
 import multer from "multer";
 
@@ -49,6 +56,53 @@ const upload = multer({
   }
 });
 
+const handleImageUpload:
+  RequestHandler = (
+    req,
+    res,
+    next
+  ) => {
+    upload.single("image")(
+      req,
+      res,
+      (error) => {
+        if (!error) {
+          next();
+          return;
+        }
+
+        if (
+          error instanceof
+            multer.MulterError
+        ) {
+          if (
+            error.code ===
+              "LIMIT_FILE_SIZE"
+          ) {
+            res.status(400).json({
+              error:
+                "Image exceeds the maximum allowed size"
+            });
+            return;
+          }
+
+          res.status(400).json({
+            error:
+              "Invalid image upload"
+          });
+          return;
+        }
+
+        res.status(400).json({
+          error:
+            error instanceof Error
+              ? error.message
+              : "Invalid image upload"
+        });
+      }
+    );
+  };
+
 if (
   !env.r2AccountId ||
   !env.r2AccessKeyId ||
@@ -64,9 +118,99 @@ if (
 router.use(requireAuth);
 
 router.post(
+  "/:merchantId/products/categories/:categoryId/image/upload",
+  requireMerchantAccess,
+  requireMerchantEntitlement(
+    "MUTATE_CATALOG"
+  ),
+  requireRole("OWNER", "ADMIN"),
+  handleImageUpload,
+  async (req, res) => {
+    try {
+      const merchantId =
+        req.params.merchantId as string;
+
+      const categoryId =
+        req.params.categoryId as string;
+
+      if (!req.file) {
+        res.status(400).json({
+          error: "Image file is required"
+        });
+        return;
+      }
+
+      const category =
+        await prisma.productCategory.findFirst({
+          where: {
+            id: categoryId,
+            merchantId
+          }
+        });
+
+      if (!category) {
+        res.status(404).json({
+          error: "Category not found"
+        });
+        return;
+      }
+
+      const extension =
+        req.file.mimetype === "image/jpeg"
+          ? "jpg"
+          : req.file.mimetype === "image/png"
+            ? "png"
+            : "webp";
+
+      const objectKey =
+        `merchants/${merchantId}/categories/${categoryId}/${crypto.randomUUID()}.${extension}`;
+
+      const imageType = req.file.mimetype as
+        | "image/jpeg"
+        | "image/png"
+        | "image/webp";
+
+      const imageUrl =
+        await uploadProductImage(
+          objectKey,
+          req.file.buffer,
+          imageType
+        );
+
+      const updatedCategory =
+        await prisma.productCategory.update({
+          where: {
+            id: category.id
+          },
+          data: {
+            imageUrl,
+            imageAltText: category.name
+          }
+        });
+
+      res.status(201).json({
+        message:
+          "Category image uploaded successfully",
+        category: updatedCategory
+      });
+    } catch (error) {
+      console.error(
+        "Failed to upload category image:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to upload category image"
+      });
+    }
+  }
+);
+
+router.post(
   "/:merchantId/products/:productId/images/upload",
   requireMerchantAccess,requireRole("OWNER", "ADMIN"),
-  upload.single("image"),
+  handleImageUpload,
   async (req, res) => {
     try {
       const merchantId =

@@ -336,6 +336,11 @@ describe(
               `/merchants/${fixture.merchant.id}/products/categories`
           },
           {
+            method: "PATCH",
+            path:
+              `/merchants/${fixture.merchant.id}/products/categories/${fixture.category.id}/image`
+          },
+          {
             method: "DELETE",
             path:
               `/merchants/${fixture.merchant.id}/products/categories/${fixture.category.id}`
