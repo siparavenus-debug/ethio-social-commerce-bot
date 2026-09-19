@@ -667,30 +667,65 @@ export async function handleConversation(
           currency: string;
           stock: number;
           imageUrl: string | null;
+          category: {
+            id: string;
+            name: string;
+            imageUrl: string | null;
+            imageAltText: string | null;
+          } | null;
         }>;
-
+    
       if (products.length === 1) {
         const product = products[0];
-
+    
         if (product.stock > 0) {
           nextState.productId =
             product.id;
-
+    
           nextState.productName =
             product.name;
-
-          if (product.imageUrl) {
-            responseImageUrl =
-              product.imageUrl;
-          }
-
+    
           nextState.awaitingQuantity =
             true;
-
+    
           if (product.imageUrl) {
             responseImageUrl =
               product.imageUrl;
           }
+        }
+      } else if (
+        products.length > 1 &&
+        toolResult.query
+      ) {
+        const normalizedQuery =
+          toolResult.query
+            .trim()
+            .toLocaleLowerCase();
+    
+        const firstCategory =
+          products[0].category;
+    
+        const isMatchingCategory =
+          firstCategory !== null &&
+          firstCategory.name
+            .toLocaleLowerCase()
+            .includes(normalizedQuery);
+    
+        const allProductsShareCategory =
+          firstCategory !== null &&
+          products.every(
+            (product) =>
+              product.category?.id ===
+              firstCategory.id
+          );
+    
+        if (
+          isMatchingCategory &&
+          allProductsShareCategory &&
+          firstCategory.imageUrl
+        ) {
+          responseImageUrl =
+            firstCategory.imageUrl;
         }
       }
     }

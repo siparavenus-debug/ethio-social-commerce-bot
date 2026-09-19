@@ -8,6 +8,12 @@ export type ProductSearchResult = {
   currency: string;
   stock: number;
   imageUrl: string | null;
+  category: {
+    id: string;
+    name: string;
+    imageUrl: string | null;
+    imageAltText: string | null;
+  } | null;
 };
 
 function mapProduct(product: {
@@ -20,6 +26,12 @@ function mapProduct(product: {
   images: Array<{
     url: string;
   }>;
+  category: {
+    id: string;
+    name: string;
+    imageUrl: string | null;
+    imageAltText: string | null;
+  } | null;
 }): ProductSearchResult {
   return {
     id: product.id,
@@ -28,7 +40,8 @@ function mapProduct(product: {
     price: Number(product.price),
     currency: product.currency,
     stock: product.stock,
-    imageUrl: product.images[0]?.url ?? null
+    imageUrl: product.images[0]?.url ?? null,
+    category: product.category
   };
 }
 
@@ -44,11 +57,25 @@ export async function searchProducts(
       status: "ACTIVE",
       ...(normalizedQuery
         ? {
-            name: {
-              contains: normalizedQuery,
-              mode: "insensitive"
+          OR: [
+            {
+              name: {
+                contains: normalizedQuery,
+                mode: "insensitive"
+              }
+            },
+            {
+              category: {
+                is: {
+                  name: {
+                    contains: normalizedQuery,
+                    mode: "insensitive"
+                  }
+                }
+              }
             }
-          }
+          ]
+        }
         : {})
     },
 
@@ -69,6 +96,14 @@ export async function searchProducts(
         take: 1,
         select: {
           url: true
+        }
+      },
+      category: {
+        select: {
+          id: true,
+          name: true,
+          imageUrl: true,
+          imageAltText: true
         }
       }
     }
@@ -101,6 +136,14 @@ export async function getProduct(
         take: 1,
         select: {
           url: true
+        }
+      },
+      category: {
+        select: {
+          id: true,
+          name: true,
+          imageUrl: true,
+          imageAltText: true
         }
       }
     }

@@ -24,6 +24,7 @@ export type AIToolExecutionContext = {
 export type AIToolExecutionResult = {
   tool: AIToolCall["tool"];
   result: unknown;
+  query?: string;
 };
 
 function requireString(
@@ -79,10 +80,11 @@ export async function executeAITool(
           query
         );
 
-      return {
-        tool: toolCall.tool,
-        result
-      };
+        return {
+          tool: toolCall.tool,
+          result,
+          query
+        };
     }
 
     case "getProduct": {
