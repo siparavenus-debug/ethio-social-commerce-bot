@@ -5,6 +5,7 @@ import type {
   import express from "express";
 
   import {
+    MerchantUserRole,
     prisma
   } from "@ethio-commerce/database";
 
@@ -23,6 +24,10 @@ import type {
   import {
     createPlatformAuthToken
   } from "../src/services/platform-auth.js";
+
+  import {
+    createAuthToken
+  } from "../src/services/auth.js";
 
   const testPrefix =
     "platform-merchant-profile";
@@ -215,6 +220,84 @@ import type {
           ).toBe(401);
         }
       );
+
+      for (
+        const role of [
+          MerchantUserRole.OWNER,
+          MerchantUserRole.ADMIN,
+          MerchantUserRole.STAFF
+        ]
+      ) {
+        it(
+          `rejects merchant ${role} credentials from platform merchant reads`,
+          async () => {
+            const merchant =
+              await createMerchant(
+                `merchant-${role.toLowerCase()}`
+              );
+
+            const user =
+              await prisma.merchantUser.create({
+                data: {
+                  merchantId:
+                    merchant.id,
+                  email:
+                    `${testPrefix}-${role.toLowerCase()}@example.test`,
+                  passwordHash:
+                    "test-password-hash",
+                  displayName:
+                    `Merchant ${role}`,
+                  role,
+                  tokenVersion:
+                    0
+                }
+              });
+
+            const token =
+              createAuthToken({
+                id:
+                  user.id,
+                merchantId:
+                  merchant.id,
+                role:
+                  user.role,
+                tokenVersion:
+                  user.tokenVersion
+              });
+
+            const listResponse =
+              await fetch(
+                `${apiBaseUrl}/platform/merchants`,
+                {
+                  headers: {
+                    authorization:
+                      `Bearer ${token}`
+                  }
+                }
+              );
+
+            expect(
+              listResponse.status
+            ).toBe(403);
+
+            const detailResponse =
+              await fetch(
+                `${apiBaseUrl}/platform/merchants/${merchant.id}`,
+                {
+                  headers: {
+                    authorization:
+                      `Bearer ${token}`
+                  }
+                }
+              );
+
+            expect(
+              detailResponse.status
+            ).toBe(403);
+          }
+        );
+      }
+
 
       it(
         "includes merchant contact fields in the platform merchant list",
