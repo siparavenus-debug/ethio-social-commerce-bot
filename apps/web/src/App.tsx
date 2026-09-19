@@ -3525,10 +3525,9 @@ export default function App() {
               }}
               style={{
                 ...styles.tab,
-                ...(activeTab ===
-                  "payments"
+                ...(activeTab === "payments"
                   ? styles.activeTab
-                  : {})
+                  : styles.inactiveTab)
               }}
             >
               Payment Review
@@ -3554,10 +3553,9 @@ export default function App() {
             }}
             style={{
               ...styles.tab,
-              ...(activeTab ===
-                "orders"
+              ...(activeTab === "orders"
                 ? styles.activeTab
-                : {})
+                : styles.inactiveTab)
             }}
           >
             Orders
@@ -3575,10 +3573,9 @@ export default function App() {
             }}
             style={{
               ...styles.tab,
-              ...(activeTab ===
-                "inventory"
+              ...(activeTab === "inventory"
                 ? styles.activeTab
-                : {})
+                : styles.inactiveTab)
             }}
           >
             Inventory
@@ -3618,10 +3615,9 @@ export default function App() {
             }}
             style={{
               ...styles.tab,
-              ...(activeTab ===
-                "profile"
+              ...(activeTab === "profile"
                 ? styles.activeTab
-                : {})
+                : styles.inactiveTab)
             }}
           >
             Profile
@@ -3640,10 +3636,9 @@ export default function App() {
               }}
               style={{
                 ...styles.tab,
-                ...(activeTab ===
-                  "billing"
+                ...(activeTab === "billing"
                   ? styles.activeTab
-                  : {})
+                  : styles.inactiveTab)
               }}
             >
               Billing
@@ -3663,7 +3658,7 @@ export default function App() {
                 ...styles.tab,
                 ...(activeTab === "users"
                   ? styles.activeTab
-                  : {})
+                  : styles.inactiveTab)
               }}
             >
               Users
@@ -8818,9 +8813,7 @@ const styles: Record<
     maxWidth: "1200px",
     margin: "0 auto 24px",
     display: "flex",
-    gap: "4px",
-    borderBottom:
-      "1px solid #d0d5dd"
+    gap: "4px"
   },
 
   tab: {
@@ -8837,7 +8830,13 @@ const styles: Record<
     alignItems: "center",
     gap: "8px"
   },
-
+  
+  inactiveTab: {
+    color: "#667085",
+    borderBottomColor:
+      "transparent"
+  },
+  
   activeTab: {
     color: "#172033",
     borderBottomColor:
