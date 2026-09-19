@@ -2978,7 +2978,8 @@ export default function App() {
   }, [
     auth?.token,
     canReviewPayments,
-    canViewBilling
+    canViewBilling,
+    canManageUsers
   ]);
 
   const reviewCount =

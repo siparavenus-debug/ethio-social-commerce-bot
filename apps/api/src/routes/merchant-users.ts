@@ -219,29 +219,54 @@ router.post(
       const passwordHash =
         await hashPassword(password);
 
-      const user =
-        await prisma.merchantUser.create({
-          data: {
-            merchantId,
-            email,
-            passwordHash,
-            displayName:
-              displayName || null,
-            role:
-              role === "ADMIN"
-                ? MerchantUserRole.ADMIN
-                : MerchantUserRole.STAFF
-          },
-          select: {
-            id: true,
-            merchantId: true,
-            email: true,
-            displayName: true,
-            role: true,
-            createdAt: true,
-            updatedAt: true
+        const user =
+        await prisma.$transaction(
+          async (tx) => {
+            const createdUser =
+              await tx.merchantUser.create({
+                data: {
+                  merchantId,
+                  email,
+                  passwordHash,
+                  displayName:
+                    displayName || null,
+                  role:
+                    role === "ADMIN"
+                      ? MerchantUserRole.ADMIN
+                      : MerchantUserRole.STAFF
+                },
+                select: {
+                  id: true,
+                  merchantId: true,
+                  email: true,
+                  displayName: true,
+                  role: true,
+                  createdAt: true,
+                  updatedAt: true
+                }
+              });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId:
+                  req.auth!.id,
+                action:
+                  "MERCHANT_USER_CREATED",
+                entityType:
+                  "MERCHANT_USER",
+                entityId:
+                  createdUser.id,
+                metadata: {
+                  role:
+                    createdUser.role
+                }
+              }
+            });
+
+            return createdUser;
           }
-        });
+        );
 
       res.status(201).json({
         user
@@ -286,6 +311,7 @@ router.patch(
           },
           select: {
             id: true,
+            displayName: true,
             role: true
           }
         });
@@ -315,6 +341,8 @@ router.patch(
         };
       } = {};
 
+      const changedFields: string[] = [];
+
       if (
         req.body &&
         Object.prototype.hasOwnProperty.call(
@@ -340,6 +368,15 @@ router.patch(
 
         data.displayName =
           displayName || null;
+
+          if (
+            data.displayName !==
+            targetUser.displayName
+          ) {
+            changedFields.push(
+              "displayName"
+            );
+          }
       }
 
       if (
@@ -364,6 +401,12 @@ router.patch(
           req.body.role === "ADMIN"
             ? MerchantUserRole.ADMIN
             : MerchantUserRole.STAFF;
+
+            if (
+              data.role !== targetUser.role
+            ) {
+              changedFields.push("role");
+            }
       }
 
       if (
@@ -388,6 +431,8 @@ router.patch(
           await hashPassword(
             req.body.password
           );
+
+          changedFields.push("password");
       }
 
       if (
@@ -410,21 +455,49 @@ router.patch(
       }
 
       const user =
-        await prisma.merchantUser.update({
-          where: {
-            id: targetUser.id
-          },
-          data,
-          select: {
-            id: true,
-            merchantId: true,
-            email: true,
-            displayName: true,
-            role: true,
-            createdAt: true,
-            updatedAt: true
+        await prisma.$transaction(
+          async (tx) => {
+            const updatedUser =
+              await tx.merchantUser.update({
+                where: {
+                  id: targetUser.id
+                },
+                data,
+                select: {
+                  id: true,
+                  merchantId: true,
+                  email: true,
+                  displayName: true,
+                  role: true,
+                  createdAt: true,
+                  updatedAt: true
+                }
+              });
+
+            if (
+              changedFields.length > 0
+            ) {
+              await tx.auditLog.create({
+                data: {
+                  merchantId,
+                  actorUserId:
+                    req.auth!.id,
+                  action:
+                    "MERCHANT_USER_UPDATED",
+                  entityType:
+                    "MERCHANT_USER",
+                  entityId:
+                    targetUser.id,
+                  metadata: {
+                    changedFields
+                  }
+                }
+              });
+            }
+
+            return updatedUser;
           }
-        });
+        );
 
       res.json({
         user
@@ -491,11 +564,33 @@ router.delete(
         return;
       }
 
-      await prisma.merchantUser.delete({
-        where: {
-          id: targetUser.id
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.auditLog.create({
+            data: {
+              merchantId,
+              actorUserId:
+                req.auth!.id,
+              action:
+                "MERCHANT_USER_DELETED",
+              entityType:
+                "MERCHANT_USER",
+              entityId:
+                targetUser.id,
+              metadata: {
+                role:
+                  targetUser.role
+              }
+            }
+          });
+
+          await tx.merchantUser.delete({
+            where: {
+              id: targetUser.id
+            }
+          });
         }
-      });
+      );
 
       res.sendStatus(204);
     } catch (error) {
