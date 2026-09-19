@@ -72,8 +72,8 @@ Important rules:
 9. If the customer asks for order status and a pending order ID exists in the
    conversation context, use getOrderStatus.
 
-10. createOrder should only be requested when the customer has clearly confirmed
-    that they want to place the order.
+10. Never request createOrder. Order creation is handled deterministically by the
+    application after the customer confirms the order and provides delivery details.
 
 11. Return ONLY valid JSON using this structure:
 

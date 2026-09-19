@@ -272,6 +272,26 @@ async function createSuspendedFixture() {
           "100.00",
         total:
           "100.00",
+
+        deliveryName:
+          "Day 16 Test Recipient",
+        deliveryPhone:
+          "0911000000",
+        deliveryAddress:
+          "Day 16 Test Address",
+        deliveryConfirmationCodeHash:
+          "a".repeat(64),
+        deliveryConfirmationCodeExpiresAt:
+          new Date(
+            "2026-09-16T12:00:00.000Z"
+          ),
+        deliveryConfirmationAttempts:
+          2,
+        deliveryConfirmationSentAt:
+          new Date(
+            "2026-09-16T11:30:00.000Z"
+          ),
+
         items: {
           create: {
             productId:
@@ -373,6 +393,51 @@ describe(
           submitResponse.status
         ).toBe(201);
 
+        const submitBody =
+          await submitResponse.json();
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryName"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryPhone"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryAddress"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeHash"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeExpiresAt"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationAttempts"
+        );
+
+        expect(
+          submitBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationSentAt"
+        );
+
         const submittedPayment =
           await prisma.payment.findFirstOrThrow({
             where: {
@@ -449,6 +514,51 @@ describe(
         expect(
           verifyResponse.status
         ).toBe(200);
+
+        const verifyBody =
+          await verifyResponse.json();
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryName"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryPhone"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryAddress"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeHash"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeExpiresAt"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationAttempts"
+        );
+
+        expect(
+          verifyBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationSentAt"
+        );
 
         const verifiedPayment =
           await prisma.payment.findUniqueOrThrow({
@@ -627,6 +737,51 @@ describe(
         expect(
           rejectResponse.status
         ).toBe(200);
+
+        const rejectBody =
+          await rejectResponse.json();
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryName"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryPhone"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryAddress"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeHash"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationCodeExpiresAt"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationAttempts"
+        );
+
+        expect(
+          rejectBody.order
+        ).not.toHaveProperty(
+          "deliveryConfirmationSentAt"
+        );
 
         const rejectedPayment =
           await prisma.payment.findUniqueOrThrow({

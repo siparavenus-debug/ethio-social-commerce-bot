@@ -234,8 +234,18 @@ model Order {
   currency    String      @default("ETB") @db.VarChar(3)
   subtotal    Decimal     @db.Decimal(12, 2)
   total       Decimal     @db.Decimal(12, 2)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+
+  deliveryName                      String?
+  deliveryPhone                     String?
+  deliveryAddress                   String?
+  deliveryConfirmationCodeHash      String?
+  deliveryConfirmationCodeExpiresAt DateTime?
+  deliveryConfirmationAttempts      Int       @default(0)
+  deliveryConfirmationSentAt        DateTime?
+  deliveryConfirmedAt               DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   merchant    Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)

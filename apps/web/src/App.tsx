@@ -100,6 +100,10 @@ type Order = {
   currency: string;
   subtotal: string;
   total: string;
+  deliveryName: string | null;
+  deliveryPhone: string | null;
+  deliveryAddress: string | null;
+  deliveryConfirmedAt: string | null;
   createdAt: string;
   updatedAt: string;
   customer: {
@@ -669,6 +673,18 @@ export default function App() {
   );
 
   const [
+    confirmingDeliveryOrderId,
+    setConfirmingDeliveryOrderId
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    deliveryConfirmationCode,
+    setDeliveryConfirmationCode
+  ] = useState("");
+
+  const [
     error,
     setError
   ] = useState("");
@@ -754,6 +770,12 @@ export default function App() {
     setError("");
     setSuccess("");
     setActionId(null);
+    setConfirmingDeliveryOrderId(
+      null
+    );
+    setDeliveryConfirmationCode(
+      ""
+    );
     setRejectingPaymentId(null);
     setRestockingProductId(null);
   }
@@ -2549,10 +2571,7 @@ export default function App() {
   }
 
   async function updateOrderStatus(
-    orderId: string,
-    status:
-      | "FULFILLING"
-      | "FULFILLED"
+    orderId: string
   ) {
     try {
       setActionId(orderId);
@@ -2565,7 +2584,7 @@ export default function App() {
           {
             method: "POST",
             body: JSON.stringify({
-              status
+              status: "FULFILLING"
             })
           }
         );
@@ -2580,18 +2599,9 @@ export default function App() {
         );
       }
 
-      if (
-        status ===
-        "FULFILLING"
-      ) {
-        setSuccess(
-          `Order ${data.order.orderNumber} is now being prepared.`
-        );
-      } else {
-        setSuccess(
-          `Order ${data.order.orderNumber} has been fulfilled.`
-        );
-      }
+      setSuccess(
+        `Order ${data.order.orderNumber} is now being prepared.`
+      );
 
       await loadOrders();
     } catch (err) {
@@ -2599,6 +2609,119 @@ export default function App() {
         err instanceof Error
           ? err.message
           : "Failed to update order status"
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function confirmDelivery(
+    orderId: string
+  ) {
+    const code =
+      deliveryConfirmationCode.trim();
+
+    if (!/^\d{6}$/.test(code)) {
+      setError(
+        "Delivery confirmation code must be exactly 6 digits."
+      );
+      return;
+    }
+
+    try {
+      setActionId(orderId);
+      setError("");
+      setSuccess("");
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/orders/${orderId}/delivery-confirmation`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              code
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to confirm delivery"
+        );
+      }
+
+      setConfirmingDeliveryOrderId(
+        null
+      );
+      setDeliveryConfirmationCode(
+        ""
+      );
+
+      setSuccess(
+        `Order ${data.order.orderNumber} delivery confirmed.`
+      );
+
+      await loadOrders();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to confirm delivery"
+      );
+      setDeliveryConfirmationCode(
+        ""
+      );
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function resendDeliveryConfirmationCode(
+    orderId: string
+  ) {
+    try {
+      setActionId(
+        `delivery-resend-${orderId}`
+      );
+      setError("");
+      setSuccess("");
+
+      const response =
+        await apiFetch(
+          `/merchants/${merchantId}/orders/${orderId}/delivery-confirmation/resend`,
+          {
+            method: "POST"
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to send a new delivery confirmation code"
+        );
+      }
+
+      setDeliveryConfirmationCode(
+        ""
+      );
+
+      setSuccess(
+        `A new delivery confirmation code was sent for order ${data.order.orderNumber}.`
+      );
+
+      await loadOrders();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to send a new delivery confirmation code"
       );
     } finally {
       setActionId(null);
@@ -4623,6 +4746,30 @@ export default function App() {
                             order.createdAt
                           ).toLocaleString()}
                         />
+
+                        <Detail
+                          label="Recipient"
+                          value={
+                            order.deliveryName ||
+                            "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Delivery phone"
+                          value={
+                            order.deliveryPhone ||
+                            "-"
+                          }
+                        />
+
+                        <Detail
+                          label="Delivery address"
+                          value={
+                            order.deliveryAddress ||
+                            "-"
+                          }
+                        />
                       </div>
 
                       <div
@@ -4657,8 +4804,7 @@ export default function App() {
                                 }
                                 onClick={() =>
                                   void updateOrderStatus(
-                                    order.id,
-                                    "FULFILLING"
+                                    order.id
                                   )
                                 }
                                 style={
@@ -4671,29 +4817,154 @@ export default function App() {
                               </button>
                             )}
 
-                          {canFulfillOrders && order.status ===
+                          {canFulfillOrders &&
+                            order.status ===
                             "FULFILLING" && (
-                              <button
-                                type="button"
-                                disabled={
-                                  busy ||
-                                  actionId !==
-                                  null
-                                }
-                                onClick={() =>
-                                  void updateOrderStatus(
-                                    order.id,
-                                    "FULFILLED"
-                                  )
-                                }
-                                style={
-                                  styles.fulfillButton
-                                }
-                              >
-                                {busy
-                                  ? "Processing..."
-                                  : "Mark Fulfilled"}
-                              </button>
+                              <>
+                                {confirmingDeliveryOrderId ===
+                                order.id ? (
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      gap: "8px",
+                                      alignItems:
+                                        "center",
+                                      flexWrap: "wrap"
+                                    }}
+                                  >
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      autoComplete="off"
+                                      maxLength={6}
+                                      value={
+                                        deliveryConfirmationCode
+                                      }
+                                      onChange={(
+                                        event
+                                      ) => {
+                                        const value =
+                                          event.target.value.replace(
+                                            /\D/g,
+                                            ""
+                                          );
+
+                                        setDeliveryConfirmationCode(
+                                          value
+                                        );
+                                      }}
+                                      disabled={
+                                        busy ||
+                                        actionId !==
+                                          null
+                                      }
+                                      placeholder="6-digit code"
+                                      aria-label="Delivery confirmation code"
+                                      style={{
+                                        ...styles.formInput,
+                                        width: "150px",
+                                        margin: 0
+                                      }}
+                                    />
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        busy ||
+                                        actionId !==
+                                          null ||
+                                        deliveryConfirmationCode
+                                          .length !==
+                                          6
+                                      }
+                                      onClick={() =>
+                                        void confirmDelivery(
+                                          order.id
+                                        )
+                                      }
+                                      style={
+                                        styles.fulfillButton
+                                      }
+                                    >
+                                      {busy
+                                        ? "Confirming..."
+                                        : "Confirm Delivery"}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={
+                                        actionId !==
+                                        null
+                                      }
+                                      onClick={() => {
+                                        setConfirmingDeliveryOrderId(
+                                          null
+                                        );
+                                        setDeliveryConfirmationCode(
+                                          ""
+                                        );
+                                        setError(
+                                          ""
+                                        );
+                                      }}
+                                      style={
+                                        styles.cancelButton
+                                      }
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      actionId !==
+                                      null
+                                    }
+                                    onClick={() => {
+                                      setConfirmingDeliveryOrderId(
+                                        order.id
+                                      );
+                                      setDeliveryConfirmationCode(
+                                        ""
+                                      );
+                                      setError(
+                                        ""
+                                      );
+                                      setSuccess(
+                                        ""
+                                      );
+                                    }}
+                                    style={
+                                      styles.fulfillButton
+                                    }
+                                  >
+                                    Confirm Delivery
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  disabled={
+                                    actionId !==
+                                    null
+                                  }
+                                  onClick={() =>
+                                    void resendDeliveryConfirmationCode(
+                                      order.id
+                                    )
+                                  }
+                                  style={
+                                    styles.cancelButton
+                                  }
+                                  >
+                                  {actionId ===
+                                  `delivery-resend-${order.id}`
+                                    ? "Sending..."
+                                    : "Send New Code"}
+                                </button>
+                              </>
                             )}
 
                           {order.status ===

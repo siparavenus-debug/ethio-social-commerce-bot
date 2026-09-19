@@ -9,6 +9,8 @@ import { sendTelegramMessage } from "../services/telegram.js";
 
 import { accrueCommission } from "../services/commission.js";
 
+import { sanitizeOrderForBillingResponse } from "../services/order-response.js";
+
 import {
   requireAuth,
   requireMerchantAccess,
@@ -277,7 +279,12 @@ router.get(
         return;
       }
 
-      res.json(payment);
+      res.json({
+        ...payment,
+        order: sanitizeOrderForBillingResponse(
+          payment.order
+        )
+      });
     } catch (error) {
       console.error(
         "Failed to get payment review:",
@@ -878,7 +885,11 @@ router.post(
         message:
           "Payment verified successfully",
 
-        ...result
+        ...result,
+
+        order: sanitizeOrderForBillingResponse(
+          result.order
+        )
       });
     } catch (error) {
       console.error(
@@ -1260,7 +1271,11 @@ router.post(
         message:
           "Payment rejected",
 
-        ...result
+        ...result,
+
+        order: sanitizeOrderForBillingResponse(
+          result.order
+        )
       });
     } catch (error) {
       console.error(

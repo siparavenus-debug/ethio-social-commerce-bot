@@ -7,6 +7,7 @@ import {
 import {
   getConversationState,
   setConversationState,
+  updateConversationState,
   clearConversationState
 } from "./conversation-state.js";
 
@@ -426,6 +427,118 @@ export async function handleConversation(
           "Please start again by telling me the product name."
       };
     }
+    updateConversationState(chatId, {
+      awaitingConfirmation: false,
+      awaitingDeliveryName: true,
+      awaitingDeliveryPhone: false,
+      awaitingDeliveryAddress: false,
+      deliveryName: undefined,
+      deliveryPhone: undefined,
+      deliveryAddress: undefined
+    });
+
+    return {
+      reply:
+        "Great. Before payment, I need the delivery details.\n\n" +
+        "Please enter the recipient's full name."
+    };
+  }
+
+  /*
+ * STEP 4A: Collect delivery recipient name
+ */
+  if (currentState.awaitingDeliveryName) {
+    const deliveryName = text.trim();
+
+    if (!deliveryName) {
+      return {
+        reply:
+          "Please enter the recipient's full name."
+      };
+    }
+
+    updateConversationState(chatId, {
+      awaitingDeliveryName: false,
+      awaitingDeliveryPhone: true,
+      deliveryName
+    });
+
+    return {
+      reply:
+        "Thank you.\n\n" +
+        "Please enter the delivery phone number."
+    };
+  }
+
+  /*
+ * STEP 4B: Collect delivery phone
+ */
+  if (currentState.awaitingDeliveryPhone) {
+    const deliveryPhone = text.trim();
+
+    if (!deliveryPhone) {
+      return {
+        reply:
+          "Please enter the delivery phone number."
+      };
+    }
+
+    if (deliveryPhone.length > 50) {
+      return {
+        reply:
+          "The delivery phone number is too long.\n\n" +
+          "Please enter a phone number with at most 50 characters."
+      };
+    }
+
+    updateConversationState(chatId, {
+      awaitingDeliveryPhone: false,
+      awaitingDeliveryAddress: true,
+      deliveryPhone
+    });
+
+    return {
+      reply:
+        "Thank you.\n\n" +
+        "Please enter the delivery address or location."
+    };
+  }
+
+  /*
+ * STEP 4C: Collect delivery address and create order
+ */
+  if (currentState.awaitingDeliveryAddress) {
+    const deliveryAddress = text.trim();
+
+    if (!deliveryAddress) {
+      return {
+        reply:
+          "Please enter the delivery address or location."
+      };
+    }
+
+    if (deliveryAddress.length > 1000) {
+      return {
+        reply:
+          "The delivery address is too long.\n\n" +
+          "Please enter an address with at most 1000 characters."
+      };
+    }
+
+    if (
+      !currentState.productId ||
+      !currentState.quantity ||
+      !currentState.deliveryName ||
+      !currentState.deliveryPhone
+    ) {
+      clearConversationState(chatId);
+
+      return {
+        reply:
+          "Sorry, I lost some of the order information.\n\n" +
+          "Please start again by telling me the product name."
+      };
+    }
 
     const paymentMethods =
       await getPaymentInstructions(merchantId);
@@ -446,7 +559,12 @@ export async function handleConversation(
         merchantId,
         customerId,
         currentState.productId,
-        currentState.quantity
+        currentState.quantity,
+        {
+          name: currentState.deliveryName,
+          phone: currentState.deliveryPhone,
+          address: deliveryAddress
+        }
       );
 
       setConversationState(chatId, {
@@ -614,30 +732,6 @@ export async function handleConversation(
       }
     }
 
-    if (
-      toolResult.tool === "createOrder" &&
-      toolResult.result
-    ) {
-      const order =
-        toolResult.result as {
-          id: string;
-          orderNumber: string;
-          total: number;
-          currency: string;
-        };
-
-      nextState.awaitingPayment =
-        true;
-
-      nextState.pendingOrderId =
-        order.id;
-
-      nextState.awaitingConfirmation =
-        false;
-
-      nextState.awaitingQuantity =
-        false;
-    }
   }
 
   const history =

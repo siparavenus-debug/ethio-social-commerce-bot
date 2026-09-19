@@ -1,6 +1,12 @@
 import { Router } from "express";
 import { prisma } from "@ethio-commerce/database";
 import { sendTelegramMessage } from "../services/telegram.js";
+import { sanitizeOrderForResponse } from "../services/order-response.js";
+import {
+  createDeliveryConfirmation,
+  DELIVERY_CONFIRMATION_MAX_ATTEMPTS,
+  verifyDeliveryConfirmationCode
+} from "../services/delivery-security.js";
 
 import {
   requireAuth,
@@ -9,7 +15,7 @@ import {
 } from "../middleware/auth.js";
 
 import {
-requireMerchantEntitlement
+  requireMerchantEntitlement
 } from "../middleware/subscription-entitlement.js";
 
 const router = Router();
@@ -21,7 +27,7 @@ router.use(requireAuth);
  *
  * GET /merchants/:merchantId/orders
  */
-router.get("/:merchantId/orders", requireMerchantAccess,async (req, res) => {
+router.get("/:merchantId/orders", requireMerchantAccess, async (req, res) => {
   try {
     const merchantId = String(req.params.merchantId);
 
@@ -41,7 +47,11 @@ router.get("/:merchantId/orders", requireMerchantAccess,async (req, res) => {
       }
     });
 
-    res.json(orders);
+    res.json(
+      orders.map((order) =>
+        sanitizeOrderForResponse(order)
+      )
+    );
   } catch (error) {
     console.error("Failed to list orders:", error);
 
@@ -56,7 +66,7 @@ router.get("/:merchantId/orders", requireMerchantAccess,async (req, res) => {
  *
  * GET /merchants/:merchantId/orders/:orderId
  */
-router.get("/:merchantId/orders/:orderId", requireMerchantAccess,async (req, res) => {
+router.get("/:merchantId/orders/:orderId", requireMerchantAccess, async (req, res) => {
   try {
     const merchantId = String(req.params.merchantId);
     const orderId = String(req.params.orderId);
@@ -82,7 +92,9 @@ router.get("/:merchantId/orders/:orderId", requireMerchantAccess,async (req, res
       return;
     }
 
-    res.json(order);
+    res.json(
+      sanitizeOrderForResponse(order)
+    );
   } catch (error) {
     console.error("Failed to get order:", error);
 
@@ -128,7 +140,10 @@ router.post(
         customerId,
         orderNumber,
         currency,
-        items
+        items,
+        deliveryName,
+        deliveryPhone,
+        deliveryAddress
       } = req.body;
 
       const merchant = await prisma.merchant.findUnique({
@@ -150,6 +165,52 @@ router.post(
       ) {
         res.status(400).json({
           error: "orderNumber is required"
+        });
+        return;
+      }
+
+      if (
+        typeof deliveryName !== "string" ||
+        deliveryName.trim().length === 0
+      ) {
+        res.status(400).json({
+          error: "deliveryName is required"
+        });
+        return;
+      }
+
+      if (
+        typeof deliveryPhone !== "string" ||
+        deliveryPhone.trim().length === 0
+      ) {
+        res.status(400).json({
+          error: "deliveryPhone is required"
+        });
+        return;
+      }
+
+      if (deliveryPhone.trim().length > 50) {
+        res.status(400).json({
+          error:
+            "deliveryPhone must be at most 50 characters"
+        });
+        return;
+      }
+
+      if (
+        typeof deliveryAddress !== "string" ||
+        deliveryAddress.trim().length === 0
+      ) {
+        res.status(400).json({
+          error: "deliveryAddress is required"
+        });
+        return;
+      }
+
+      if (deliveryAddress.trim().length > 1000) {
+        res.status(400).json({
+          error:
+            "deliveryAddress must be at most 1000 characters"
         });
         return;
       }
@@ -303,6 +364,9 @@ router.post(
             merchantId,
             customerId: customerId ?? null,
             orderNumber: orderNumber.trim(),
+            deliveryName: deliveryName.trim(),
+            deliveryPhone: deliveryPhone.trim(),
+            deliveryAddress: deliveryAddress.trim(),
             currency:
               typeof currency === "string" &&
                 currency.trim().length > 0
@@ -395,7 +459,9 @@ router.post(
         });
       });
 
-      res.status(201).json(order);
+      res.status(201).json(
+        sanitizeOrderForResponse(order)
+      );
     } catch (error) {
       console.error("Failed to create order:", error);
 
@@ -415,12 +481,12 @@ router.post(
  *
  * Body:
  * {
- *   "status": "FULFILLING" | "FULFILLED"
+ *   "status": "FULFILLING"
  * }
  */
 router.post(
   "/:merchantId/orders/:orderId/status",
-  requireMerchantAccess,requireRole("OWNER", "ADMIN", "STAFF"),
+  requireMerchantAccess, requireRole("OWNER", "ADMIN", "STAFF"),
   async (req, res) => {
     try {
       const merchantId = String(req.params.merchantId);
@@ -428,16 +494,16 @@ router.post(
 
       const { status } = req.body;
 
-      if (
-        status !== "FULFILLING" &&
-        status !== "FULFILLED"
-      ) {
+      if (status !== "FULFILLING") {
         res.status(400).json({
           error:
-            "status must be FULFILLING or FULFILLED"
+            "status must be FULFILLING"
         });
         return;
       }
+
+      let deliveryConfirmationCode:
+        string | null = null;
 
       const result =
         await prisma.$transaction(async (tx) => {
@@ -459,23 +525,30 @@ router.post(
           /*
            * Enforce the fulfillment state machine.
            */
-          if (
-            status === "FULFILLING" &&
-            order.status !== "PAID"
-          ) {
+          if (order.status !== "PAID") {
             throw new Error(
               `Order must be PAID before fulfillment. Current status: ${order.status}`
             );
           }
 
-          if (
-            status === "FULFILLED" &&
-            order.status !== "FULFILLING"
-          ) {
-            throw new Error(
-              `Order must be FULFILLING before it can be fulfilled. Current status: ${order.status}`
+          const deliveryConfirmation = (() => {
+            if (
+              !order.deliveryName?.trim() ||
+              !order.deliveryPhone?.trim() ||
+              !order.deliveryAddress?.trim()
+            ) {
+              throw new Error(
+                "Order must have complete delivery details before fulfillment."
+              );
+            }
+
+            return createDeliveryConfirmation(
+              order.id
             );
-          }
+          })();
+
+          deliveryConfirmationCode =
+            deliveryConfirmation.code;
 
           const updatedOrder =
             await tx.order.update({
@@ -483,7 +556,14 @@ router.post(
                 id: order.id
               },
               data: {
-                status
+                status,
+                deliveryConfirmationCodeHash:
+                  deliveryConfirmation.codeHash,
+                deliveryConfirmationCodeExpiresAt:
+                  deliveryConfirmation.expiresAt,
+                deliveryConfirmationAttempts: 0,
+                deliveryConfirmationSentAt: null,
+                deliveryConfirmedAt: null
               },
               include: {
                 customer: true,
@@ -496,10 +576,7 @@ router.post(
             data: {
               merchantId,
               actorUserId: req.auth!.id,
-              action:
-                status === "FULFILLING"
-                  ? "ORDER_FULFILLING"
-                  : "ORDER_FULFILLED",
+              action: "ORDER_FULFILLING",
               entityType: "ORDER",
               entityId: order.id,
               metadata: {
@@ -531,17 +608,33 @@ router.post(
         result.customer?.telegramChatId
       ) {
         try {
-          if (status === "FULFILLING") {
-            await sendTelegramMessage(
-              result.customer.telegramChatId,
-              `Order ${result.orderNumber} is now being prepared.`
-            );
-          } else {
-            await sendTelegramMessage(
-              result.customer.telegramChatId,
-              `Order ${result.orderNumber} has been fulfilled. Thank you for shopping with us!`
+          if (!deliveryConfirmationCode) {
+            throw new Error(
+              "Delivery confirmation code was not generated."
             );
           }
+
+          await sendTelegramMessage(
+            result.customer.telegramChatId,
+            `Order ${result.orderNumber} is now being prepared.\n\n` +
+            `Your delivery confirmation code is: ${deliveryConfirmationCode}\n\n` +
+            "Give this code to the merchant or delivery person only after you receive your order."
+          );
+
+          await prisma.order.updateMany({
+            where: {
+              id: result.id,
+              merchantId,
+              status: "FULFILLING",
+              deliveryConfirmationCodeHash:
+                result.deliveryConfirmationCodeHash,
+              deliveryConfirmationSentAt: null
+            },
+            data: {
+              deliveryConfirmationSentAt:
+                new Date()
+            }
+          });
         } catch (telegramError) {
           console.error(
             "Failed to send order status Telegram message:",
@@ -552,10 +645,8 @@ router.post(
 
       res.json({
         message:
-          status === "FULFILLING"
-            ? "Order marked as fulfilling"
-            : "Order marked as fulfilled",
-        order: result
+          "Order marked as fulfilling",
+        order: sanitizeOrderForResponse(result)
       });
     } catch (error) {
       console.error(
@@ -568,6 +659,690 @@ router.post(
           error instanceof Error
             ? error.message
             : "Failed to update order status"
+      });
+    }
+  }
+);
+
+/**
+ * Confirm customer delivery using the customer-held code.
+ *
+ * POST /merchants/:merchantId/orders/:orderId/delivery-confirmation
+ *
+ * Body:
+ * {
+ *   "code": "123456"
+ * }
+ */
+router.post(
+  "/:merchantId/orders/:orderId/delivery-confirmation",
+  requireMerchantAccess,
+  requireRole("OWNER", "ADMIN", "STAFF"),
+  async (req, res) => {
+    try {
+      const merchantId =
+        String(req.params.merchantId);
+
+      const orderId =
+        String(req.params.orderId);
+
+      const { code } =
+        req.body;
+
+      if (
+        typeof code !== "string" ||
+        !/^\d{6}$/.test(code)
+      ) {
+        res.status(400).json({
+          error:
+            "code must be a 6-digit number"
+        });
+        return;
+      }
+
+      const result =
+        await prisma.$transaction(
+          async (tx) => {
+            const order =
+              await tx.order.findFirst({
+                where: {
+                  id: orderId,
+                  merchantId
+                },
+                include: {
+                  customer: true
+                }
+              });
+
+            if (!order) {
+              return {
+                kind:
+                  "NOT_FOUND" as const
+              };
+            }
+
+            if (
+              order.status !==
+              "FULFILLING"
+            ) {
+              return {
+                kind:
+                  "INVALID_STATUS" as const
+              };
+            }
+
+            if (
+              !order
+                .deliveryConfirmationCodeHash ||
+              !order
+                .deliveryConfirmationCodeExpiresAt
+            ) {
+              return {
+                kind:
+                  "MISSING_CONFIRMATION" as const
+              };
+            }
+
+            if (
+              order
+                .deliveryConfirmationAttempts >=
+              DELIVERY_CONFIRMATION_MAX_ATTEMPTS
+            ) {
+              return {
+                kind:
+                  "ATTEMPT_LIMIT" as const
+              };
+            }
+
+            if (
+              order
+                .deliveryConfirmationCodeExpiresAt
+                .getTime() <=
+              Date.now()
+            ) {
+              return {
+                kind:
+                  "EXPIRED" as const
+              };
+            }
+
+            const validCode =
+              verifyDeliveryConfirmationCode(
+                order.id,
+                code,
+                order
+                  .deliveryConfirmationCodeHash
+              );
+
+            if (!validCode) {
+              const attemptResult =
+                await tx.order.updateMany({
+                  where: {
+                    id: order.id,
+                    merchantId,
+                    status:
+                      "FULFILLING",
+                    deliveryConfirmationCodeHash:
+                      order
+                        .deliveryConfirmationCodeHash,
+                    deliveryConfirmationCodeExpiresAt:
+                      order
+                        .deliveryConfirmationCodeExpiresAt,
+                    deliveryConfirmationAttempts: {
+                      lt:
+                        DELIVERY_CONFIRMATION_MAX_ATTEMPTS
+                    }
+                  },
+                  data: {
+                    deliveryConfirmationAttempts: {
+                      increment: 1
+                    }
+                  }
+                });
+
+              if (
+                attemptResult.count !== 1
+              ) {
+                return {
+                  kind:
+                    "ALREADY_CLAIMED" as const
+                };
+              }
+
+              return {
+                kind:
+                  "INVALID_CODE" as const
+              };
+            }
+
+            const confirmedAt =
+              new Date();
+
+            const claimResult =
+              await tx.order.updateMany({
+                where: {
+                  id: order.id,
+                  merchantId,
+                  status:
+                    "FULFILLING",
+                  deliveryConfirmationCodeHash:
+                    order
+                      .deliveryConfirmationCodeHash,
+                  deliveryConfirmationCodeExpiresAt:
+                    order
+                      .deliveryConfirmationCodeExpiresAt
+                },
+                data: {
+                  status:
+                    "FULFILLED",
+                  deliveryConfirmedAt:
+                    confirmedAt,
+                  deliveryConfirmationCodeHash:
+                    null,
+                  deliveryConfirmationCodeExpiresAt:
+                    null,
+                  deliveryConfirmationSentAt:
+                    null
+                }
+              });
+
+            if (
+              claimResult.count !== 1
+            ) {
+              return {
+                kind:
+                  "ALREADY_CLAIMED" as const
+              };
+            }
+
+            const fulfilledOrder =
+              await tx.order.findUniqueOrThrow({
+                where: {
+                  id: order.id
+                },
+                include: {
+                  customer: true,
+                  items: true,
+                  payments: true
+                }
+              });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId:
+                  req.auth!.id,
+                action:
+                  "ORDER_FULFILLED",
+                entityType:
+                  "ORDER",
+                entityId:
+                  order.id,
+                metadata: {
+                  orderNumber:
+                    order.orderNumber,
+                  previousStatus:
+                    order.status,
+                  newStatus:
+                    "FULFILLED"
+                }
+              }
+            });
+
+            return {
+              kind:
+                "CONFIRMED" as const,
+              order:
+                fulfilledOrder
+            };
+          }
+        );
+
+      if (
+        result.kind ===
+        "NOT_FOUND"
+      ) {
+        res.status(404).json({
+          error: "Order not found"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "INVALID_STATUS"
+      ) {
+        res.status(400).json({
+          error:
+            "Order must be FULFILLING before delivery confirmation"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "MISSING_CONFIRMATION"
+      ) {
+        res.status(400).json({
+          error:
+            "Delivery confirmation is not available for this order"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "ATTEMPT_LIMIT"
+      ) {
+        res.status(400).json({
+          error:
+            "Delivery confirmation attempt limit reached"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "EXPIRED"
+      ) {
+        res.status(400).json({
+          error:
+            "Delivery confirmation code has expired"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "INVALID_CODE"
+      ) {
+        res.status(400).json({
+          error:
+            "Invalid delivery confirmation code"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "ALREADY_CLAIMED"
+      ) {
+        res.status(409).json({
+          error:
+            "Delivery confirmation was already processed"
+        });
+        return;
+      }
+
+      if (
+        result.order.customer
+          ?.telegramChatId
+      ) {
+        try {
+          await sendTelegramMessage(
+            result.order.customer
+              .telegramChatId,
+            `Order ${result.order.orderNumber} has been delivered and confirmed.\n\n` +
+            "Thank you for your order."
+          );
+        } catch (telegramError) {
+          console.error(
+            "Failed to send delivery confirmation Telegram message:",
+            telegramError
+          );
+        }
+      }
+
+      res.json({
+        message:
+          "Delivery confirmed and order fulfilled",
+        order:
+          sanitizeOrderForResponse(
+            result.order
+          )
+      });
+    } catch (error) {
+      console.error(
+        "Failed to confirm order delivery:",
+        error
+      );
+
+      res.status(400).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to confirm order delivery"
+      });
+    }
+  }
+);
+
+/**
+ * Rotate and resend the delivery confirmation code.
+ *
+ * POST /merchants/:merchantId/orders/:orderId/delivery-confirmation/resend
+ *
+ * The previous confirmation code is invalidated.
+ * The new plaintext code is sent only to the customer.
+ */
+router.post(
+  "/:merchantId/orders/:orderId/delivery-confirmation/resend",
+  requireMerchantAccess,
+  requireRole("OWNER", "ADMIN", "STAFF"),
+  async (req, res) => {
+    try {
+      const merchantId =
+        String(req.params.merchantId);
+
+      const orderId =
+        String(req.params.orderId);
+
+      let deliveryConfirmationCode:
+        string | null = null;
+
+      const result =
+        await prisma.$transaction(
+          async (tx) => {
+            const order =
+              await tx.order.findFirst({
+                where: {
+                  id: orderId,
+                  merchantId
+                },
+                include: {
+                  customer: true
+                }
+              });
+
+            if (!order) {
+              return {
+                kind:
+                  "NOT_FOUND" as const
+              };
+            }
+
+            if (
+              order.status !==
+              "FULFILLING"
+            ) {
+              return {
+                kind:
+                  "INVALID_STATUS" as const
+              };
+            }
+
+            if (
+              !order.deliveryName?.trim() ||
+              !order.deliveryPhone?.trim() ||
+              !order.deliveryAddress?.trim()
+            ) {
+              return {
+                kind:
+                  "MISSING_DELIVERY" as const
+              };
+            }
+
+            if (
+              !order.customer
+                ?.telegramChatId
+            ) {
+              return {
+                kind:
+                  "NO_TELEGRAM" as const
+              };
+            }
+
+            const now =
+              new Date();
+
+            const confirmationMissing =
+              !order
+                .deliveryConfirmationCodeHash ||
+              !order
+                .deliveryConfirmationCodeExpiresAt;
+
+            const confirmationExpired =
+              order
+                .deliveryConfirmationCodeExpiresAt !==
+              null &&
+              order
+                .deliveryConfirmationCodeExpiresAt
+                .getTime() <=
+              now.getTime();
+
+            const attemptsExhausted =
+              order
+                .deliveryConfirmationAttempts >=
+              DELIVERY_CONFIRMATION_MAX_ATTEMPTS;
+            const confirmationNotSent =
+              order.deliveryConfirmationSentAt === null;
+
+            if (
+              !confirmationMissing &&
+              !confirmationExpired &&
+              !attemptsExhausted &&
+              !confirmationNotSent
+            ) {
+              return {
+                kind:
+                  "CONFIRMATION_ACTIVE" as const
+              };
+            }
+
+            const deliveryConfirmation =
+              createDeliveryConfirmation(
+                order.id
+              );
+
+            const claimResult =
+              await tx.order.updateMany({
+                where: {
+                  id:
+                    order.id,
+                  merchantId,
+                  status:
+                    "FULFILLING",
+                  deliveryConfirmationCodeHash:
+                    order
+                      .deliveryConfirmationCodeHash,
+                  deliveryConfirmationCodeExpiresAt:
+                    order
+                      .deliveryConfirmationCodeExpiresAt,
+                  deliveryConfirmationAttempts:
+                    order.deliveryConfirmationAttempts,
+                  deliveryConfirmationSentAt:
+                    order.deliveryConfirmationSentAt
+                },
+                data: {
+                  deliveryConfirmationCodeHash:
+                    deliveryConfirmation.codeHash,
+                  deliveryConfirmationCodeExpiresAt:
+                    deliveryConfirmation.expiresAt,
+                  deliveryConfirmationAttempts:
+                    0,
+                  deliveryConfirmationSentAt:
+                    null
+                }
+              });
+
+            if (
+              claimResult.count !== 1
+            ) {
+              return {
+                kind:
+                  "ALREADY_ROTATED" as const
+              };
+            }
+
+            deliveryConfirmationCode =
+              deliveryConfirmation.code;
+
+            const updatedOrder =
+              await tx.order
+                .findUniqueOrThrow({
+                  where: {
+                    id:
+                      order.id
+                  },
+                  include: {
+                    customer:
+                      true,
+                    items:
+                      true,
+                    payments:
+                      true
+                  }
+                });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId:
+                  req.auth!.id,
+                action:
+                  "DELIVERY_CONFIRMATION_ROTATED",
+                entityType:
+                  "ORDER",
+                entityId:
+                  order.id,
+                metadata: {
+                  orderNumber:
+                    order.orderNumber
+                }
+              }
+            });
+
+            return {
+              kind:
+                "ROTATED" as const,
+              order:
+                updatedOrder
+            };
+          }
+        );
+
+      if (
+        result.kind ===
+        "NOT_FOUND"
+      ) {
+        res.status(404).json({
+          error:
+            "Order not found"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "INVALID_STATUS"
+      ) {
+        res.status(400).json({
+          error:
+            "Order must be FULFILLING before delivery confirmation can be resent"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "MISSING_DELIVERY"
+      ) {
+        res.status(400).json({
+          error:
+            "Order must have complete delivery details before delivery confirmation can be resent"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "NO_TELEGRAM"
+      ) {
+        res.status(400).json({
+          error:
+            "Customer does not have a Telegram chat for delivery confirmation"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "CONFIRMATION_ACTIVE"
+      ) {
+        res.status(409).json({
+          error:
+            "Delivery confirmation code is still active"
+        });
+        return;
+      }
+
+      if (
+        result.kind ===
+        "ALREADY_ROTATED"
+      ) {
+        res.status(409).json({
+          error:
+            "Delivery confirmation was already changed"
+        });
+        return;
+      }
+
+      if (
+        !deliveryConfirmationCode
+      ) {
+        throw new Error(
+          "Delivery confirmation code was not generated."
+        );
+      }
+
+      try {
+        await sendTelegramMessage(
+          result.order.customer!
+            .telegramChatId!,
+          `Order ${result.order.orderNumber} delivery confirmation code is: ${deliveryConfirmationCode}\n\n` +
+          "This replaces your previous delivery confirmation code. Give this code to the merchant or delivery person only after you receive your order."
+        );
+
+        await prisma.order.updateMany({
+          where: {
+            id: result.order.id,
+            merchantId,
+            status: "FULFILLING",
+            deliveryConfirmationCodeHash:
+              result.order.deliveryConfirmationCodeHash,
+            deliveryConfirmationSentAt: null
+          },
+          data: {
+            deliveryConfirmationSentAt:
+              new Date()
+          }
+        });
+      } catch (telegramError) {
+        console.error(
+          "Failed to resend delivery confirmation Telegram message:",
+          telegramError
+        );
+      }
+
+      res.json({
+        message:
+          "Delivery confirmation code rotated and resent",
+        order:
+          sanitizeOrderForResponse(
+            result.order
+          )
+      });
+    } catch (error) {
+      console.error(
+        "Failed to rotate delivery confirmation code:",
+        error
+      );
+
+      res.status(400).json({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to rotate delivery confirmation code"
       });
     }
   }

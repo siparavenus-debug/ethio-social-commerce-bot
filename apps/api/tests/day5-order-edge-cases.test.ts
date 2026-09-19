@@ -13,6 +13,12 @@ import { createOrder } from "../src/tools/orders.js";
 describe("Day 5 - order edge cases", () => {
   const suffix = `day5-${Date.now()}`;
 
+  const delivery = {
+    name: "Day 5 Test Recipient",
+    phone: "0911000000",
+    address: "Addis Ababa Test Address"
+  };
+
   let merchantId: string;
   let customerId: string;
 
@@ -174,7 +180,7 @@ await prisma.subscriptionPlan.deleteMany({
     const before = await countCustomerOrders();
 
     await expect(
-      createOrder(merchantId, customerId, product.id, 1),
+      createOrder(merchantId, customerId, product.id, 1, delivery),
     ).rejects.toThrow("Insufficient stock");
 
     const after = await countCustomerOrders();
@@ -193,7 +199,7 @@ await prisma.subscriptionPlan.deleteMany({
     const before = await countCustomerOrders();
 
     await expect(
-      createOrder(merchantId, customerId, product.id, 1.5),
+      createOrder(merchantId, customerId, product.id, 1.5, delivery),
     ).rejects.toThrow("Quantity must be a positive integer");
 
     expect(await countCustomerOrders()).toBe(before);
@@ -204,7 +210,7 @@ await prisma.subscriptionPlan.deleteMany({
     const before = await countCustomerOrders();
 
     await expect(
-      createOrder(merchantId, customerId, product.id, 0),
+      createOrder(merchantId, customerId, product.id, 0, delivery),
     ).rejects.toThrow("Quantity must be a positive integer");
 
     expect(await countCustomerOrders()).toBe(before);
@@ -215,7 +221,7 @@ await prisma.subscriptionPlan.deleteMany({
     const before = await countCustomerOrders();
 
     await expect(
-      createOrder(merchantId, customerId, product.id, 4),
+      createOrder(merchantId, customerId, product.id, 4, delivery),
     ).rejects.toThrow("Insufficient stock");
 
     expect(await countCustomerOrders()).toBe(before);
@@ -236,6 +242,7 @@ await prisma.subscriptionPlan.deleteMany({
         customerId,
         "nonexistent-day5-product",
         1,
+        delivery,
       ),
     ).rejects.toThrow("Product not found");
 
@@ -250,6 +257,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       product.id,
       1,
+      delivery,
     );
 
     const second = await createOrder(
@@ -257,6 +265,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       product.id,
       2,
+      delivery,
     );
 
     orders.push(first.id, second.id);
@@ -296,6 +305,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productA.id,
       1,
+      delivery,
     );
 
     orders.push(abandoned.id);
@@ -305,6 +315,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productB.id,
       1,
+      delivery,
     );
 
     orders.push(later.id);
@@ -338,6 +349,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productA.id,
       1,
+      delivery,
     );
 
     orders.push(paidOrder.id);
@@ -367,6 +379,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productB.id,
       1,
+      delivery,
     );
 
     orders.push(newOrder.id);
@@ -399,6 +412,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productA.id,
       1,
+      delivery,
     );
 
     orders.push(rejectedOrder.id);
@@ -428,6 +442,7 @@ await prisma.subscriptionPlan.deleteMany({
       customerId,
       productB.id,
       1,
+      delivery,
     );
 
     orders.push(newOrder.id);

@@ -2,7 +2,6 @@
   "searchProducts",
   "getProduct",
   "checkStock",
-  "createOrder",
   "getOrderStatus",
   "getPaymentInstructions"
 ] as const;

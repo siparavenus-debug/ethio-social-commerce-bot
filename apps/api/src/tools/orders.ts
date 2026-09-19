@@ -17,14 +17,49 @@ export type CreatedOrder = {
   }>;
 };
 
+export type DeliverySnapshot = {
+  name: string;
+  phone: string;
+  address: string;
+};
+
 export async function createOrder(
   merchantId: string,
   customerId: string,
   productId: string,
-  quantity: number
+  quantity: number,
+  delivery: DeliverySnapshot
 ): Promise<CreatedOrder> {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive integer");
+  }
+
+  const deliveryName = delivery.name.trim();
+  const deliveryPhone = delivery.phone.trim();
+  const deliveryAddress = delivery.address.trim();
+
+  if (!deliveryName) {
+    throw new Error("Delivery name is required");
+  }
+
+  if (!deliveryPhone) {
+    throw new Error("Delivery phone is required");
+  }
+
+  if (deliveryPhone.length > 50) {
+    throw new Error(
+      "Delivery phone must be at most 50 characters"
+    );
+  }
+
+  if (!deliveryAddress) {
+    throw new Error("Delivery address is required");
+  }
+
+  if (deliveryAddress.length > 1000) {
+    throw new Error(
+      "Delivery address must be at most 1000 characters"
+    );
   }
 
   const orderNumber = `TG-${Date.now()}`;
@@ -74,6 +109,9 @@ export async function createOrder(
         currency: product.currency,
         subtotal,
         total: subtotal,
+        deliveryName,
+        deliveryPhone,
+        deliveryAddress,
         items: {
           create: [
             {

@@ -20,6 +20,12 @@ import {
 const testPrefix =
   "d16-create-order";
 
+const delivery = {
+  name: "Subscription Test Recipient",
+  phone: "0911000000",
+  address: "Addis Ababa Test Address"
+};
+
 async function cleanup() {
   const merchants =
     await prisma.merchant.findMany({
@@ -254,7 +260,8 @@ describe(
             fixture.merchant.id,
             fixture.customer.id,
             fixture.product.id,
-            2
+            2,
+            delivery
           );
 
         expect(
@@ -331,7 +338,8 @@ describe(
             fixture.merchant.id,
             fixture.customer.id,
             fixture.product.id,
-            1
+            1,
+            delivery
           )
         ).rejects.toThrow(
           "Merchant is not entitled to CREATE_COMMERCE"
@@ -358,7 +366,8 @@ describe(
             fixture.merchant.id,
             fixture.customer.id,
             fixture.product.id,
-            1
+            1,
+            delivery
           )
         ).rejects.toThrow(
           "Merchant is not entitled to CREATE_COMMERCE"
@@ -384,7 +393,8 @@ describe(
             fixture.merchant.id,
             fixture.customer.id,
             fixture.product.id,
-            1
+            1,
+            delivery
           )
         ).rejects.toThrow(
           "Merchant is not entitled to CREATE_COMMERCE"

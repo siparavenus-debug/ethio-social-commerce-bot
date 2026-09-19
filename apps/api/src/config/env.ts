@@ -38,6 +38,18 @@ if (
   );
 }
 
+const deliveryConfirmationSecret =
+  process.env.DELIVERY_CONFIRMATION_SECRET?.trim();
+
+if (
+  !deliveryConfirmationSecret ||
+  deliveryConfirmationSecret.length < 32
+) {
+  throw new Error(
+    "DELIVERY_CONFIRMATION_SECRET must be configured and contain at least 32 characters."
+  );
+}
+
 const authTokenTtlSeconds =
   Number(
     process.env.AUTH_TOKEN_TTL_SECONDS ??
@@ -103,6 +115,8 @@ export const env = {
   authSecret,
 
   platformAuthSecret,
+
+  deliveryConfirmationSecret,
 
   authTokenTtlSeconds,
 

@@ -7,6 +7,15 @@ export type ShoppingState = {
 
   awaitingQuantity?: boolean;
   awaitingConfirmation?: boolean;
+
+  awaitingDeliveryName?: boolean;
+  awaitingDeliveryPhone?: boolean;
+  awaitingDeliveryAddress?: boolean;
+
+  deliveryName?: string;
+  deliveryPhone?: string;
+  deliveryAddress?: string;
+
   awaitingPayment?: boolean;
   pendingOrderId?: string;
 

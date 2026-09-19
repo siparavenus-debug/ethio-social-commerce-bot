@@ -6,6 +6,8 @@ import {
   PaymentStatus
 } from "@ethio-commerce/database";
 
+import { sanitizeOrderForBillingResponse } from "../services/order-response.js";
+
 import {
   requireAuth,
   requireMerchantAccess,
@@ -47,7 +49,14 @@ router.get(
           }
         });
 
-      res.json(payments);
+        res.json(
+          payments.map((payment) => ({
+            ...payment,
+            order: sanitizeOrderForBillingResponse(
+              payment.order
+            )
+          }))
+        );
     } catch (error) {
       console.error(
         "Failed to list payments:",
@@ -343,7 +352,12 @@ router.post(
           }
         );
 
-      res.status(201).json(payment);
+        res.status(201).json({
+          ...payment,
+          order: sanitizeOrderForBillingResponse(
+            payment.order
+          )
+        });
     } catch (error) {
       console.error(
         "Failed to create payment:",

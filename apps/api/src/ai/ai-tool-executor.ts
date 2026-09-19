@@ -9,7 +9,6 @@ import {
 } from "../tools/products.js";
 
 import {
-  createOrder,
   getOrderStatus
 } from "../tools/orders.js";
 
@@ -121,33 +120,6 @@ export async function executeAITool(
       const result =
         await checkStock(
           context.merchantId,
-          productId,
-          quantity
-        );
-
-      return {
-        tool: toolCall.tool,
-        result
-      };
-    }
-
-    case "createOrder": {
-      const productId =
-        requireString(
-          args.productId,
-          "productId"
-        );
-
-      const quantity =
-        requirePositiveInteger(
-          args.quantity,
-          "quantity"
-        );
-
-      const result =
-        await createOrder(
-          context.merchantId,
-          context.customerId,
           productId,
           quantity
         );
