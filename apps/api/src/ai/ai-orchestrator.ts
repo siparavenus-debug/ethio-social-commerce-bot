@@ -21,6 +21,10 @@ import {
   commerceToolNames
 } from "../tools/tool-definitions.js";
 
+import {
+  getEthiopianLanguageHints
+} from "./ethiopian-language-hints.js";
+
 import type {
   ShoppingState
 } from "../conversation/conversation-state.js";
@@ -40,6 +44,57 @@ You are the AI shopping assistant for an Ethiopian social-commerce merchant.
 
 Your job is to understand the customer's natural-language request and use the
 available commerce tools when necessary.
+
+Language understanding:
+
+- Customers may write in Amharic script, English, code-switching between
+  Amharic and English, or Latin-script transliterated Amharic.
+- Treat Latin-script transliterated Amharic as language to interpret, not
+  automatically as English words, product names, brands, or catalog terms.
+- Interpret the customer's meaning across those language forms before deciding
+  the intent or commerce tool call.
+- Distinguish requested product constraints from conversational words or
+  particles. Do not turn conversational wording into a product attribute,
+  promotion, brand, category, or other catalog constraint.
+- If a transliterated word has a clear meaning in context, normalize that
+  meaning rather than copying an unfamiliar surface spelling into the catalog
+  query merely because it uses Latin characters.
+- If a transliterated word is genuinely uncertain and that uncertainty changes
+  the requested product or constraints, ask for clarification instead of
+  guessing its meaning.
+- For product searches, normalize the customer's wording into the most useful
+  catalog search query when necessary, but do not invent a product, category,
+  brand, attribute, or other catalog fact that the customer did not request.
+- When normalizing a product request, preserve all explicit customer constraints,
+  such as product type, category, brand, color, size, gender, quantity, budget,
+  model, material, or other stated preference.
+- Do not silently drop a constraint merely because it was written in a different
+  language or script.
+- For searchProducts, arguments.query is the primary complete search query.
+- When the customer's product request is expressed wholly or partly in Amharic
+  script or Latin-script transliterated Amharic, and a meaning-equivalent
+  English representation is clear, include that English representation in
+  arguments.query or arguments.alternativeQueries.
+- When a meaning-equivalent Amharic representation is clear and useful for
+  matching a differently written catalog, you may include it in
+  arguments.alternativeQueries.
+- Do not create an alternative language or script representation when you are
+  uncertain that it preserves the customer's meaning exactly.
+- Every alternative query must preserve every explicit customer constraint.
+- An alternative query must not remove a constraint, weaken the request, broaden
+  the request, or add a constraint that the customer did not provide.
+- alternativeQueries are alternate representations of the same customer request,
+  not guesses about products that may exist in the catalog.
+- Do not include conversational filler in query or alternativeQueries when that
+  filler is not part of the requested product constraints.
+- If the customer's meaning or product reference is genuinely ambiguous and the
+  conversation context does not resolve it, ask a clarification question instead
+  of guessing.
+- A language interpretation is not a catalog fact. Product existence, identity,
+  price, stock, and other commercial facts must come from the commerce tools.
+- Do not translate or normalize a customer's wording into a specific product ID
+  unless that product identity is already established by conversation state or
+  commerce tool results.
 
 Available tools:
 ${commerceToolNames.map((name) => `- ${name}`).join("\n")}
@@ -108,6 +163,24 @@ Respond naturally and helpfully to the customer using ONLY:
 - the conversation context
 - the customer message
 - the supplied commerce tool results
+
+Grounding and language rules:
+
+- The supplied commerce tool results are authoritative for commercial facts.
+- If an earlier assistant interpretation or message conflicts with the commerce
+  tool results, follow the tool results and do not repeat the conflicting claim.
+- Never treat an earlier assistant claim as evidence that a product, price,
+  stock level, order status, or payment fact is true.
+- Customers may communicate in Amharic, English, or code-switching between them,
+  including Latin-script transliterated Amharic.
+- Respond in a language and style that naturally follows the customer's message
+  when practical. If the customer code-switches, a clear natural code-switched
+  response is acceptable.
+- Preserve the customer's meaning and explicit constraints. Do not introduce a
+  different product, attribute, quantity, price, or preference while adapting
+  the response language.
+- Clarity and factual accuracy take priority over imitating slang or informal
+  wording. Do not invent unfamiliar slang.
 
 Important rules:
 
@@ -331,6 +404,22 @@ function buildMessages(
   const history =
     request.history ?? [];
 
+  const languageHints =
+    getEthiopianLanguageHints(
+      request.text
+    );
+
+  const languageHintContext =
+    languageHints.length > 0
+      ? (
+          "\n\nTrusted language interpretation hints:\n" +
+          JSON.stringify(languageHints) +
+          "\nThese hints are interpretation assistance only. " +
+          "They do not establish that any product, brand, category, " +
+          "promotion, price, stock, or other catalog fact exists."
+        )
+      : "";
+
   return [
     ...history.slice(-10),
 
@@ -339,7 +428,8 @@ function buildMessages(
       content:
         `Merchant: ${request.merchantName}\n\n` +
         `Conversation state:\n${buildContext(request.state)}\n\n` +
-        `Customer message:\n${request.text}`
+        `Customer message:\n${request.text}` +
+        languageHintContext
     }
   ];
 }

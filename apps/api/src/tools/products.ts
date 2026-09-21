@@ -51,63 +51,81 @@ export async function searchProducts(
 ): Promise<ProductSearchResult[]> {
   const normalizedQuery = query.trim();
 
-  const products = await prisma.product.findMany({
-    where: {
-      merchantId,
-      status: "ACTIVE",
-      ...(normalizedQuery
-        ? {
-          OR: [
+  const queryTerms =
+    normalizedQuery
+      ? normalizedQuery
+          .split(/\s+/)
+          .filter(Boolean)
+      : [];
+
+  const products =
+    await prisma.product.findMany({
+      where: {
+        merchantId,
+        status: "ACTIVE",
+        ...(queryTerms.length > 0
+          ? {
+              AND: queryTerms.map(
+                (term) => ({
+                  OR: [
+                    {
+                      name: {
+                        contains: term,
+                        mode: "insensitive" as const
+                      }
+                    },
+                    {
+                      description: {
+                        contains: term,
+                        mode: "insensitive" as const
+                      }
+                    },
+                    {
+                      category: {
+                        is: {
+                          name: {
+                            contains: term,
+                            mode: "insensitive" as const
+                          }
+                        }
+                      }
+                    }
+                  ]
+                })
+              )
+            }
+          : {})
+      },
+
+      orderBy: {
+        createdAt: "desc"
+      },
+
+      include: {
+        images: {
+          orderBy: [
             {
-              name: {
-                contains: normalizedQuery,
-                mode: "insensitive"
-              }
+              isPrimary: "desc"
             },
             {
-              category: {
-                is: {
-                  name: {
-                    contains: normalizedQuery,
-                    mode: "insensitive"
-                  }
-                }
-              }
+              sortOrder: "asc"
             }
-          ]
-        }
-        : {})
-    },
-
-    orderBy: {
-      createdAt: "desc"
-    },
-
-    include: {
-      images: {
-        orderBy: [
-          {
-            isPrimary: "desc"
-          },
-          {
-            sortOrder: "asc"
+          ],
+          take: 1,
+          select: {
+            url: true
           }
-        ],
-        take: 1,
-        select: {
-          url: true
-        }
-      },
-      category: {
-        select: {
-          id: true,
-          name: true,
-          imageUrl: true,
-          imageAltText: true
+        },
+        category: {
+          select: {
+            id: true,
+            name: true,
+            imageUrl: true,
+            imageAltText: true
+          }
         }
       }
-    }
-  });
+    });
 
   return products.map(mapProduct);
 }

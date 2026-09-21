@@ -52,27 +52,64 @@ function isGreeting(text: string) {
 }
 
 function isPositive(text: string) {
-  return /^(yes|y|yeah|yep|confirm|confirmed|ok|okay)$/i.test(
+  return /^(yes|y|yeah|yep|confirm|confirmed|ok|okay|አዎ|awo)$/i.test(
     text.trim()
   );
 }
 
 function isNegative(text: string) {
-  return /^(no|n|cancel|stop|not now)$/i.test(
+  return /^(no|n|cancel|stop|not now|አይ|ay)$/i.test(
     text.trim()
   );
 }
 
 function extractQuantity(text: string) {
-  const match = text.trim().match(/^\d+$/);
+  const normalized =
+    text
+      .trim()
+      .toLocaleLowerCase();
 
-  if (!match) {
+  const quantityWords: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    "አንድ": 1,
+    "ሁለት": 2,
+    "ሶስት": 3,
+    "አራት": 4,
+    "አምስት": 5,
+    and: 1,
+    hulet: 2,
+    sost: 3,
+    arat: 4,
+    amist: 5
+  };
+
+  const wordQuantity =
+    quantityWords[normalized];
+
+  if (wordQuantity !== undefined) {
+    return wordQuantity;
+  }
+
+  const numericMatch =
+    normalized.match(
+      /^(\d+)(?:\s*(?:pc|pcs|piece|pieces))?$/
+    );
+
+  if (!numericMatch) {
     return null;
   }
 
-  const quantity = Number(match[0]);
+  const quantity =
+    Number(numericMatch[1]);
 
-  if (!Number.isInteger(quantity) || quantity <= 0) {
+  if (
+    !Number.isInteger(quantity) ||
+    quantity <= 0
+  ) {
     return null;
   }
 

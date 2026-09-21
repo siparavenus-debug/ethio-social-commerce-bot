@@ -16,6 +16,8 @@ import {
   getPaymentInstructions
 } from "../tools/payments.js";
 
+const MAX_AI_SEARCH_QUERY_LENGTH = 500;
+
 export type AIToolExecutionContext = {
   merchantId: string;
   customerId: string;
@@ -69,22 +71,135 @@ export async function executeAITool(
         typeof args.query === "string"
           ? args.query.trim()
           : (() => {
-              throw new Error(
-                'AI tool argument "query" must be a string.'
-              );
-            })();
+            throw new Error(
+              'AI tool argument "query" must be a string.'
+            );
+          })();
+      if (
+        query.length >
+        MAX_AI_SEARCH_QUERY_LENGTH
+      ) {
+        throw new Error(
+          `AI tool argument "query" must be at most ${MAX_AI_SEARCH_QUERY_LENGTH} characters.`
+        );
+      }
 
-      const result =
-        await searchProducts(
-          context.merchantId,
-          query
+      const rawAlternativeQueries =
+        args.alternativeQueries;
+
+      if (
+        rawAlternativeQueries !== undefined &&
+        (
+          !Array.isArray(
+            rawAlternativeQueries
+          ) ||
+          rawAlternativeQueries.some(
+            (alternativeQuery) =>
+              typeof alternativeQuery !==
+              "string" ||
+              !alternativeQuery.trim()
+          )
+        )
+      ) {
+        throw new Error(
+          'AI tool argument "alternativeQueries" must be an array of non-empty strings.'
+        );
+      }
+
+      if (
+        Array.isArray(
+          rawAlternativeQueries
+        ) &&
+        rawAlternativeQueries.length > 3
+      ) {
+        throw new Error(
+          'AI tool argument "alternativeQueries" must contain at most 3 queries.'
+        );
+      }
+
+      if (
+        Array.isArray(
+          rawAlternativeQueries
+        ) &&
+        rawAlternativeQueries.some(
+          (alternativeQuery) =>
+            typeof alternativeQuery ===
+              "string" &&
+            alternativeQuery.trim().length >
+              MAX_AI_SEARCH_QUERY_LENGTH
+        )
+      ) {
+        throw new Error(
+          `AI tool argument "alternativeQueries" entries must be at most ${MAX_AI_SEARCH_QUERY_LENGTH} characters.`
+        );
+      }
+
+      const alternativeQueries =
+        (
+          rawAlternativeQueries as
+          string[] | undefined
+        )?.map(
+          (alternativeQuery) =>
+            alternativeQuery.trim()
+        ) ?? [];
+
+      const queries = [
+        query,
+        ...alternativeQueries
+      ].filter(
+        (candidateQuery, index, allQueries) =>
+          allQueries.indexOf(
+            candidateQuery
+          ) === index
+      );
+
+      const searchResults =
+        await Promise.all(
+          queries.map(
+            (candidateQuery) =>
+              searchProducts(
+                context.merchantId,
+                candidateQuery
+              )
+          )
         );
 
-        return {
-          tool: toolCall.tool,
-          result,
-          query
-        };
+      const productsById =
+        new Map<
+          string,
+          (
+            typeof searchResults
+          )[number][number]
+        >();
+
+      for (
+        const results
+        of searchResults
+      ) {
+        for (
+          const product
+          of results
+        ) {
+          if (
+            !productsById.has(
+              product.id
+            )
+          ) {
+            productsById.set(
+              product.id,
+              product
+            );
+          }
+        }
+      }
+
+      return {
+        tool: toolCall.tool,
+        result: [
+          ...productsById.values()
+        ],
+        query
+      };
     }
 
     case "getProduct": {

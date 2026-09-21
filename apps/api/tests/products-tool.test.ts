@@ -405,4 +405,427 @@ describe("product commerce tools", () => {
             Array.isArray(execution.result)
         ).toBe(true);
     });
+
+    it(
+        "does not currently bridge an Amharic search query to an English-only catalog",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Urban Classic",
+                    description:
+                        "Black leather everyday shoe"
+                }
+            });
+
+            await prisma.productCategory.update({
+                where: {
+                    id: category.id
+                },
+                data: {
+                    name:
+                        "Men Shoes"
+                }
+            });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "ጫማ"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                );
+
+            expect(execution.query).toBe(
+                "ጫማ"
+            );
+
+            expect(execution.result).toEqual(
+                []
+            );
+        }
+    );
+
+    it(
+        "does not currently bridge an English search query to an Amharic-only catalog",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "የከተማ ጫማ",
+                    description:
+                        "ጥቁር የቆዳ ጫማ"
+                }
+            });
+
+            await prisma.productCategory.update({
+                where: {
+                    id: category.id
+                },
+                data: {
+                    name:
+                        "የወንድ ጫማ"
+                }
+            });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "shoes"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                );
+
+            expect(execution.query).toBe(
+                "shoes"
+            );
+
+            expect(execution.result).toEqual(
+                []
+            );
+        }
+    );
+
+    it(
+        "searches meaning-equivalent multilingual queries and deduplicates authoritative products",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Urban Classic",
+                    description:
+                        "Black leather everyday shoe"
+                }
+            });
+
+            await prisma.productCategory.update({
+                where: {
+                    id: category.id
+                },
+                data: {
+                    name:
+                        "Men Shoes"
+                }
+            });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "ጥቁር የወንድ ጫማ",
+                            alternativeQueries: [
+                                "black men shoes"
+                            ]
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                );
+
+            expect(execution.result).toEqual([
+                expect.objectContaining({
+                    id:
+                        product.id,
+                    name:
+                        "Urban Classic"
+                })
+            ]);
+        }
+    );
+
+    it(
+        "rejects excessive multilingual alternative search queries",
+        async () => {
+            const {
+                merchant
+            } =
+                await createFixture();
+
+            await expect(
+                executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "shoes",
+                            alternativeQueries: [
+                                "ጫማ",
+                                "chama",
+                                "men shoes",
+                                "everyday shoes"
+                            ]
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                )
+            ).rejects.toThrow(
+                'AI tool argument "alternativeQueries" must contain at most 3 queries.'
+            );
+        }
+    );
+
+    it(
+        "rejects excessively long AI-generated catalog search queries",
+        async () => {
+            const {
+                merchant
+            } =
+                await createFixture();
+
+            await expect(
+                executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "x".repeat(501)
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                )
+            ).rejects.toThrow(
+                'AI tool argument "query" must be at most 500 characters.'
+            );
+
+            await expect(
+                executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "shoes",
+                            alternativeQueries: [
+                                "x".repeat(501)
+                            ]
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                )
+            ).rejects.toThrow(
+                'AI tool argument "alternativeQueries" entries must be at most 500 characters.'
+            );
+        }
+    );
+
+    it(
+        "searches active products by merchant-entered product description",
+        async () => {
+            const {
+                merchant,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Urban Classic",
+                    description:
+                        "Black leather everyday shoe for men"
+                }
+            });
+
+            const results =
+                await searchProducts(
+                    merchant.id,
+                    "leather"
+                );
+
+            expect(results).toHaveLength(1);
+
+            expect(results[0]).toMatchObject({
+                id:
+                    product.id,
+                name:
+                    "Urban Classic",
+                description:
+                    "Black leather everyday shoe for men",
+                price: 2500,
+                currency:
+                    "ETB",
+                stock: 4
+            });
+        }
+    );
+
+    it(
+        "matches a multi-term product query when its terms are distributed across authoritative catalog fields",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Urban Classic",
+                    description:
+                        "Black leather everyday shoe"
+                }
+            });
+
+            await prisma.productCategory.update({
+                where: {
+                    id: category.id
+                },
+                data: {
+                    name:
+                        "Men Shoes"
+                }
+            });
+
+            const results =
+                await searchProducts(
+                    merchant.id,
+                    "black men shoes"
+                );
+
+            expect(results).toHaveLength(1);
+
+            expect(results[0]).toMatchObject({
+                id:
+                    product.id,
+                name:
+                    "Urban Classic",
+                description:
+                    "Black leather everyday shoe",
+                price: 2500,
+                currency:
+                    "ETB",
+                stock: 4,
+                category: {
+                    id:
+                        category.id,
+                    name:
+                        "Men Shoes"
+                }
+            });
+        }
+    );
+
+    it(
+        "does not return a product when only some multi-term query constraints match",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Urban Classic",
+                    description:
+                        "Black leather everyday accessory"
+                }
+            });
+
+            await prisma.productCategory.update({
+                where: {
+                    id: category.id
+                },
+                data: {
+                    name:
+                        "Accessories"
+                }
+            });
+
+            const results =
+                await searchProducts(
+                    merchant.id,
+                    "black men shoes"
+                );
+
+            expect(results).toEqual([]);
+        }
+    );
 });

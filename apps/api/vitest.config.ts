@@ -3,6 +3,7 @@
 export default defineConfig({
   test: {
     setupFiles: ["./tests/setup.ts"],
-    exclude: ["dist/**", "node_modules/**"]
+    exclude: ["dist/**", "node_modules/**"],
+    fileParallelism: false
   }
 });
