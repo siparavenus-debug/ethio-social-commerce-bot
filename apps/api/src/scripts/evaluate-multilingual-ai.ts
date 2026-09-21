@@ -16,6 +16,11 @@ type EvaluationCase = {
     | null;
     expectedQueryTerms?: string[];
     forbiddenQueryTerms?: string[];
+    candidateProducts?: Array<{
+        id: string;
+        name: string;
+    }>;
+    expectedProductId?: string;
 };
 
 const cases: EvaluationCase[] = [
@@ -131,52 +136,52 @@ const cases: EvaluationCase[] = [
         id: "transliterated-shoe-search",
         language: "transliterated",
         input:
-          "chama ale?",
+            "chama ale?",
         expectedIntent:
-          "SEARCH_PRODUCT",
+            "SEARCH_PRODUCT",
         expectedTool:
-          "searchProducts",
+            "searchProducts",
         expectedQueryTerms: [
-          "shoe"
+            "shoe"
         ],
         forbiddenQueryTerms: [
-          "ale",
-          "men",
-          "women",
-          "black",
-          "nike"
+            "ale",
+            "men",
+            "women",
+            "black",
+            "nike"
         ]
-      },
-      {
+    },
+    {
         id: "transliterated-shoe-fragment",
         language: "transliterated",
         input:
-          "chama",
+            "chama",
         expectedIntent:
-          "SEARCH_PRODUCT",
+            "SEARCH_PRODUCT",
         expectedTool:
-          "searchProducts",
+            "searchProducts",
         expectedQueryTerms: [
-          "shoe"
+            "shoe"
         ],
         forbiddenQueryTerms: [
-          "men",
-          "women",
-          "black",
-          "nike"
+            "men",
+            "women",
+            "black",
+            "nike"
         ]
-      },
-      {
+    },
+    {
         id: "transliterated-english-product-filler",
         language: "transliterated",
         input:
-          "shoe ale?",
+            "shoe ale?",
         expectedIntent:
-          "SEARCH_PRODUCT",
+            "SEARCH_PRODUCT",
         expectedTool:
-          "searchProducts",
+            "searchProducts",
         expectedQueryTerms: [
-          "shoe"
+            "shoe"
         ],
         forbiddenQueryTerms: [
             "ale",
@@ -186,28 +191,28 @@ const cases: EvaluationCase[] = [
             "women",
             "black",
             "nike"
-          ]
-      },
-      {
+        ]
+    },
+    {
         id: "transliterated-color-shoe-fragment",
         language: "transliterated",
         input:
-          "black chama",
+            "black chama",
         expectedIntent:
-          "SEARCH_PRODUCT",
+            "SEARCH_PRODUCT",
         expectedTool:
-          "searchProducts",
+            "searchProducts",
         expectedQueryTerms: [
-          "black",
-          "shoe"
+            "black",
+            "shoe"
         ],
         forbiddenQueryTerms: [
-          "men",
-          "women",
-          "nike",
-          "leather"
+            "men",
+            "women",
+            "nike",
+            "leather"
         ]
-      },
+    },
     {
         id: "code-switch-fragment-search",
         language: "code-switch",
@@ -245,6 +250,114 @@ const cases: EvaluationCase[] = [
             "women",
             "black",
             "nike"
+        ]
+    },
+    {
+        id: "english-ordinal-candidate-reference",
+        language: "english",
+        input:
+            "the second one",
+        expectedIntent:
+            "GET_PRODUCT",
+        expectedTool:
+            "getProduct",
+        candidateProducts: [
+            {
+                id:
+                    "candidate-white",
+                name:
+                    "White Habesha Kemis"
+            },
+            {
+                id:
+                    "candidate-blue",
+                name:
+                    "Blue Habesha Kemis"
+            }
+        ],
+        expectedProductId:
+            "candidate-blue"
+    },
+    {
+        id:
+            "english-exact-name-candidate-reference",
+        language:
+            "english",
+        input:
+            "Blue Habesha Kemis",
+        expectedIntent:
+            "GET_PRODUCT",
+        expectedTool:
+            "getProduct",
+        candidateProducts: [
+            {
+                id:
+                    "candidate-white",
+                name:
+                    "White Habesha Kemis"
+            },
+            {
+                id:
+                    "candidate-blue",
+                name:
+                    "Blue Habesha Kemis"
+            }
+        ],
+        expectedProductId:
+            "candidate-blue"
+    },
+    {
+        id:
+            "english-descriptive-candidate-reference",
+        language:
+            "english",
+        input:
+            "the blue one",
+        expectedIntent:
+            "GET_PRODUCT",
+        expectedTool:
+            "getProduct",
+        candidateProducts: [
+            {
+                id:
+                    "candidate-white",
+                name:
+                    "White Habesha Kemis"
+            },
+            {
+                id:
+                    "candidate-blue",
+                name:
+                    "Blue Habesha Kemis"
+            }
+        ],
+        expectedProductId:
+            "candidate-blue"
+    },
+    {
+        id:
+            "english-ambiguous-candidate-reference",
+        language:
+            "english",
+        input:
+            "the blue one",
+        expectedIntent:
+            "GET_PRODUCT",
+        expectedTool:
+            null,
+        candidateProducts: [
+            {
+                id:
+                    "candidate-blue-small",
+                name:
+                    "Blue Small Habesha Kemis"
+            },
+            {
+                id:
+                    "candidate-blue-large",
+                name:
+                    "Blue Large Habesha Kemis"
+            }
         ]
     },
     {
@@ -325,7 +438,11 @@ async function evaluateCase(
         await understandCustomerMessage({
             text:
                 evaluationCase.input,
-            state: {},
+            state: {
+                candidateProducts:
+                    evaluationCase
+                        .candidateProducts
+            },
             merchantName:
                 "Multilingual Evaluation Merchant"
         });
@@ -373,6 +490,19 @@ async function evaluateCase(
         actualTool ===
         evaluationCase.expectedTool;
 
+    const actualProductId =
+        typeof firstToolCall?.arguments
+            ?.productId === "string"
+            ? firstToolCall.arguments.productId
+            : null;
+
+    const productIdPass =
+        evaluationCase.expectedProductId ===
+            undefined
+            ? true
+            : actualProductId ===
+            evaluationCase.expectedProductId;
+
     let queryPass = true;
 
     if (
@@ -387,21 +517,21 @@ async function evaluateCase(
         ) {
             queryPass =
                 actualQuery.trim() === "";
-            } else {
-                queryPass =
-                  actualSearchQueries.some(
+        } else {
+            queryPass =
+                actualSearchQueries.some(
                     (searchQuery) =>
-                      evaluationCase
-                        .expectedQueryTerms!
-                        .every(
-                          (expectedTerm) =>
-                            queryContainsExpectedTerm(
-                              searchQuery,
-                              expectedTerm
+                        evaluationCase
+                            .expectedQueryTerms!
+                            .every(
+                                (expectedTerm) =>
+                                    queryContainsExpectedTerm(
+                                        searchQuery,
+                                        expectedTerm
+                                    )
                             )
-                        )
-                  );
-              }
+                );
+        }
     }
 
     let forbiddenQueryTermsPass = true;
@@ -414,19 +544,19 @@ async function evaluateCase(
             forbiddenQueryTermsPass = true;
         } else {
             forbiddenQueryTermsPass =
-              actualSearchQueries.every(
-                (searchQuery) =>
-                  evaluationCase
-                    .forbiddenQueryTerms!
-                    .every(
-                      (forbiddenTerm) =>
-                        !queryContainsExpectedTerm(
-                          searchQuery,
-                          forbiddenTerm
-                        )
-                    )
-              );
-          }
+                actualSearchQueries.every(
+                    (searchQuery) =>
+                        evaluationCase
+                            .forbiddenQueryTerms!
+                            .every(
+                                (forbiddenTerm) =>
+                                    !queryContainsExpectedTerm(
+                                        searchQuery,
+                                        forbiddenTerm
+                                    )
+                            )
+                );
+        }
     }
 
     return {
@@ -446,6 +576,9 @@ async function evaluateCase(
                 null,
             forbiddenQueryTerms:
                 evaluationCase.forbiddenQueryTerms ??
+                null,
+            productId:
+                evaluationCase.expectedProductId ??
                 null
         },
         actual: {
@@ -457,6 +590,8 @@ async function evaluateCase(
                 actualQuery,
             alternativeQueries:
                 actualAlternativeQueries,
+            productId:
+                actualProductId,
             message:
                 response.message,
             toolCallCount:
@@ -470,13 +605,16 @@ async function evaluateCase(
             query:
                 queryPass,
             forbiddenQueryTerms:
-                forbiddenQueryTermsPass
+                forbiddenQueryTermsPass,
+            productId:
+                productIdPass
         },
         pass:
             intentPass &&
             toolPass &&
             queryPass &&
-            forbiddenQueryTermsPass
+            forbiddenQueryTermsPass &&
+            productIdPass
     };
 }
 

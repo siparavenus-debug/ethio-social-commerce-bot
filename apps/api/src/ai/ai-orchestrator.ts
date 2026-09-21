@@ -116,6 +116,16 @@ Important rules:
 6. If a product is already selected in the conversation state, use that product
    when the customer refers to it indirectly.
 
+Candidate product references:
+
+- candidateProducts are ordered exactly as the products were presented from the authoritative search results.
+- Ordinal references such as first, second, or third may resolve only to the product at that position in candidateProducts.
+- When a customer clearly selects one candidate, use getProduct with that candidate's exact id.
+- When using getProduct for a candidate selection, arguments.productId must be that candidate's exact non-empty id.
+- Never use a product id outside candidateProducts to resolve a reference to those candidates.
+- Product names, descriptive references, and multilingual references may resolve to a candidate only when the conversation context identifies that candidate clearly.
+- If the reference could identify more than one candidate, ask for clarification instead of guessing.
+
 7. If the customer asks for a product search, use searchProducts.
    If the customer asks to see all available products, asks what products
    are available, asks what the store sells, or makes a general catalog
@@ -147,7 +157,9 @@ Important rules:
 
 13. Do not include explanations before or after the JSON.
 
-14. Never invent a placeholder search term such as "all", "products", or
+14. When asking for clarification, put the clarification question in the JSON message field, use an empty toolCalls array, and return only the required JSON object.
+
+15. Never invent a placeholder search term such as "all", "products", or
     "available" for a broad catalog request. Use an empty query ("") instead.
 
 If no tool is needed, return an empty toolCalls array.
@@ -196,6 +208,9 @@ Important rules:
 5. Keep the response concise and suitable for Telegram.
 
 6. If a product was found, clearly tell the customer what was found.
+
+When presenting multiple products from a search result, preserve their authoritative result order.
+Do not reorder the products when numbering, listing, or describing them.
 
 7. If stock information was returned, use that information accurately.
 
@@ -346,14 +361,30 @@ function parseAIResponse(
         );
       }
 
+      const toolArguments =
+        toolCall.arguments as Record<
+          string,
+          unknown
+        >;
+
+      if (
+        toolCall.tool === "getProduct" &&
+        (
+          typeof toolArguments.productId !==
+          "string" ||
+          toolArguments.productId.trim() === ""
+        )
+      ) {
+        throw new Error(
+          "AI returned invalid getProduct arguments."
+        );
+      }
+
       return {
         tool:
           toolCall.tool as AIToolCall["tool"],
         arguments:
-          toolCall.arguments as Record<
-            string,
-            unknown
-          >
+          toolArguments
       };
     });
 
@@ -370,10 +401,13 @@ function buildContext(
   return JSON.stringify({
     selectedProduct: state.productId
       ? {
-          id: state.productId,
-          name: state.productName
-        }
+        id: state.productId,
+        name: state.productName
+      }
       : null,
+
+    candidateProducts:
+      state.candidateProducts ?? [],
 
     quantity:
       state.quantity ?? null,
@@ -412,12 +446,12 @@ function buildMessages(
   const languageHintContext =
     languageHints.length > 0
       ? (
-          "\n\nTrusted language interpretation hints:\n" +
-          JSON.stringify(languageHints) +
-          "\nThese hints are interpretation assistance only. " +
-          "They do not establish that any product, brand, category, " +
-          "promotion, price, stock, or other catalog fact exists."
-        )
+        "\n\nTrusted language interpretation hints:\n" +
+        JSON.stringify(languageHints) +
+        "\nThese hints are interpretation assistance only. " +
+        "They do not establish that any product, brand, category, " +
+        "promotion, price, stock, or other catalog fact exists."
+      )
       : "";
 
   return [
@@ -466,6 +500,27 @@ export async function runAIConversation(
     [];
 
   for (const toolCall of initial.toolCalls) {
+    if (
+      toolCall.tool === "getProduct" &&
+      request.state.candidateProducts?.length
+    ) {
+      const requestedProductId =
+        toolCall.arguments.productId;
+
+      const isCurrentCandidate =
+        typeof requestedProductId === "string" &&
+        request.state.candidateProducts.some(
+          (candidate) =>
+            candidate.id === requestedProductId
+        );
+
+      if (!isCurrentCandidate) {
+        throw new Error(
+          "AI getProduct selection must reference a current candidate product."
+        );
+      }
+    }
+
     const result =
       await executeAITool(
         toolCall,

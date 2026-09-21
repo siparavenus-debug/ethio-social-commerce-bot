@@ -3,6 +3,12 @@ import type { AIMessage } from "../ai/ai-provider.js";
 export type ShoppingState = {
   productId?: string;
   productName?: string;
+
+  candidateProducts?: Array<{
+    id: string;
+    name: string;
+  }>;
+
   quantity?: number;
 
   awaitingQuantity?: boolean;

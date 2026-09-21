@@ -281,6 +281,7 @@ export async function handleConversation(
         awaitingConfirmation: false,
         productId: undefined,
         productName: undefined,
+        candidateProducts: undefined,
         quantity: undefined
       };
 
@@ -711,43 +712,57 @@ export async function handleConversation(
             imageAltText: string | null;
           } | null;
         }>;
-    
-      if (products.length === 1) {
-        const product = products[0];
-    
-        if (product.stock > 0) {
-          nextState.productId =
-            product.id;
-    
-          nextState.productName =
-            product.name;
-    
-          nextState.awaitingQuantity =
-            true;
-    
-          if (product.imageUrl) {
-            responseImageUrl =
-              product.imageUrl;
+
+        if (products.length === 0) {
+          nextState.candidateProducts =
+            undefined;
+        } else if (products.length === 1) {
+          const product = products[0];
+
+          nextState.candidateProducts =
+            undefined;
+
+          if (product.stock > 0) {
+            nextState.productId =
+              product.id;
+
+            nextState.productName =
+              product.name;
+
+            nextState.awaitingQuantity =
+              true;
+
+            if (product.imageUrl) {
+              responseImageUrl =
+                product.imageUrl;
+            }
           }
-        }
-      } else if (
-        products.length > 1 &&
-        toolResult.query
-      ) {
+        } else if (products.length > 1) {
+          nextState.candidateProducts =
+            products
+              .slice(0, 10)
+              .map((product) => ({
+                id: product.id,
+                name: product.name
+              }));
+
+          if (!toolResult.query) {
+            continue;
+          }
         const normalizedQuery =
           toolResult.query
             .trim()
             .toLocaleLowerCase();
-    
+
         const firstCategory =
           products[0].category;
-    
+
         const isMatchingCategory =
           firstCategory !== null &&
           firstCategory.name
             .toLocaleLowerCase()
             .includes(normalizedQuery);
-    
+
         const allProductsShareCategory =
           firstCategory !== null &&
           products.every(
@@ -755,7 +770,7 @@ export async function handleConversation(
               product.category?.id ===
               firstCategory.id
           );
-    
+
         if (
           isMatchingCategory &&
           allProductsShareCategory &&
@@ -786,6 +801,9 @@ export async function handleConversation(
 
       nextState.productName =
         product.name;
+
+      nextState.candidateProducts =
+        undefined;
     }
 
     if (

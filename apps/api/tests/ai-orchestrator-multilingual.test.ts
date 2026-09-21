@@ -2,7 +2,7 @@ import {
     ProductStatus,
     prisma
   } from "@ethio-commerce/database";
-  
+
   import {
     afterAll,
     beforeEach,
@@ -11,13 +11,13 @@ import {
     it,
     vi
   } from "vitest";
-  
+
   const {
     generateAIResponseMock
   } = vi.hoisted(() => ({
     generateAIResponseMock: vi.fn()
   }));
-  
+
   vi.mock(
     "../src/ai/ai-provider.js",
     () => ({
@@ -25,14 +25,14 @@ import {
         generateAIResponseMock
     })
   );
-  
+
   import {
     runAIConversation
   } from "../src/ai/ai-orchestrator.js";
-  
+
   const testPrefix =
     "ai-orchestrator-multilingual";
-  
+
   async function cleanup() {
     const merchants =
       await prisma.merchant.findMany({
@@ -46,17 +46,17 @@ import {
           id: true
         }
       });
-  
+
     const merchantIds =
       merchants.map(
         (merchant) =>
           merchant.id
       );
-  
+
     if (merchantIds.length === 0) {
       return;
     }
-  
+
     await prisma.productImage.deleteMany({
       where: {
         product: {
@@ -66,7 +66,7 @@ import {
         }
       }
     });
-  
+
     await prisma.product.deleteMany({
       where: {
         merchantId: {
@@ -74,7 +74,7 @@ import {
         }
       }
     });
-  
+
     await prisma.productCategory.deleteMany({
       where: {
         merchantId: {
@@ -82,7 +82,7 @@ import {
         }
       }
     });
-  
+
     await prisma.customer.deleteMany({
       where: {
         merchantId: {
@@ -90,7 +90,7 @@ import {
         }
       }
     });
-  
+
     await prisma.merchant.deleteMany({
       where: {
         id: {
@@ -99,13 +99,13 @@ import {
       }
     });
   }
-  
+
   async function createFixture() {
     const suffix =
       `${Date.now()}-${Math.random()
         .toString(36)
         .slice(2)}`;
-  
+
     const merchant =
       await prisma.merchant.create({
         data: {
@@ -114,7 +114,7 @@ import {
           currency: "ETB"
         }
       });
-  
+
     const otherMerchant =
       await prisma.merchant.create({
         data: {
@@ -123,7 +123,7 @@ import {
           currency: "ETB"
         }
       });
-  
+
     const customer =
       await prisma.customer.create({
         data: {
@@ -137,7 +137,7 @@ import {
             `ai-user-${suffix}`
         }
       });
-  
+
     const category =
       await prisma.productCategory.create({
         data: {
@@ -147,7 +147,7 @@ import {
             "Men Shoes"
         }
       });
-  
+
     const otherCategory =
       await prisma.productCategory.create({
         data: {
@@ -157,7 +157,7 @@ import {
             "Men Shoes"
         }
       });
-  
+
     const product =
       await prisma.product.create({
         data: {
@@ -178,7 +178,7 @@ import {
             ProductStatus.ACTIVE
         }
       });
-  
+
     const otherProduct =
       await prisma.product.create({
         data: {
@@ -199,7 +199,7 @@ import {
             ProductStatus.ACTIVE
         }
       });
-  
+
     return {
       merchant,
       otherMerchant,
@@ -208,16 +208,16 @@ import {
       otherProduct
     };
   }
-  
+
   beforeEach(async () => {
     generateAIResponseMock.mockReset();
     await cleanup();
   });
-  
+
   afterAll(async () => {
     await cleanup();
   });
-  
+
   describe(
     "AI orchestrator multilingual grounding",
     () => {
@@ -226,7 +226,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-  
+
           generateAIResponseMock
             .mockResolvedValueOnce({
               text: JSON.stringify({
@@ -250,10 +250,10 @@ import {
               text:
                 "Black Men Shoes is available for 1800 ETB."
             });
-  
+
           const customerMessage =
             "የወንድ shoe አለ?";
-  
+
           const result =
             await runAIConversation(
               {
@@ -270,17 +270,17 @@ import {
                   fixture.customer.id
               }
             );
-  
+
           expect(
             generateAIResponseMock
           ).toHaveBeenCalledTimes(2);
-  
+
           const firstCall =
             generateAIResponseMock.mock
               .calls[0]?.[0];
-  
+
           expect(firstCall).toBeDefined();
-  
+
           expect(
             firstCall.messages[
               firstCall.messages.length - 1
@@ -288,11 +288,11 @@ import {
           ).toContain(
             customerMessage
           );
-  
+
           expect(result.toolResults).toHaveLength(
             1
           );
-  
+
           expect(
             result.toolResults[0]
           ).toMatchObject({
@@ -301,7 +301,7 @@ import {
             query:
               "Men Shoes"
           });
-  
+
           const products =
             result.toolResults[0]
               .result as Array<{
@@ -311,9 +311,9 @@ import {
                 currency: string;
                 stock: number;
               }>;
-  
+
           expect(products).toHaveLength(1);
-  
+
           expect(products[0]).toMatchObject({
             id:
               fixture.product.id,
@@ -324,7 +324,7 @@ import {
               "ETB",
             stock: 4
           });
-  
+
           expect(
             products.some(
               (product) =>
@@ -332,13 +332,13 @@ import {
                 fixture.otherProduct.id
             )
           ).toBe(false);
-  
+
           const secondCall =
             generateAIResponseMock.mock
               .calls[1]?.[0];
-  
+
           expect(secondCall).toBeDefined();
-  
+
           const secondCallContent =
             secondCall.messages
               .map(
@@ -347,31 +347,31 @@ import {
                 }) => message.content
               )
               .join("\n");
-  
+
           expect(
             secondCallContent
           ).toContain(
             fixture.product.id
           );
-  
+
           expect(
             secondCallContent
           ).toContain(
             "Black Men Shoes"
           );
-  
+
           expect(
             secondCallContent
           ).not.toContain(
             fixture.otherProduct.id
           );
-  
+
           expect(
             secondCallContent
           ).not.toContain(
             "Other Merchant Men Shoes"
           );
-  
+
           expect(result.response).toMatchObject({
             intent:
               "SEARCH_PRODUCT",
@@ -387,7 +387,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-      
+
           await prisma.product.update({
             where: {
               id: fixture.product.id
@@ -399,7 +399,7 @@ import {
                 "Black leather everyday shoe"
             }
           });
-      
+
           generateAIResponseMock
             .mockResolvedValueOnce({
               text: JSON.stringify({
@@ -423,7 +423,7 @@ import {
               text:
                 "Urban Classic is available for 1800 ETB."
             });
-      
+
           const result =
             await runAIConversation(
               {
@@ -440,11 +440,11 @@ import {
                   fixture.customer.id
               }
             );
-      
+
           expect(
             result.toolResults
           ).toHaveLength(1);
-      
+
           expect(
             result.toolResults[0]
           ).toMatchObject({
@@ -453,23 +453,23 @@ import {
             query:
               "black men shoes"
           });
-      
+
           const products =
             result.toolResults[0]
               .result as Array<{
                 id: string;
                 name: string;
               }>;
-      
+
           expect(products).toHaveLength(1);
-      
+
           expect(products[0]).toMatchObject({
             id:
               fixture.product.id,
             name:
               "Urban Classic"
           });
-      
+
           expect(result.response).toMatchObject({
             intent:
               "SEARCH_PRODUCT",
@@ -599,7 +599,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-      
+
           generateAIResponseMock
             .mockResolvedValueOnce({
               text: JSON.stringify({
@@ -623,7 +623,7 @@ import {
               text:
                 "Black Men Shoes is available for 1800 ETB, with 4 in stock."
             });
-      
+
           const result =
             await runAIConversation(
               {
@@ -640,17 +640,17 @@ import {
                   fixture.customer.id
               }
             );
-      
+
           expect(
             generateAIResponseMock
           ).toHaveBeenCalledTimes(2);
-      
+
           const secondCall =
             generateAIResponseMock.mock
               .calls[1]?.[0];
-      
+
           expect(secondCall).toBeDefined();
-      
+
           const secondCallContent =
             secondCall.messages
               .map(
@@ -659,31 +659,31 @@ import {
                 }) => message.content
               )
               .join("\n");
-      
+
           expect(
             secondCallContent
           ).toContain(
             "The shoes cost 50 ETB and there are 99 available."
           );
-      
+
           expect(
             secondCallContent
           ).toContain(
             "Black Men Shoes"
           );
-      
+
           expect(
             secondCallContent
           ).toContain(
             "1800"
           );
-      
+
           expect(
             secondCallContent
           ).toContain(
             '"stock":4'
           );
-      
+
           expect(result.response).toMatchObject({
             intent:
               "SEARCH_PRODUCT",
@@ -691,13 +691,13 @@ import {
               "Black Men Shoes is available for 1800 ETB, with 4 in stock.",
             toolCalls: []
           });
-      
+
           expect(
             result.response.message
           ).not.toContain(
             "50 ETB"
           );
-      
+
           expect(
             result.response.message
           ).not.toContain(
@@ -711,7 +711,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-      
+
           generateAIResponseMock.mockResolvedValueOnce({
             text: JSON.stringify({
               intent: "GENERAL",
@@ -719,7 +719,7 @@ import {
               toolCalls: []
             })
           });
-      
+
           await runAIConversation(
             {
               text:
@@ -735,48 +735,52 @@ import {
                 fixture.customer.id
             }
           );
-      
+
           expect(
             generateAIResponseMock
           ).toHaveBeenCalledTimes(1);
-      
+
           const firstCall =
             generateAIResponseMock.mock
               .calls[0]?.[0];
-      
+
           expect(firstCall).toBeDefined();
-      
+
           const systemPrompt =
             firstCall.system;
-      
+
           expect(systemPrompt).toContain(
             "Amharic script"
           );
-      
+
           expect(systemPrompt).toContain(
             "English"
           );
-      
+
           expect(systemPrompt).toContain(
             "code-switching"
           );
-      
+
           expect(systemPrompt).toContain(
             "Latin-script transliterated Amharic"
           );
-      
+
           expect(
             systemPrompt.toLowerCase()
           ).toContain(
             "do not invent a product"
           );
-      
+
           expect(systemPrompt).toContain(
             "preserve all explicit customer constraints"
           );
-      
+
           expect(systemPrompt).toContain(
             "ask a clarification question"
+          );
+
+          expect(systemPrompt).toContain(
+            "When asking for clarification, put the clarification question in the JSON message field, use an empty toolCalls array, and return only the required JSON object."
           );
 
           expect(systemPrompt).toContain(
@@ -812,7 +816,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-      
+
           generateAIResponseMock
             .mockResolvedValueOnce({
               text: JSON.stringify({
@@ -836,7 +840,7 @@ import {
               text:
                 "Black Men Shoes is available for 1800 ETB."
             });
-      
+
           await runAIConversation(
             {
               text:
@@ -852,40 +856,40 @@ import {
                 fixture.customer.id
             }
           );
-      
+
           expect(
             generateAIResponseMock
           ).toHaveBeenCalledTimes(2);
-      
+
           const secondCall =
             generateAIResponseMock.mock
               .calls[1]?.[0];
-      
+
           expect(secondCall).toBeDefined();
-      
+
           const finalSystemPrompt =
             secondCall.system;
-      
+
           expect(finalSystemPrompt).toContain(
             "tool results are authoritative"
           );
-      
+
           expect(finalSystemPrompt).toContain(
             "conflicts"
           );
-      
+
           expect(finalSystemPrompt).toContain(
             "Amharic"
           );
-      
+
           expect(finalSystemPrompt).toContain(
             "English"
           );
-      
+
           expect(finalSystemPrompt).toContain(
             "code-switching"
           );
-      
+
           expect(finalSystemPrompt).toContain(
             "customer"
           );
@@ -897,7 +901,7 @@ import {
         async () => {
           const fixture =
             await createFixture();
-      
+
           generateAIResponseMock.mockResolvedValueOnce({
             text: JSON.stringify({
               intent:
@@ -907,7 +911,7 @@ import {
               toolCalls: []
             })
           });
-      
+
           const result =
             await runAIConversation(
               {
@@ -924,15 +928,15 @@ import {
                   fixture.customer.id
               }
             );
-      
+
           expect(
             generateAIResponseMock
           ).toHaveBeenCalledTimes(1);
-      
+
           expect(result.toolResults).toEqual(
             []
           );
-      
+
           expect(result.response).toMatchObject({
             intent:
               "GENERAL",
@@ -940,7 +944,7 @@ import {
               "Which product do you mean?",
             toolCalls: []
           });
-      
+
           expect(
             await prisma.product.count({
               where: {
@@ -949,6 +953,421 @@ import {
               }
             })
           ).toBe(1);
+        }
+      );
+
+      it(
+        "provides ordered authoritative product candidates to the interpretation model",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "You mean the second product.",
+              toolCalls: []
+            })
+          });
+
+          await runAIConversation(
+            {
+              text:
+                "the second one",
+              state: {
+                candidateProducts: [
+                  {
+                    id:
+                      "product-white",
+                    name:
+                      "White Habesha Kemis"
+                  },
+                  {
+                    id:
+                      "product-blue",
+                    name:
+                      "Blue Habesha Kemis"
+                  }
+                ]
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          const firstCallContent =
+            firstCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(firstCallContent).toContain(
+            '"candidateProducts":[{"id":"product-white","name":"White Habesha Kemis"},{"id":"product-blue","name":"Blue Habesha Kemis"}]'
+          );
+        }
+      );
+
+      it(
+        "rejects getProduct when productId is missing",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GET_PRODUCT",
+              message:
+                "Getting that product.",
+              toolCalls: [
+                {
+                  tool:
+                    "getProduct",
+                  arguments: {}
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "the blue one",
+                state: {},
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI returned invalid getProduct arguments."
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
+        "rejects a getProduct selection outside the current authoritative candidates",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GET_PRODUCT",
+              message:
+                "You mean another product.",
+              toolCalls: [
+                {
+                  tool:
+                    "getProduct",
+                  arguments: {
+                    productId:
+                      fixture.product.id
+                  }
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "the second one",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        "candidate-one",
+                      name:
+                        "First Candidate"
+                    },
+                    {
+                      id:
+                        "candidate-two",
+                      name:
+                        "Second Candidate"
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI getProduct selection must reference a current candidate product."
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
+        "allows getProduct for a product in the current authoritative candidates",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "GET_PRODUCT",
+                message:
+                  "You mean that product.",
+                toolCalls: [
+                  {
+                    tool:
+                      "getProduct",
+                    arguments: {
+                      productId:
+                        fixture.product.id
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "You selected the product."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "the second one",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        "candidate-one",
+                      name:
+                        "First Candidate"
+                    },
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(result.toolResults).toHaveLength(
+            1
+          );
+
+          expect(
+            result.toolResults[0]?.tool
+          ).toBe(
+            "getProduct"
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                id: string;
+              }
+            ).id
+          ).toBe(
+            fixture.product.id
+          );
+        }
+      );
+
+      it(
+        "gives the interpretation model a safe ordered-candidate reference contract",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "Which product do you mean?",
+              toolCalls: []
+            })
+          });
+
+          await runAIConversation(
+            {
+              text:
+                "the second one",
+              state: {
+                candidateProducts: [
+                  {
+                    id:
+                      "product-white",
+                    name:
+                      "White Habesha Kemis"
+                  },
+                  {
+                    id:
+                      "product-blue",
+                    name:
+                      "Blue Habesha Kemis"
+                  }
+                ]
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          expect(firstCall.system).toContain(
+            "candidateProducts are ordered exactly as the products were presented from the authoritative search results."
+          );
+
+          expect(firstCall.system).toContain(
+            "Ordinal references such as first, second, or third may resolve only to the product at that position in candidateProducts."
+          );
+
+          expect(firstCall.system).toContain(
+            "When a customer clearly selects one candidate, use getProduct with that candidate's exact id."
+          );
+
+          expect(firstCall.system).toContain(
+            'When using getProduct for a candidate selection, arguments.productId must be that candidate\'s exact non-empty id.'
+          );
+
+          expect(firstCall.system).toContain(
+            "Never use a product id outside candidateProducts to resolve a reference to those candidates."
+          );
+        }
+      );
+
+      it(
+        "requires the final-response model to preserve authoritative product result order",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "I found matching products.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        fixture.product.name
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "I found matching products."
+            });
+
+          await runAIConversation(
+            {
+              text:
+                `Show me ${fixture.product.name}`,
+              state: {},
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          const secondCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(secondCall).toBeDefined();
+
+          expect(secondCall.system).toContain(
+            "When presenting multiple products from a search result, preserve their authoritative result order."
+          );
+
+          expect(secondCall.system).toContain(
+            "Do not reorder the products when numbering, listing, or describing them."
+          );
         }
       );
     }
