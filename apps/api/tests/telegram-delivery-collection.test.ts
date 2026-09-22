@@ -603,5 +603,109 @@ describe(
         );
       }
     );
+
+    it(
+      "keeps invalid conversational text inside the pending payment flow",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        const order =
+          await prisma.order.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              orderNumber:
+                `${testPrefix}-payment-boundary`,
+              subtotal: 100,
+              total: 100,
+              currency: "ETB",
+              status:
+                "PENDING_PAYMENT",
+              deliveryName:
+                "Test Recipient",
+              deliveryPhone:
+                "0911223344",
+              deliveryAddress:
+                "Bole, Addis Ababa"
+            }
+          });
+
+        setConversationState(
+          fixture.chatId,
+          {
+            awaitingPayment: true,
+            pendingOrderId:
+              order.id
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "I want another product"
+          );
+
+        expect(
+          result.reply
+        ).toContain(
+          "valid payment transaction reference"
+        );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({
+          awaitingPayment: true,
+          pendingOrderId:
+            order.id
+        });
+
+        const unchangedOrder =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id: order.id
+            }
+          });
+
+        expect(
+          unchangedOrder.status
+        ).toBe(
+          "PENDING_PAYMENT"
+        );
+
+        const payments =
+          await prisma.payment.findMany({
+            where: {
+              orderId:
+                order.id
+            }
+          });
+
+        expect(payments).toHaveLength(0);
+
+        clearConversationState(
+          fixture.chatId
+        );
+      }
+    );
   }
 );
