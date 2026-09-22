@@ -831,5 +831,193 @@ describe(
         );
       }
     );
+
+    it(
+      "rejects a duplicate transaction reference without changing the pending order",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        const originalOrder =
+          await prisma.order.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              orderNumber:
+                `${testPrefix}-duplicate-original`,
+              subtotal: 100,
+              total: 100,
+              currency: "ETB",
+              status:
+                "PAYMENT_REVIEW",
+              deliveryName:
+                "Original Recipient",
+              deliveryPhone:
+                "0911000001",
+              deliveryAddress:
+                "Original Address"
+            }
+          });
+
+        const originalPayment =
+          await prisma.payment.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              orderId:
+                originalOrder.id,
+              provider:
+                PaymentProvider.TELEBIRR,
+              status:
+                "REVIEW_REQUIRED",
+              amount: 100,
+              currency: "ETB",
+              transactionReference:
+                "TLB-DUPLICATE-123"
+            }
+          });
+
+        const pendingOrder =
+          await prisma.order.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              orderNumber:
+                `${testPrefix}-duplicate-pending`,
+              subtotal: 200,
+              total: 200,
+              currency: "ETB",
+              status:
+                "PENDING_PAYMENT",
+              deliveryName:
+                "Pending Recipient",
+              deliveryPhone:
+                "0911000002",
+              deliveryAddress:
+                "Pending Address"
+            }
+          });
+
+        setConversationState(
+          fixture.chatId,
+          {
+            awaitingPayment: true,
+            pendingOrderId:
+              pendingOrder.id
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "TLB-DUPLICATE-123"
+          );
+
+        expect(
+          result.reply
+        ).toContain(
+          "already been submitted"
+        );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        const paymentsForReference =
+          await prisma.payment.findMany({
+            where: {
+              provider:
+                PaymentProvider.TELEBIRR,
+              transactionReference:
+                "TLB-DUPLICATE-123"
+            }
+          });
+
+        expect(
+          paymentsForReference
+        ).toHaveLength(1);
+
+        expect(
+          paymentsForReference[0]?.id
+        ).toBe(
+          originalPayment.id
+        );
+
+        const unchangedPendingOrder =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id:
+                pendingOrder.id
+            }
+          });
+
+        expect(
+          unchangedPendingOrder.status
+        ).toBe(
+          "PENDING_PAYMENT"
+        );
+
+        const unchangedOriginalOrder =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id:
+                originalOrder.id
+            }
+          });
+
+        expect(
+          unchangedOriginalOrder.status
+        ).toBe(
+          "PAYMENT_REVIEW"
+        );
+
+        const unchangedOriginalPayment =
+          await prisma.payment.findUniqueOrThrow({
+            where: {
+              id:
+                originalPayment.id
+            }
+          });
+
+        expect(
+          unchangedOriginalPayment.status
+        ).toBe(
+          "REVIEW_REQUIRED"
+        );
+
+        expect(
+          unchangedOriginalPayment.verifiedAt
+        ).toBeNull();
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({
+          awaitingPayment: true,
+          pendingOrderId:
+            pendingOrder.id
+        });
+
+        clearConversationState(
+          fixture.chatId
+        );
+      }
+    );
   }
 );
