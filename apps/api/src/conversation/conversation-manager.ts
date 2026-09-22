@@ -46,7 +46,7 @@ export type ConversationResult = {
 const MAX_AI_MESSAGE_LENGTH = 4000;
 
 function isGreeting(text: string) {
-  return /^(hello|hi|hey|start|\/start|good morning|good afternoon|good evening)$/i.test(
+  return /^(hello|hi|hey|start|\/start|good morning|good afternoon|good evening|ሰላም|selam)$/i.test(
     text.trim()
   );
 }
@@ -361,6 +361,31 @@ export async function handleConversation(
       };
     }
   }
+
+  /*
+   * Allow explicit cancellation throughout the
+   * deterministic pre-order checkout flow.
+   */
+  const isPreOrderCheckout =
+    currentState.awaitingQuantity ||
+    currentState.awaitingConfirmation ||
+    currentState.awaitingDeliveryName ||
+    currentState.awaitingDeliveryPhone ||
+    currentState.awaitingDeliveryAddress;
+
+  if (
+    isPreOrderCheckout &&
+    isNegative(text)
+  ) {
+    clearConversationState(chatId);
+
+    return {
+      reply:
+        "No problem. Your order was cancelled.\n\n" +
+        "You can search for another product anytime."
+    };
+  }
+
   /*
    * STEP 3: Customer enters quantity
    */
@@ -443,6 +468,72 @@ export async function handleConversation(
         reply:
           "No problem. Your order was cancelled.\n\n" +
           "You can start again whenever you're ready."
+      };
+    }
+
+    const correctedQuantity =
+      extractQuantity(text);
+
+    if (correctedQuantity) {
+      if (!currentState.productId) {
+        clearConversationState(chatId);
+
+        return {
+          reply:
+            "Sorry, I lost the product information.\n\n" +
+            "Please tell me the product name again."
+        };
+      }
+
+      const product = await getProduct(
+        merchantId,
+        currentState.productId
+      );
+
+      if (!product) {
+        clearConversationState(chatId);
+
+        return {
+          reply:
+            "Sorry, that product is no longer available."
+        };
+      }
+
+      const stock = await checkStock(
+        merchantId,
+        product.id,
+        correctedQuantity
+      );
+
+      if (!stock.available) {
+        return {
+          reply:
+            `Sorry, we only have ${stock.stock} available.\n\n` +
+            `Your quantity is still ${currentState.quantity}.\n\n` +
+            `Please enter a quantity from 1 to ${stock.stock}, ` +
+            "or reply YES or NO."
+        };
+      }
+
+      const total =
+        product.price *
+        correctedQuantity;
+
+      updateConversationState(chatId, {
+        productId: product.id,
+        productName: product.name,
+        quantity: correctedQuantity,
+        awaitingConfirmation: true
+      });
+
+      return {
+        reply:
+          `${correctedQuantity} × ${product.name}\n` +
+          `Unit price: ${product.price} ${product.currency}\n` +
+          `Total: ${total.toFixed(2)} ${product.currency}\n\n` +
+          "Quantity updated.\n\n" +
+          "Would you like to place this order?\n" +
+          "Reply YES or NO."
       };
     }
 

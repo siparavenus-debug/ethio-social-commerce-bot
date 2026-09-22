@@ -152,6 +152,200 @@ afterAll(async () => {
 describe(
   "multilingual conversation baseline",
   () => {
+    it.each([
+      "ሰላም",
+      "selam"
+    ])(
+      "handles explicit multilingual greeting %s deterministically and resets stale state",
+      async (input) => {
+        const fixture =
+          await createFixture();
+
+        setConversationState(
+          fixture.chatId,
+          {
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            quantity: 2,
+            awaitingConfirmation: true
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            input
+          );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        expect(result.reply).toContain(
+          `Welcome to ${fixture.merchant.name}!`
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({});
+      }
+    );
+
+    it(
+      "does not treat a greeting plus a shopping request as a destructive greeting reset",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        setConversationState(
+          fixture.chatId,
+          {
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            quantity: 2,
+            awaitingConfirmation: true
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "selam shoes"
+          );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        expect(result.reply).toContain(
+          "Please reply YES"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toMatchObject({
+          productId:
+            fixture.product.id,
+          quantity: 2,
+          awaitingConfirmation: true
+        });
+      }
+    );
+
+    it.each([
+      [
+        "quantity",
+        {
+          awaitingQuantity: true
+        }
+      ],
+      [
+        "delivery name",
+        {
+          quantity: 2,
+          awaitingDeliveryName: true
+        }
+      ],
+      [
+        "delivery phone",
+        {
+          quantity: 2,
+          awaitingDeliveryPhone: true,
+          deliveryName:
+            "Test Recipient"
+        }
+      ],
+      [
+        "delivery address",
+        {
+          quantity: 2,
+          awaitingDeliveryAddress: true,
+          deliveryName:
+            "Test Recipient",
+          deliveryPhone:
+            "0911223344"
+        }
+      ]
+    ])(
+      "cancels checkout deterministically while awaiting %s",
+      async (_stage, stageState) => {
+        const fixture =
+          await createFixture();
+
+        setConversationState(
+          fixture.chatId,
+          {
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            ...stageState
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "cancel"
+          );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        expect(result.reply).toContain(
+          "cancelled"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({});
+      }
+    );
+
     it(
       "keeps valid numeric quantity handling deterministic",
       async () => {
@@ -217,7 +411,7 @@ describe(
         async (input, expectedQuantity) => {
           const fixture =
             await createFixture();
-      
+
           setConversationState(
             fixture.chatId,
             {
@@ -228,7 +422,7 @@ describe(
               awaitingQuantity: true
             }
           );
-      
+
           const result =
             await handleConversation(
               {
@@ -245,15 +439,15 @@ describe(
               },
               input
             );
-      
+
           expect(
             runAIConversationMock
           ).not.toHaveBeenCalled();
-      
+
           expect(result.reply).toContain(
             "Would you like to place this order?"
           );
-      
+
           expect(
             getConversationState(
               fixture.chatId
@@ -280,7 +474,7 @@ describe(
         async (input) => {
           const fixture =
             await createFixture();
-      
+
           setConversationState(
             fixture.chatId,
             {
@@ -291,7 +485,7 @@ describe(
               awaitingQuantity: true
             }
           );
-      
+
           const result =
             await handleConversation(
               {
@@ -308,33 +502,151 @@ describe(
               },
               input
             );
-      
+
           expect(
             runAIConversationMock
           ).not.toHaveBeenCalled();
-      
+
           expect(result.reply).toContain(
             "Please enter the quantity as a number."
           );
-      
+
           const state =
             getConversationState(
               fixture.chatId
             );
-      
+
           expect(state).toMatchObject({
             productId:
               fixture.product.id,
             awaitingQuantity: true
           });
-      
+
           expect(
             state.quantity
           ).toBeUndefined();
-      
+
           expect(
             state.awaitingConfirmation
           ).toBeUndefined();
+        }
+      );
+
+      it(
+        "updates an unambiguous quantity while awaiting confirmation",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          setConversationState(
+            fixture.chatId,
+            {
+              productId:
+                fixture.product.id,
+              productName:
+                fixture.product.name,
+              quantity: 2,
+              awaitingConfirmation: true
+            }
+          );
+
+          const result =
+            await handleConversation(
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id,
+                chatId:
+                  fixture.chatId,
+                customerName:
+                  fixture.customer.name,
+                merchantName:
+                  fixture.merchant.name
+              },
+              "3"
+            );
+
+          expect(
+            runAIConversationMock
+          ).not.toHaveBeenCalled();
+
+          expect(result.reply).toContain(
+            `3 × ${fixture.product.name}`
+          );
+
+          expect(result.reply).toContain(
+            "Reply YES or NO"
+          );
+
+          expect(
+            getConversationState(
+              fixture.chatId
+            )
+          ).toMatchObject({
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            quantity: 3,
+            awaitingConfirmation: true
+          });
+        }
+      );
+
+      it(
+        "rejects an unavailable quantity correction without replacing the accepted quantity",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          setConversationState(
+            fixture.chatId,
+            {
+              productId:
+                fixture.product.id,
+              productName:
+                fixture.product.name,
+              quantity: 2,
+              awaitingConfirmation: true
+            }
+          );
+
+          const result =
+            await handleConversation(
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id,
+                chatId:
+                  fixture.chatId,
+                customerName:
+                  fixture.customer.name,
+                merchantName:
+                  fixture.merchant.name
+              },
+              "6"
+            );
+
+          expect(
+            runAIConversationMock
+          ).not.toHaveBeenCalled();
+
+          expect(result.reply).toContain(
+            "only have 5 available"
+          );
+
+          expect(
+            getConversationState(
+              fixture.chatId
+            )
+          ).toMatchObject({
+            productId:
+              fixture.product.id,
+            quantity: 2,
+            awaitingConfirmation: true
+          });
         }
       );
 
@@ -392,6 +704,62 @@ describe(
       }
     );
 
+    it(
+      "does not guess a quantity correction from ambiguous input",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        setConversationState(
+          fixture.chatId,
+          {
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            quantity: 2,
+            awaitingConfirmation: true
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "2 or 3"
+          );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        expect(result.reply).toContain(
+          "Please reply YES"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toMatchObject({
+          productId:
+            fixture.product.id,
+          quantity: 2,
+          awaitingConfirmation: true
+        });
+      }
+    );
+
     it.each([
         "አዎ",
         "awo"
@@ -400,7 +768,7 @@ describe(
         async (input) => {
           const fixture =
             await createFixture();
-      
+
           setConversationState(
             fixture.chatId,
             {
@@ -412,7 +780,7 @@ describe(
               awaitingConfirmation: true
             }
           );
-      
+
           const result =
             await handleConversation(
               {
@@ -429,15 +797,15 @@ describe(
               },
               input
             );
-      
+
           expect(
             runAIConversationMock
           ).not.toHaveBeenCalled();
-      
+
           expect(result.reply).toContain(
             "recipient's full name"
           );
-      
+
           expect(
             getConversationState(
               fixture.chatId
@@ -451,7 +819,7 @@ describe(
           });
         }
       );
-      
+
       it.each([
         "አይ",
         "ay"
@@ -460,7 +828,7 @@ describe(
         async (input) => {
           const fixture =
             await createFixture();
-      
+
           setConversationState(
             fixture.chatId,
             {
@@ -472,7 +840,7 @@ describe(
               awaitingConfirmation: true
             }
           );
-      
+
           const result =
             await handleConversation(
               {
@@ -489,32 +857,32 @@ describe(
               },
               input
             );
-      
+
           expect(
             runAIConversationMock
           ).not.toHaveBeenCalled();
-      
+
           expect(result.reply).toContain(
             "cancelled"
           );
-      
+
           const state =
             getConversationState(
               fixture.chatId
             );
-      
+
             expect(
                 state.awaitingConfirmation
               ).toBeUndefined();
-              
+
               expect(
                 state.awaitingDeliveryName
               ).toBeUndefined();
-              
+
               expect(
                 state.productId
               ).toBeUndefined();
-              
+
               expect(
                 state.quantity
               ).toBeUndefined();
@@ -534,7 +902,7 @@ describe(
         async (input) => {
           const fixture =
             await createFixture();
-      
+
           setConversationState(
             fixture.chatId,
             {
@@ -546,7 +914,7 @@ describe(
               awaitingConfirmation: true
             }
           );
-      
+
           const result =
             await handleConversation(
               {
@@ -563,20 +931,20 @@ describe(
               },
               input
             );
-      
+
           expect(
             runAIConversationMock
           ).not.toHaveBeenCalled();
-      
+
           expect(result.reply).toContain(
             "Please reply YES"
           );
-      
+
           const state =
             getConversationState(
               fixture.chatId
             );
-      
+
           expect(state).toMatchObject({
             productId:
               fixture.product.id,
@@ -585,7 +953,7 @@ describe(
             quantity: 2,
             awaitingConfirmation: true
           });
-      
+
           expect(
             state.awaitingDeliveryName
           ).toBeUndefined();
