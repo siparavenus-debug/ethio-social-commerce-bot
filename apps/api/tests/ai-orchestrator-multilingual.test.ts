@@ -893,6 +893,30 @@ import {
           expect(finalSystemPrompt).toContain(
             "customer"
           );
+
+          expect(finalSystemPrompt).toContain(
+            "Compare products only using facts"
+          );
+
+          expect(finalSystemPrompt).toContain(
+            "name, description, price, currency, stock, and category"
+          );
+
+          expect(finalSystemPrompt).toContain(
+            "Do not invent product characteristics"
+          );
+
+          expect(finalSystemPrompt).toContain(
+            "customer's stated preference"
+          );
+
+          expect(finalSystemPrompt).toContain(
+            "Do not claim that one product is better quality"
+          );
+
+          expect(finalSystemPrompt).toContain(
+            "If the available catalog facts do not support the requested comparison"
+          );
         }
       );
 
@@ -1302,6 +1326,368 @@ import {
           expect(firstCall.system).toContain(
             "Never use a product id outside candidateProducts to resolve a reference to those candidates."
           );
+        }
+      );
+
+      it(
+        "provides authoritative same-merchant product facts for a grounded comparison",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const comparisonProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  fixture.product.categoryId,
+                name:
+                  "Premium Black Men Shoes",
+                description:
+                  "Black leather formal shoes",
+                price:
+                  "2400.00",
+                currency:
+                  "ETB",
+                stock: 2,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Comparing the matching shoes.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Men Shoes"
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Black Men Shoes is cheaper at 1800 ETB, while Premium Black Men Shoes is 2400 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "Compare the men's shoes. Which is cheaper?",
+                state: {},
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(result.toolResults).toHaveLength(
+            1
+          );
+
+          const products =
+            result.toolResults[0]
+              .result as Array<{
+                id: string;
+                name: string;
+                description: string | null;
+                price: number;
+                currency: string;
+                stock: number;
+                category: {
+                  id: string;
+                  name: string;
+                } | null;
+              }>;
+
+          expect(products).toHaveLength(2);
+
+          expect(products).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id:
+                  fixture.product.id,
+                name:
+                  "Black Men Shoes",
+                description:
+                  "Black everyday shoes",
+                price: 1800,
+                currency:
+                  "ETB",
+                stock: 4,
+                category:
+                  expect.objectContaining({
+                    name:
+                      "Men Shoes"
+                  })
+              }),
+              expect.objectContaining({
+                id:
+                  comparisonProduct.id,
+                name:
+                  "Premium Black Men Shoes",
+                description:
+                  "Black leather formal shoes",
+                price: 2400,
+                currency:
+                  "ETB",
+                stock: 2,
+                category:
+                  expect.objectContaining({
+                    name:
+                      "Men Shoes"
+                  })
+              })
+            ])
+          );
+
+          expect(
+            products.some(
+              (product) =>
+                product.id ===
+                fixture.otherProduct.id
+            )
+          ).toBe(false);
+
+          const secondCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(secondCall).toBeDefined();
+
+          const finalCallContent =
+            secondCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(finalCallContent).toContain(
+            '"name":"Black Men Shoes"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"price":1800'
+          );
+
+          expect(finalCallContent).toContain(
+            '"description":"Black everyday shoes"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"name":"Premium Black Men Shoes"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"price":2400'
+          );
+
+          expect(finalCallContent).toContain(
+            '"description":"Black leather formal shoes"'
+          );
+
+          expect(finalCallContent).not.toContain(
+            "Other Merchant Men Shoes"
+          );
+
+          expect(result.response).toMatchObject({
+            intent:
+              "SEARCH_PRODUCT",
+            message:
+              "Black Men Shoes is cheaper at 1800 ETB, while Premium Black Men Shoes is 2400 ETB.",
+            toolCalls: []
+          });
+        }
+      );
+
+      it(
+        "provides authoritative facts for a recommendation tied to the customer's budget",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const comparisonProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  fixture.product.categoryId,
+                name:
+                  "Premium Black Men Shoes",
+                description:
+                  "Black leather formal shoes",
+                price:
+                  "2400.00",
+                currency:
+                  "ETB",
+                stock: 2,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "I found matching shoes.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Men Shoes"
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "For your 2000 ETB budget, Black Men Shoes fits at 1800 ETB. Premium Black Men Shoes costs 2400 ETB, which is above your stated budget."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "I have a 2000 ETB budget. Which men's shoes do you recommend?",
+                state: {},
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(result.toolResults).toHaveLength(
+            1
+          );
+
+          const products =
+            result.toolResults[0]
+              .result as Array<{
+                id: string;
+                name: string;
+                price: number;
+                currency: string;
+              }>;
+
+          expect(products).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                id:
+                  fixture.product.id,
+                name:
+                  "Black Men Shoes",
+                price: 1800,
+                currency:
+                  "ETB"
+              }),
+              expect.objectContaining({
+                id:
+                  comparisonProduct.id,
+                name:
+                  "Premium Black Men Shoes",
+                price: 2400,
+                currency:
+                  "ETB"
+              })
+            ])
+          );
+
+          expect(
+            products.some(
+              (product) =>
+                product.id ===
+                fixture.otherProduct.id
+            )
+          ).toBe(false);
+
+          const secondCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(secondCall).toBeDefined();
+
+          const finalCallContent =
+            secondCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(finalCallContent).toContain(
+            "I have a 2000 ETB budget."
+          );
+
+          expect(finalCallContent).toContain(
+            '"name":"Black Men Shoes"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"price":1800'
+          );
+
+          expect(finalCallContent).toContain(
+            '"name":"Premium Black Men Shoes"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"price":2400'
+          );
+
+          expect(finalCallContent).not.toContain(
+            "Other Merchant Men Shoes"
+          );
+
+          expect(secondCall.system).toContain(
+            "tie the reason to the customer's stated preference or constraint"
+          );
+
+          expect(result.response).toMatchObject({
+            intent:
+              "SEARCH_PRODUCT",
+            message:
+              "For your 2000 ETB budget, Black Men Shoes fits at 1800 ETB. Premium Black Men Shoes costs 2400 ETB, which is above your stated budget.",
+            toolCalls: []
+          });
         }
       );
 
