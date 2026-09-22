@@ -460,5 +460,148 @@ describe(
         );
       }
     );
+
+    it(
+      "preserves multilingual delivery details deterministically",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        setConversationState(
+          fixture.chatId,
+          {
+            productId:
+              fixture.product.id,
+            productName:
+              fixture.product.name,
+            quantity: 1,
+            awaitingDeliveryName: true
+          }
+        );
+
+        const context = {
+          merchantId:
+            fixture.merchant.id,
+          customerId:
+            fixture.customer.id,
+          chatId:
+            fixture.chatId,
+          customerName:
+            fixture.customer.name,
+          merchantName:
+            fixture.merchant.name
+        };
+
+        const deliveryName =
+          "  ሀና ተስፋዬ  ";
+
+        const nameResult =
+          await handleConversation(
+            context,
+            deliveryName
+          );
+
+        expect(
+          nameResult.reply
+        ).toContain(
+          "delivery phone number"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toMatchObject({
+          deliveryName:
+            "ሀና ተስፋዬ",
+          awaitingDeliveryPhone: true
+        });
+
+        const deliveryPhone =
+          "  +251 911 223 344  ";
+
+        const phoneResult =
+          await handleConversation(
+            context,
+            deliveryPhone
+          );
+
+        expect(
+          phoneResult.reply
+        ).toContain(
+          "delivery address or location"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toMatchObject({
+          deliveryPhone:
+            "+251 911 223 344",
+          awaitingDeliveryAddress: true
+        });
+
+        const deliveryAddress =
+          "  ቦሌ, Addis Ababa - መድሀኒዓለም አጠገብ  ";
+
+        const addressResult =
+          await handleConversation(
+            context,
+            deliveryAddress
+          );
+
+        expect(
+          addressResult.reply
+        ).toContain(
+          "Order confirmed!"
+        );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        const order =
+          await prisma.order.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          });
+
+        expect(
+          order.deliveryName
+        ).toBe("ሀና ተስፋዬ");
+
+        expect(
+          order.deliveryPhone
+        ).toBe("+251 911 223 344");
+
+        expect(
+          order.deliveryAddress
+        ).toBe(
+          "ቦሌ, Addis Ababa - መድሀኒዓለም አጠገብ"
+        );
+
+        expect(order.status).toBe(
+          "PENDING_PAYMENT"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({
+          awaitingPayment: true,
+          pendingOrderId: order.id
+        });
+
+        clearConversationState(
+          fixture.chatId
+        );
+      }
+    );
   }
 );
