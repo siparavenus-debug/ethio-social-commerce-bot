@@ -1,4 +1,4 @@
-﻿import { prisma } from "@ethio-commerce/database";
+import { prisma } from "@ethio-commerce/database";
 
 export type ProductSearchResult = {
   id: string;
@@ -14,6 +14,11 @@ export type ProductSearchResult = {
     imageUrl: string | null;
     imageAltText: string | null;
   } | null;
+};
+
+export type ProductSearchOptions = {
+  maxPrice?: number;
+  currency?: string;
 };
 
 function mapProduct(product: {
@@ -47,7 +52,8 @@ function mapProduct(product: {
 
 export async function searchProducts(
   merchantId: string,
-  query: string
+  query: string,
+  options: ProductSearchOptions = {}
 ): Promise<ProductSearchResult[]> {
   const normalizedQuery = query.trim();
 
@@ -63,6 +69,18 @@ export async function searchProducts(
       where: {
         merchantId,
         status: "ACTIVE",
+        ...(options.maxPrice !== undefined
+          ? {
+              price: {
+                lte: options.maxPrice
+              }
+            }
+          : {}),
+        ...(options.currency !== undefined
+          ? {
+              currency: options.currency
+            }
+          : {}),
         ...(queryTerms.length > 0
           ? {
               AND: queryTerms.map(

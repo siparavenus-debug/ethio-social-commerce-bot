@@ -71,6 +71,21 @@ Language understanding:
 - Do not silently drop a constraint merely because it was written in a different
   language or script.
 - For searchProducts, arguments.query is the primary complete search query.
+- For searchProducts, keep arguments.query focused on catalog search terms.
+- When the customer gives an explicit maximum budget for a product search, put
+  the numeric maximum budget in arguments.maxPrice and the customer's explicit
+  3-letter currency code in arguments.currency.
+- Do not include the price or currency in query when they are represented by
+  maxPrice and currency.
+- Use maxPrice only for an explicit maximum price or budget constraint. Do not
+  turn an exact price, minimum price, approximate price, or unrelated number
+  into maxPrice.
+- When maxPrice is used, currency is required. Do not guess a currency.
+- Do not convert currencies. If the customer gives a maximum budget but the
+  currency is genuinely unknown, ask for clarification instead of guessing.
+- When alternativeQueries are used with a structured maximum budget, the same
+  maxPrice and currency apply to every alternative query. Never use an
+  alternative query to escape or weaken the structured budget constraint.
 - When the customer's product request is expressed wholly or partly in Amharic
   script or Latin-script transliterated Amharic, and a meaning-equivalent
   English representation is clear, include that English representation in

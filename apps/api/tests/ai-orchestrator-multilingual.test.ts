@@ -481,6 +481,145 @@ import {
       );
 
       it(
+        "executes an explicit product budget as a structured price and currency constraint",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.product.update({
+            where: {
+              id: fixture.product.id
+            },
+            data: {
+              name:
+                "Budget Men Shoes",
+              price:
+                "1800.00",
+              currency:
+                "ETB"
+            }
+          });
+
+          const expensiveProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  fixture.product.categoryId,
+                name:
+                  "Premium Men Shoes",
+                description:
+                  "Formal shoes",
+                price:
+                  "2400.00",
+                currency:
+                  "ETB",
+                stock: 3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching within your budget.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Men Shoes",
+                      maxPrice:
+                        2000,
+                      currency:
+                        "ETB"
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Budget Men Shoes is available for 1800 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "Show me men's shoes under 2000 ETB.",
+                state: {},
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "searchProducts",
+            query:
+              "Men Shoes"
+          });
+
+          const products =
+            result.toolResults[0]
+              .result as Array<{
+                id: string;
+                name: string;
+                price: number;
+                currency: string;
+              }>;
+
+          expect(products).toHaveLength(1);
+
+          expect(products[0]).toMatchObject({
+            id:
+              fixture.product.id,
+            name:
+              "Budget Men Shoes",
+            price:
+              1800,
+            currency:
+              "ETB"
+          });
+
+          expect(
+            products.some(
+              (product) =>
+                product.id ===
+                expensiveProduct.id
+            )
+          ).toBe(false);
+
+          expect(result.response).toMatchObject({
+            intent:
+              "SEARCH_PRODUCT",
+            message:
+              "Budget Men Shoes is available for 1800 ETB.",
+            toolCalls: []
+          });
+        }
+      );
+
+      it(
         "retrieves an authoritative English catalog product through a meaning-equivalent multilingual alternative query",
         async () => {
           const fixture =
@@ -807,6 +946,50 @@ import {
             systemPrompt.toLowerCase()
           ).toContain(
             "must not remove a constraint"
+          );
+
+          expect(systemPrompt).toContain(
+            "maxPrice"
+          );
+
+          expect(systemPrompt).toContain(
+            "currency"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "maximum budget"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "catalog search terms"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "do not include the price or currency in query"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "maxprice and currency apply to every alternative query"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "do not convert currencies"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "do not guess a currency"
           );
         }
       );

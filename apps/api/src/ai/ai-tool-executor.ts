@@ -84,6 +84,56 @@ export async function executeAITool(
         );
       }
 
+      const rawMaxPrice =
+        args.maxPrice;
+
+      if (
+        rawMaxPrice !== undefined &&
+        (
+          typeof rawMaxPrice !== "number" ||
+          !Number.isFinite(rawMaxPrice) ||
+          rawMaxPrice <= 0
+        )
+      ) {
+        throw new Error(
+          'AI tool argument "maxPrice" must be a positive finite number.'
+        );
+      }
+
+      const rawCurrency =
+        args.currency;
+
+      if (
+        rawMaxPrice !== undefined &&
+        rawCurrency === undefined
+      ) {
+        throw new Error(
+          'AI tool argument "currency" is required when "maxPrice" is provided.'
+        );
+      }
+
+      if (
+        rawCurrency !== undefined &&
+        (
+          typeof rawCurrency !== "string" ||
+          !/^[A-Za-z]{3}$/.test(
+            rawCurrency.trim()
+          )
+        )
+      ) {
+        throw new Error(
+          'AI tool argument "currency" must be a 3-letter currency code.'
+        );
+      }
+
+      const maxPrice =
+        rawMaxPrice as number | undefined;
+
+      const currency =
+        typeof rawCurrency === "string"
+          ? rawCurrency.trim().toUpperCase()
+          : undefined;
+
       const rawAlternativeQueries =
         args.alternativeQueries;
 
@@ -159,7 +209,11 @@ export async function executeAITool(
             (candidateQuery) =>
               searchProducts(
                 context.merchantId,
-                candidateQuery
+                candidateQuery,
+                {
+                  maxPrice,
+                  currency
+                }
               )
           )
         );

@@ -683,6 +683,285 @@ describe("product commerce tools", () => {
     );
 
     it(
+        "applies validated maximum price and currency through AI product search",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Budget Men Shoes",
+                    description:
+                        "Everyday shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const expensiveProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Premium Men Shoes",
+                        description:
+                            "Formal shoes",
+                        price:
+                            "2400.00",
+                        currency:
+                            "ETB",
+                        stock: 2,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            maxPrice: 2000,
+                            currency:
+                                "ETB"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                );
+
+            const results =
+                execution.result as Array<{
+                    id: string;
+                    price: number;
+                    currency: string;
+                }>;
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                product.id
+            ]);
+
+            expect(
+                results.some(
+                    (result) =>
+                        result.id ===
+                        expensiveProduct.id
+                )
+            ).toBe(false);
+        }
+    );
+
+    it(
+        "rejects invalid AI-generated maximum product prices",
+        async () => {
+            const {
+                merchant
+            } =
+                await createFixture();
+
+            for (
+                const maxPrice of [
+                    0,
+                    -1,
+                    Number.NaN,
+                    Number.POSITIVE_INFINITY,
+                    "2000"
+                ]
+            ) {
+                await expect(
+                    executeAITool(
+                        {
+                            tool:
+                                "searchProducts",
+                            arguments: {
+                                query:
+                                    "Men Shoes",
+                                maxPrice,
+                                currency:
+                                    "ETB"
+                            }
+                        },
+                        {
+                            merchantId:
+                                merchant.id,
+                            customerId:
+                                "test-customer"
+                        }
+                    )
+                ).rejects.toThrow(
+                    'AI tool argument "maxPrice" must be a positive finite number.'
+                );
+            }
+        }
+    );
+
+    it(
+        "requires currency when AI product search includes a maximum price",
+        async () => {
+            const {
+                merchant
+            } =
+                await createFixture();
+
+            await expect(
+                executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                )
+            ).rejects.toThrow(
+                'AI tool argument "currency" is required when "maxPrice" is provided.'
+            );
+        }
+    );
+
+    it(
+        "rejects invalid AI-generated product search currencies",
+        async () => {
+            const {
+                merchant
+            } =
+                await createFixture();
+
+            for (
+                const currency of [
+                    "",
+                    "ET",
+                    "ETBB",
+                    "12A",
+                    123
+                ]
+            ) {
+                await expect(
+                    executeAITool(
+                        {
+                            tool:
+                                "searchProducts",
+                            arguments: {
+                                query:
+                                    "Men Shoes",
+                                maxPrice:
+                                    2000,
+                                currency
+                            }
+                        },
+                        {
+                            merchantId:
+                                merchant.id,
+                            customerId:
+                                "test-customer"
+                        }
+                    )
+                ).rejects.toThrow(
+                    'AI tool argument "currency" must be a 3-letter currency code.'
+                );
+            }
+        }
+    );
+
+    it(
+        "normalizes AI-generated product search currency before filtering",
+        async () => {
+            const {
+                merchant,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Budget Men Shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                " etb "
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer"
+                    }
+                );
+
+            const results =
+                execution.result as Array<{
+                    id: string;
+                    price: number;
+                    currency: string;
+                }>;
+
+            expect(results).toHaveLength(1);
+
+            expect(results[0]).toMatchObject({
+                id:
+                    product.id,
+                price:
+                    1800,
+                currency:
+                    "ETB"
+            });
+        }
+    );
+
+    it(
         "searches active products by merchant-entered product description",
         async () => {
             const {
@@ -826,6 +1105,110 @@ describe("product commerce tools", () => {
                 );
 
             expect(results).toEqual([]);
+        }
+    );
+
+    it(
+        "filters matching active products by maximum price and currency",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Budget Men Shoes",
+                    description:
+                        "Everyday shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const expensiveProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Premium Men Shoes",
+                        description:
+                            "Formal shoes",
+                        price:
+                            "2400.00",
+                        currency:
+                            "ETB",
+                        stock: 2,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const differentCurrencyProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "USD Men Shoes",
+                        description:
+                            "Imported shoes",
+                        price:
+                            "20.00",
+                        currency:
+                            "USD",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const results =
+                await searchProducts(
+                    merchant.id,
+                    "Men Shoes",
+                    {
+                        maxPrice: 2000,
+                        currency: "ETB"
+                    }
+                );
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                product.id
+            ]);
+
+            expect(
+                results.some(
+                    (result) =>
+                        result.id ===
+                        expensiveProduct.id
+                )
+            ).toBe(false);
+
+            expect(
+                results.some(
+                    (result) =>
+                        result.id ===
+                        differentCurrencyProduct.id
+                )
+            ).toBe(false);
         }
     );
 });
