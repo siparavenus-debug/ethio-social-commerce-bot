@@ -707,5 +707,129 @@ describe(
         );
       }
     );
+
+    it(
+      "submits a valid transaction reference for merchant review without verifying payment",
+      async () => {
+        const fixture =
+          await createFixture();
+
+        const order =
+          await prisma.order.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              orderNumber:
+                `${testPrefix}-reference-review`,
+              subtotal: 100,
+              total: 100,
+              currency: "ETB",
+              status:
+                "PENDING_PAYMENT",
+              deliveryName:
+                "Test Recipient",
+              deliveryPhone:
+                "0911223344",
+              deliveryAddress:
+                "Bole, Addis Ababa"
+            }
+          });
+
+        setConversationState(
+          fixture.chatId,
+          {
+            awaitingPayment: true,
+            pendingOrderId:
+              order.id
+          }
+        );
+
+        const result =
+          await handleConversation(
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id,
+              chatId:
+                fixture.chatId,
+              customerName:
+                fixture.customer.name,
+              merchantName:
+                fixture.merchant.name
+            },
+            "TLB-123456789"
+          );
+
+        expect(
+          result.reply
+        ).toContain(
+          "waiting for merchant review"
+        );
+
+        expect(
+          runAIConversationMock
+        ).not.toHaveBeenCalled();
+
+        const payment =
+          await prisma.payment.findFirstOrThrow({
+            where: {
+              orderId:
+                order.id
+            }
+          });
+
+        expect(
+          payment.provider
+        ).toBe(
+          PaymentProvider.TELEBIRR
+        );
+
+        expect(
+          payment.transactionReference
+        ).toBe(
+          "TLB-123456789"
+        );
+
+        expect(
+          payment.status
+        ).toBe(
+          "REVIEW_REQUIRED"
+        );
+
+        expect(
+          payment.verifiedAt
+        ).toBeNull();
+
+        const updatedOrder =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id: order.id
+            }
+          });
+
+        expect(
+          updatedOrder.status
+        ).toBe(
+          "PAYMENT_REVIEW"
+        );
+
+        expect(
+          getConversationState(
+            fixture.chatId
+          )
+        ).toEqual({
+          awaitingPayment: true,
+          pendingOrderId:
+            order.id
+        });
+
+        clearConversationState(
+          fixture.chatId
+        );
+      }
+    );
   }
 );
