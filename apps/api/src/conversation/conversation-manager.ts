@@ -780,6 +780,15 @@ export async function handleConversation(
     lastIntent: aiResponse.intent
   };
 
+  const latestProductSearch =
+    aiResult.searchContexts?.at(-1);
+
+  if (latestProductSearch) {
+    nextState.lastProductSearch = {
+      ...latestProductSearch
+    };
+  }
+
   let responseImageUrl: string | undefined;
 
   for (const toolResult of aiResult.toolResults) {
@@ -807,8 +816,44 @@ export async function handleConversation(
         if (products.length === 0) {
           nextState.candidateProducts =
             undefined;
+
+          if (
+            !toolResult
+              .isProductSearchContinuation
+          ) {
+            nextState.seenProductIds =
+              undefined;
+          }
         } else if (products.length === 1) {
           const product = products[0];
+
+          if (
+            toolResult
+              .isProductSearchContinuation
+          ) {
+            nextState.seenProductIds = [
+              ...new Set([
+                ...(currentState
+                  .seenProductIds ??
+                  currentState
+                    .candidateProducts
+                    ?.map(
+                      (candidate) =>
+                        candidate.id
+                    ) ??
+                  (currentState.productId
+                    ? [
+                      currentState.productId
+                    ]
+                    : [])),
+                product.id
+              ])
+            ];
+          } else {
+            nextState.seenProductIds = [
+              product.id
+            ];
+          }
 
           nextState.candidateProducts =
             undefined;
@@ -829,7 +874,7 @@ export async function handleConversation(
             }
           }
         } else if (products.length > 1) {
-          nextState.candidateProducts =
+          const candidateProducts =
             products
               .slice(0, 10)
               .map((product) => ({
@@ -837,41 +882,76 @@ export async function handleConversation(
                 name: product.name
               }));
 
+          nextState.candidateProducts =
+            candidateProducts;
+
+          const returnedProductIds =
+            candidateProducts.map(
+              (product) => product.id
+            );
+
+          if (
+            toolResult
+              .isProductSearchContinuation
+          ) {
+            nextState.seenProductIds = [
+              ...new Set([
+                ...(currentState
+                  .seenProductIds ??
+                  currentState
+                    .candidateProducts
+                    ?.map(
+                      (candidate) =>
+                        candidate.id
+                    ) ??
+                  (currentState.productId
+                    ? [
+                      currentState.productId
+                    ]
+                    : [])),
+                ...returnedProductIds
+              ])
+            ];
+          } else {
+            nextState.seenProductIds =
+              returnedProductIds;
+          }
+
           if (!toolResult.query) {
             continue;
           }
-        const normalizedQuery =
-          toolResult.query
-            .trim()
-            .toLocaleLowerCase();
+          const normalizedQuery =
+            toolResult.query
+              .trim()
+              .toLocaleLowerCase();
 
-        const firstCategory =
-          products[0].category;
+          const firstCategory =
+            products[0].category;
 
-        const isMatchingCategory =
-          firstCategory !== null &&
-          firstCategory.name
-            .toLocaleLowerCase()
-            .includes(normalizedQuery);
+          const isMatchingCategory =
+            firstCategory !== null &&
+            firstCategory.name
+              .toLocaleLowerCase()
+              .includes(normalizedQuery);
 
-        const allProductsShareCategory =
-          firstCategory !== null &&
-          products.every(
-            (product) =>
-              product.category?.id ===
-              firstCategory.id
-          );
+          const allProductsShareCategory =
+            firstCategory !== null &&
+            products.every(
+              (product) =>
+                product.category?.id ===
+                firstCategory.id
+            );
 
-        if (
-          isMatchingCategory &&
-          allProductsShareCategory &&
-          firstCategory.imageUrl
-        ) {
-          responseImageUrl =
-            firstCategory.imageUrl;
+          if (
+            isMatchingCategory &&
+            allProductsShareCategory &&
+            firstCategory.imageUrl
+          ) {
+            responseImageUrl =
+              firstCategory.imageUrl;
+          }
         }
       }
-    }
 
     if (
       toolResult.tool === "getProduct" &&

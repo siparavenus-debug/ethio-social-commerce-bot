@@ -9,6 +9,14 @@ export type ShoppingState = {
     name: string;
   }>;
 
+  seenProductIds?: string[];
+
+  lastProductSearch?: {
+    query: string;
+    maxPrice?: number;
+    currency?: string;
+  };
+
   quantity?: number;
 
   awaitingQuantity?: boolean;

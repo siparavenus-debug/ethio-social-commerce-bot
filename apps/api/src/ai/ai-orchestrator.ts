@@ -13,6 +13,7 @@ import {
 
 import {
   executeAITool,
+  type AIProductSearchContext,
   type AIToolExecutionContext,
   type AIToolExecutionResult
 } from "./ai-tool-executor.js";
@@ -38,6 +39,13 @@ export type AIConversationRequest = {
 
 export type AIConversationContext =
   AIToolExecutionContext;
+
+export type AIConversationToolResult = {
+  tool: AIToolExecutionResult["tool"];
+  result: unknown;
+  query?: string;
+  isProductSearchContinuation?: boolean;
+};
 
 const SYSTEM_PROMPT = `
 You are the AI shopping assistant for an Ethiopian social-commerce merchant.
@@ -100,6 +108,17 @@ Language understanding:
   the request, or add a constraint that the customer did not provide.
 - alternativeQueries are alternate representations of the same customer request,
   not guesses about products that may exist in the catalog.
+- alternativeQueries must never be used to represent a conversational request
+  for another, different, or additional product result.
+- When the customer asks for another product option from the previous product
+  search, use searchProducts with arguments.excludePreviousResults set to true.
+- Use excludePreviousResults only when lastProductSearch exists in the
+  conversation state and the customer is continuing that previous search.
+- When excludePreviousResults is true, do not reconstruct, weaken, broaden, or
+  replace the previous search constraints. The application will reuse the
+  validated query, maxPrice, and currency from lastProductSearch.
+- Never provide excludeProductIds. Product exclusions are determined
+  deterministically by the application from authoritative conversation state.
 - Do not include conversational filler in query or alternativeQueries when that
   filler is not part of the requested product constraints.
 - If the customer's meaning or product reference is genuinely ambiguous and the
@@ -434,6 +453,9 @@ function buildContext(
     candidateProducts:
       state.candidateProducts ?? [],
 
+    lastProductSearch:
+      state.lastProductSearch ?? null,
+
     quantity:
       state.quantity ?? null,
 
@@ -514,14 +536,18 @@ export async function runAIConversation(
   context: AIConversationContext
 ): Promise<{
   response: AIResponse;
-  toolResults: AIToolExecutionResult[];
+  toolResults: AIConversationToolResult[];
+  searchContexts: AIProductSearchContext[];
 }> {
   const initial =
     await understandCustomerMessage(
       request
     );
 
-  const toolResults: AIToolExecutionResult[] =
+  const toolResults: AIConversationToolResult[] =
+    [];
+
+  const searchContexts: AIProductSearchContext[] =
     [];
 
   for (const toolCall of initial.toolCalls) {
@@ -546,19 +572,128 @@ export async function runAIConversation(
       }
     }
 
+    let executionContext:
+      AIToolExecutionContext =
+        context;
+
+    let executionToolCall =
+      toolCall;
+
+    let isProductSearchContinuation =
+      false;
+
+    if (
+      toolCall.tool === "searchProducts" &&
+      toolCall.arguments
+        .excludePreviousResults === true
+    ) {
+      isProductSearchContinuation =
+        true;
+
+      const excludeProductIds =
+        request.state.seenProductIds ??
+        request.state.candidateProducts
+          ?.map(
+            (candidate) =>
+              candidate.id
+          ) ??
+        (
+          request.state.productId
+            ? [
+                request.state.productId
+              ]
+            : []
+        );
+
+      executionContext = {
+        ...context,
+        excludeProductIds
+      };
+
+      const {
+        excludePreviousResults:
+          _excludePreviousResults,
+        excludeProductIds:
+          _modelExcludeProductIds,
+        query:
+          _modelQuery,
+        maxPrice:
+          _modelMaxPrice,
+        currency:
+          _modelCurrency,
+        ...remainingArguments
+      } = toolCall.arguments;
+
+      const lastProductSearch =
+        request.state.lastProductSearch;
+
+      if (!lastProductSearch) {
+        throw new Error(
+          "AI requested previous product search results without a previous validated product search."
+        );
+      }
+
+      executionToolCall = {
+        ...toolCall,
+        arguments: {
+          ...remainingArguments,
+          query:
+            lastProductSearch.query,
+          ...(lastProductSearch.maxPrice !==
+          undefined
+            ? {
+                maxPrice:
+                  lastProductSearch.maxPrice
+              }
+            : {}),
+          ...(lastProductSearch.currency !==
+          undefined
+            ? {
+                currency:
+                  lastProductSearch.currency
+              }
+            : {})
+        }
+      };
+    }
+
     const result =
       await executeAITool(
-        toolCall,
-        context
+        executionToolCall,
+        executionContext
       );
 
-    toolResults.push(result);
+    if (result.searchContext) {
+      searchContexts.push(
+        result.searchContext
+      );
+    }
+
+    toolResults.push({
+      tool:
+        result.tool,
+      result:
+        result.result,
+      ...(result.query !== undefined
+        ? {
+            query:
+              result.query
+          }
+        : {}),
+      ...(isProductSearchContinuation
+        ? {
+            isProductSearchContinuation:
+              true
+          }
+        : {})
+    });
   }
 
   if (toolResults.length === 0) {
     return {
       response: initial,
-      toolResults
+      toolResults,
+      searchContexts
     };
   }
 
@@ -593,6 +728,7 @@ export async function runAIConversation(
       []
     ),
 
-    toolResults
+    toolResults,
+    searchContexts
   };
 }

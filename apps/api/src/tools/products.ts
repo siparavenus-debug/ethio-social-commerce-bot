@@ -19,6 +19,7 @@ export type ProductSearchResult = {
 export type ProductSearchOptions = {
   maxPrice?: number;
   currency?: string;
+  excludeProductIds?: string[];
 };
 
 function mapProduct(product: {
@@ -69,6 +70,14 @@ export async function searchProducts(
       where: {
         merchantId,
         status: "ACTIVE",
+        ...(options.excludeProductIds?.length
+          ? {
+              id: {
+                notIn:
+                  options.excludeProductIds
+              }
+            }
+          : {}),
         ...(options.maxPrice !== undefined
           ? {
               price: {

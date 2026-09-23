@@ -21,12 +21,20 @@ const MAX_AI_SEARCH_QUERY_LENGTH = 500;
 export type AIToolExecutionContext = {
   merchantId: string;
   customerId: string;
+  excludeProductIds?: string[];
+};
+
+export type AIProductSearchContext = {
+  query: string;
+  maxPrice?: number;
+  currency?: string;
 };
 
 export type AIToolExecutionResult = {
   tool: AIToolCall["tool"];
   result: unknown;
   query?: string;
+  searchContext?: AIProductSearchContext;
 };
 
 function requireString(
@@ -212,7 +220,9 @@ export async function executeAITool(
                 candidateQuery,
                 {
                   maxPrice,
-                  currency
+                  currency,
+                  excludeProductIds:
+                    context.excludeProductIds
                 }
               )
           )
@@ -252,7 +262,20 @@ export async function executeAITool(
         result: [
           ...productsById.values()
         ],
-        query
+        query,
+        searchContext: {
+          query,
+          ...(maxPrice !== undefined
+            ? {
+                maxPrice
+              }
+            : {}),
+          ...(currency !== undefined
+            ? {
+                currency
+              }
+            : {})
+        }
       };
     }
 

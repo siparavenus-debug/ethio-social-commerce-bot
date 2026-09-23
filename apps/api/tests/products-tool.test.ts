@@ -445,7 +445,7 @@ describe("product commerce tools", () => {
                             "searchProducts",
                         arguments: {
                             query:
-                                "ጫማ"
+                                "áŒ«áˆ›"
                         }
                     },
                     {
@@ -457,7 +457,7 @@ describe("product commerce tools", () => {
                 );
 
             expect(execution.query).toBe(
-                "ጫማ"
+                "áŒ«áˆ›"
             );
 
             expect(execution.result).toEqual(
@@ -482,9 +482,9 @@ describe("product commerce tools", () => {
                 },
                 data: {
                     name:
-                        "የከተማ ጫማ",
+                        "á‹¨áŠ¨á‰°áˆ› áŒ«áˆ›",
                     description:
-                        "ጥቁር የቆዳ ጫማ"
+                        "áŒ¥á‰áˆ­ á‹¨á‰†á‹³ áŒ«áˆ›"
                 }
             });
 
@@ -494,7 +494,7 @@ describe("product commerce tools", () => {
                 },
                 data: {
                     name:
-                        "የወንድ ጫማ"
+                        "á‹¨á‹ˆáŠ•á‹µ áŒ«áˆ›"
                 }
             });
 
@@ -565,7 +565,7 @@ describe("product commerce tools", () => {
                             "searchProducts",
                         arguments: {
                             query:
-                                "ጥቁር የወንድ ጫማ",
+                                "áŒ¥á‰áˆ­ á‹¨á‹ˆáŠ•á‹µ áŒ«áˆ›",
                             alternativeQueries: [
                                 "black men shoes"
                             ]
@@ -607,7 +607,7 @@ describe("product commerce tools", () => {
                             query:
                                 "shoes",
                             alternativeQueries: [
-                                "ጫማ",
+                                "áŒ«áˆ›",
                                 "chama",
                                 "men shoes",
                                 "everyday shoes"
@@ -772,6 +772,106 @@ describe("product commerce tools", () => {
                         expensiveProduct.id
                 )
             ).toBe(false);
+        }
+    );
+
+    it(
+        "applies trusted product exclusions through AI product search",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Budget Men Shoes",
+                    description:
+                        "Everyday shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const alternativeProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Classic Men Shoes",
+                        description:
+                            "Classic everyday shoes",
+                        price:
+                            "1950.00",
+                        currency:
+                            "ETB",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            alternativeQueries: [
+                                "Shoes Men"
+                            ],
+                            maxPrice: 2000,
+                            currency:
+                                "ETB"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer",
+                        excludeProductIds: [
+                            product.id
+                        ]
+                    }
+                );
+
+            const results =
+                execution.result as Array<{
+                    id: string;
+                }>;
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                alternativeProduct.id
+            ]);
+
+            expect(
+                execution.searchContext
+            ).toEqual({
+                query:
+                    "Men Shoes",
+                maxPrice:
+                    2000,
+                currency:
+                    "ETB"
+            });
         }
     );
 
@@ -955,6 +1055,17 @@ describe("product commerce tools", () => {
                     product.id,
                 price:
                     1800,
+                currency:
+                    "ETB"
+            });
+
+            expect(
+                execution.searchContext
+            ).toEqual({
+                query:
+                    "Men Shoes",
+                maxPrice:
+                    2000,
                 currency:
                     "ETB"
             });
@@ -1176,13 +1287,37 @@ describe("product commerce tools", () => {
                     }
                 });
 
+            const alternativeProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Classic Men Shoes",
+                        description:
+                            "Classic everyday shoes",
+                        price:
+                            "1950.00",
+                        currency:
+                            "ETB",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
             const results =
                 await searchProducts(
                     merchant.id,
                     "Men Shoes",
                     {
                         maxPrice: 2000,
-                        currency: "ETB"
+                        currency: "ETB",
+                        excludeProductIds: [
+                            product.id
+                        ]
                     }
                 );
 
@@ -1191,7 +1326,7 @@ describe("product commerce tools", () => {
                     (result) => result.id
                 )
             ).toEqual([
-                product.id
+                alternativeProduct.id
             ]);
 
             expect(

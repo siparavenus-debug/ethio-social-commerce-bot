@@ -252,7 +252,7 @@ import {
             });
 
           const customerMessage =
-            "የወንድ shoe አለ?";
+            "á‹¨á‹ˆáŠ•á‹µ shoe áŠ áˆˆ?";
 
           const result =
             await runAIConversation(
@@ -428,7 +428,7 @@ import {
             await runAIConversation(
               {
                 text:
-                  "black የወንድ shoe አለ?",
+                  "black á‹¨á‹ˆáŠ•á‹µ shoe áŠ áˆˆ?",
                 state: {},
                 merchantName:
                   fixture.merchant.name
@@ -579,6 +579,25 @@ import {
               "Men Shoes"
           });
 
+          expect(
+            result.toolResults[0]
+          ).not.toHaveProperty(
+            "searchContext"
+          );
+
+          expect(
+            result.searchContexts
+          ).toEqual([
+            {
+              query:
+                "Men Shoes",
+              maxPrice:
+                2000,
+              currency:
+                "ETB"
+            }
+          ]);
+
           const products =
             result.toolResults[0]
               .result as Array<{
@@ -608,6 +627,29 @@ import {
                 expensiveProduct.id
             )
           ).toBe(false);
+
+          const secondCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(secondCall).toBeDefined();
+
+          const finalCallContent =
+            secondCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(finalCallContent).toContain(
+            "Commerce tool results:"
+          );
+
+          expect(finalCallContent).not.toContain(
+            '"searchContext"'
+          );
 
           expect(result.response).toMatchObject({
             intent:
@@ -651,7 +693,7 @@ import {
                       "searchProducts",
                     arguments: {
                       query:
-                        "ጥቁር የወንድ ጫማ",
+                        "áŒ¥á‰áˆ­ á‹¨á‹ˆáŠ•á‹µ áŒ«áˆ›",
                       alternativeQueries: [
                         "black men shoes"
                       ]
@@ -669,7 +711,7 @@ import {
             await runAIConversation(
               {
                 text:
-                  "ጥቁር የወንድ ጫማ አለ?",
+                  "áŒ¥á‰áˆ­ á‹¨á‹ˆáŠ•á‹µ áŒ«áˆ› áŠ áˆˆ?",
                 state: {},
                 merchantName:
                   fixture.merchant.name
@@ -696,7 +738,7 @@ import {
             tool:
               "searchProducts",
             query:
-              "ጥቁር የወንድ ጫማ"
+              "áŒ¥á‰áˆ­ á‹¨á‹ˆáŠ•á‹µ áŒ«áˆ›"
           });
 
           const products =
@@ -862,7 +904,7 @@ import {
           await runAIConversation(
             {
               text:
-                "የወንድ shoe አለ?",
+                "á‹¨á‹ˆáŠ•á‹µ shoe áŠ áˆˆ?",
               state: {},
               merchantName:
                 fixture.merchant.name
@@ -1027,7 +1069,7 @@ import {
           await runAIConversation(
             {
               text:
-                "የወንድ shoe አለ? price sint new?",
+                "á‹¨á‹ˆáŠ•á‹µ shoe áŠ áˆˆ? price sint new?",
               state: {},
               merchantName:
                 fixture.merchant.name
@@ -1123,7 +1165,7 @@ import {
             await runAIConversation(
               {
                 text:
-                  "ያኛው one",
+                  "á‹«áŠ›á‹ one",
                 state: {},
                 merchantName:
                   fixture.merchant.name
@@ -1232,6 +1274,709 @@ import {
           expect(firstCallContent).toContain(
             '"candidateProducts":[{"id":"product-white","name":"White Habesha Kemis"},{"id":"product-blue","name":"Blue Habesha Kemis"}]'
           );
+        }
+      );
+
+      it(
+        "provides the last validated product search to the interpretation model",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "I can show another option.",
+              toolCalls: []
+            })
+          });
+
+          await runAIConversation(
+            {
+              text:
+                "another option under that budget",
+              state: {
+                lastProductSearch: {
+                  query:
+                    "Men Shoes",
+                  maxPrice:
+                    2000,
+                  currency:
+                    "ETB"
+                }
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          const firstCallContent =
+            firstCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(firstCallContent).toContain(
+            '"lastProductSearch":{"query":"Men Shoes","maxPrice":2000,"currency":"ETB"}'
+          );
+        }
+      );
+
+      it(
+        "uses trusted previous results and validated search context for another-option searches",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const existingProduct =
+            await prisma.product.findUniqueOrThrow({
+              where: {
+                id: fixture.product.id
+              }
+            });
+
+          const alternativeProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Classic Men Shoes",
+                description:
+                  "Classic everyday shoes",
+                price:
+                  "1950.00",
+                currency:
+                  "ETB",
+                stock: 3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for another option.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                      arguments: {
+                        query:
+                          "Wrong Search",
+                        maxPrice:
+                          9999,
+                        currency:
+                          "USD",
+                        excludePreviousResults:
+                          true,
+                        excludeProductIds: [
+                          alternativeProduct.id
+                        ]
+                      }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Classic Men Shoes is another option under 2000 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "another option under that budget",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ],
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice:
+                      2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+            const searchToolResult =
+            result.toolResults[0];
+
+          const searchResult =
+            searchToolResult?.result as Array<{
+              id: string;
+            }>;
+
+          expect(
+            searchToolResult
+              ?.isProductSearchContinuation
+          ).toBe(true);
+
+          expect(
+            searchResult.map(
+              (product) => product.id
+            )
+          ).toEqual([
+            alternativeProduct.id
+          ]);
+
+          expect(
+            result.searchContexts
+          ).toEqual([
+            {
+              query:
+                "Men Shoes",
+              maxPrice:
+                2000,
+              currency:
+                "ETB"
+            }
+          ]);
+
+          const finalCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(finalCall).toBeDefined();
+
+          const finalCallContent =
+            finalCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+              expect(finalCallContent).toContain(
+                alternativeProduct.id
+              );
+
+              const commerceToolResultsContent =
+                finalCall.messages
+                  .map(
+                    (message: {
+                      content: string;
+                    }) => message.content
+                  )
+                  .find(
+                    (content: string) =>
+                      content.startsWith(
+                        "Commerce tool results:"
+                      )
+                  );
+
+              expect(
+                commerceToolResultsContent
+              ).toBeDefined();
+
+              expect(
+                commerceToolResultsContent
+              ).not.toContain(
+                fixture.product.id
+              );
+
+              expect(
+                commerceToolResultsContent
+              ).not.toContain(
+                "excludePreviousResults"
+              );
+
+              expect(
+                commerceToolResultsContent
+              ).not.toContain(
+                "excludeProductIds"
+              );
+        }
+      );
+
+      it(
+        "excludes all products already seen across repeated another-option searches",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const existingProduct =
+            await prisma.product.findUniqueOrThrow({
+              where: {
+                id: fixture.product.id
+              }
+            });
+
+          const secondProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Classic Men Shoes",
+                description:
+                  "Classic everyday shoes",
+                price:
+                  "1900.00",
+                currency:
+                  "ETB",
+                stock: 3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          const thirdProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Everyday Men Shoes",
+                description:
+                  "Everyday shoes",
+                price:
+                  "1950.00",
+                currency:
+                  "ETB",
+                stock: 2,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          const nextProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Comfort Men Shoes",
+                description:
+                  "Comfort shoes",
+                price:
+                  "1980.00",
+                currency:
+                  "ETB",
+                stock: 2,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for another option.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Wrong Search",
+                      maxPrice:
+                        9999,
+                      currency:
+                        "USD",
+                      excludePreviousResults:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Comfort Men Shoes is another option under 2000 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "another option",
+                state: {
+                  productId:
+                    thirdProduct.id,
+                  productName:
+                    thirdProduct.name,
+                  seenProductIds: [
+                    fixture.product.id,
+                    secondProduct.id,
+                    thirdProduct.id
+                  ],
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice:
+                      2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          const searchResult =
+            result.toolResults[0]
+              ?.result as Array<{
+                id: string;
+              }>;
+
+          expect(
+            searchResult.map(
+              (product) => product.id
+            )
+          ).toEqual([
+            nextProduct.id
+          ]);
+        }
+      );
+
+      it(
+        "rejects another-option search without a previous validated product search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "SEARCH_PRODUCT",
+              message:
+                "Searching for another option.",
+              toolCalls: [
+                {
+                  tool:
+                    "searchProducts",
+                  arguments: {
+                    query:
+                      "Men Shoes",
+                    excludePreviousResults:
+                      true
+                  }
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "show me another option",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI requested previous product search results without a previous validated product search."
+          );
+        }
+      );
+
+      it(
+        "excludes the selected product when continuing a single-result product search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const existingProduct =
+            await prisma.product.findUniqueOrThrow({
+              where: {
+                id:
+                  fixture.product.id
+              }
+            });
+
+          const alternativeProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Classic Men Shoes",
+                description:
+                  "Classic everyday shoes",
+                price:
+                  1950,
+                currency:
+                  "ETB",
+                stock:
+                  3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for another option.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Wrong Search",
+                      maxPrice:
+                        9999,
+                      currency:
+                        "USD",
+                      excludePreviousResults:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Classic Men Shoes is another option under 2000 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "another option under that budget",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice:
+                      2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          const searchResult =
+            result.toolResults.find(
+              (toolResult) =>
+                toolResult.tool ===
+                "searchProducts"
+            );
+
+          expect(
+            (
+              searchResult?.result as Array<{
+                id: string;
+              }>
+            ).map(
+              (product) =>
+                product.id
+            )
+          ).toEqual([
+            alternativeProduct.id
+          ]);
+
+          expect(
+            result.searchContexts
+          ).toEqual([
+            {
+              query:
+                "Men Shoes",
+              maxPrice:
+                2000,
+              currency:
+                "ETB"
+            }
+          ]);
+        }
+      );
+
+      it(
+        "does not apply previous product exclusions to a new product search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for men's shoes.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Men Shoes"
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Here are the matching men's shoes."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "show me men shoes",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ],
+                  lastProductSearch: {
+                    query:
+                      "Old Search",
+                    maxPrice:
+                      1000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          const searchResult =
+            result.toolResults.find(
+              (toolResult) =>
+                toolResult.tool ===
+                "searchProducts"
+            );
+
+          expect(
+            (
+              searchResult?.result as Array<{
+                id: string;
+              }>
+            ).map(
+              (product) =>
+                product.id
+            )
+          ).toContain(
+            fixture.product.id
+          );
+
+          expect(
+            result.searchContexts
+          ).toEqual([
+            {
+              query:
+                "Men Shoes"
+            }
+          ]);
         }
       );
 
