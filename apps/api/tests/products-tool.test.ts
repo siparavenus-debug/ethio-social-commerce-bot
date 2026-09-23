@@ -920,6 +920,101 @@ describe("product commerce tools", () => {
     );
 
     it(
+        "applies a trusted strict price bound through AI product search",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Reference Men Shoes",
+                    description:
+                        "Reference shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const cheaperProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Cheaper Men Shoes",
+                        description:
+                            "Lower priced shoes",
+                        price:
+                            "1700.00",
+                        currency:
+                            "ETB",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            alternativeQueries: [
+                                "Shoes Men"
+                            ],
+                            currency:
+                                "ETB"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer",
+                        priceBelow:
+                            1800
+                    }
+                );
+
+            const results =
+                execution.result as Array<{
+                    id: string;
+                }>;
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                cheaperProduct.id
+            ]);
+
+            expect(
+                results.some(
+                    (result) =>
+                        result.id ===
+                        product.id
+                )
+            ).toBe(false);
+        }
+    );
+
+    it(
         "requires currency when AI product search includes a maximum price",
         async () => {
             const {
@@ -949,6 +1044,121 @@ describe("product commerce tools", () => {
             ).rejects.toThrow(
                 'AI tool argument "currency" is required when "maxPrice" is provided.'
             );
+        }
+    );
+
+    it(
+        "uses trusted currency for a relative-price product search",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Reference Men Shoes",
+                    description:
+                        "Reference shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const cheaperEtbProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Cheaper Men Shoes",
+                        description:
+                            "Lower priced shoes",
+                        price:
+                            "1700.00",
+                        currency:
+                            "ETB",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            await prisma.product.create({
+                data: {
+                    merchantId:
+                        merchant.id,
+                    categoryId:
+                        category.id,
+                    name:
+                        "Cheaper USD Men Shoes",
+                    description:
+                        "Lower numeric price in another currency",
+                    price:
+                        "100.00",
+                    currency:
+                        "USD",
+                    stock: 3,
+                    status:
+                        ProductStatus.ACTIVE
+                }
+            });
+
+            const execution =
+                await executeAITool(
+                    {
+                        tool:
+                            "searchProducts",
+                        arguments: {
+                            query:
+                                "Men Shoes",
+                            currency:
+                                "USD"
+                        }
+                    },
+                    {
+                        merchantId:
+                            merchant.id,
+                        customerId:
+                            "test-customer",
+                        priceBelow:
+                            1800,
+                        priceCurrency:
+                            "ETB"
+                    }
+                );
+
+            const results =
+                execution.result as Array<{
+                    id: string;
+                    currency: string;
+                }>;
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                cheaperEtbProduct.id
+            ]);
+
+            expect(
+                results.every(
+                    (result) =>
+                        result.currency ===
+                        "ETB"
+                )
+            ).toBe(true);
         }
     );
 
@@ -1216,6 +1426,81 @@ describe("product commerce tools", () => {
                 );
 
             expect(results).toEqual([]);
+        }
+    );
+
+    it(
+        "filters matching active products strictly below a reference price",
+        async () => {
+            const {
+                merchant,
+                category,
+                product
+            } =
+                await createFixture();
+
+            await prisma.product.update({
+                where: {
+                    id: product.id
+                },
+                data: {
+                    name:
+                        "Reference Men Shoes",
+                    description:
+                        "Reference shoes",
+                    price:
+                        "1800.00",
+                    currency:
+                        "ETB"
+                }
+            });
+
+            const cheaperProduct =
+                await prisma.product.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        categoryId:
+                            category.id,
+                        name:
+                            "Cheaper Men Shoes",
+                        description:
+                            "Lower priced shoes",
+                        price:
+                            "1700.00",
+                        currency:
+                            "ETB",
+                        stock: 3,
+                        status:
+                            ProductStatus.ACTIVE
+                    }
+                });
+
+            const results =
+                await searchProducts(
+                    merchant.id,
+                    "Men Shoes",
+                    {
+                        priceBelow: 1800,
+                        currency: "ETB"
+                    }
+                );
+
+            expect(
+                results.map(
+                    (result) => result.id
+                )
+            ).toEqual([
+                cheaperProduct.id
+            ]);
+
+            expect(
+                results.some(
+                    (result) =>
+                        result.id ===
+                        product.id
+                )
+            ).toBe(false);
         }
     );
 

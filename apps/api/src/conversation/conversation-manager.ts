@@ -281,6 +281,8 @@ export async function handleConversation(
         awaitingConfirmation: false,
         productId: undefined,
         productName: undefined,
+        productPrice: undefined,
+        productCurrency: undefined,
         candidateProducts: undefined,
         quantity: undefined
       };
@@ -443,6 +445,8 @@ export async function handleConversation(
     setConversationState(chatId, {
       productId: product.id,
       productName: product.name,
+      productPrice: product.price,
+      productCurrency: product.currency,
       quantity,
       awaitingConfirmation: true
     });
@@ -522,6 +526,8 @@ export async function handleConversation(
       updateConversationState(chatId, {
         productId: product.id,
         productName: product.name,
+        productPrice: product.price,
+        productCurrency: product.currency,
         quantity: correctedQuantity,
         awaitingConfirmation: true
       });
@@ -783,7 +789,20 @@ export async function handleConversation(
   const latestProductSearch =
     aiResult.searchContexts?.at(-1);
 
-  if (latestProductSearch) {
+  const hasRelativePriceSearch =
+    aiResult.toolResults.some(
+      (toolResult) =>
+        toolResult.tool ===
+          "searchProducts" &&
+        toolResult
+          .isRelativePriceSearch ===
+          true
+    );
+
+  if (
+    latestProductSearch &&
+    !hasRelativePriceSearch
+  ) {
     nextState.lastProductSearch = {
       ...latestProductSearch
     };
@@ -865,6 +884,12 @@ export async function handleConversation(
             nextState.productName =
               product.name;
 
+            nextState.productPrice =
+              product.price;
+
+            nextState.productCurrency =
+              product.currency;
+
             nextState.awaitingQuantity =
               true;
 
@@ -915,6 +940,27 @@ export async function handleConversation(
           } else {
             nextState.seenProductIds =
               returnedProductIds;
+
+            nextState.productId =
+              undefined;
+
+            nextState.productName =
+              undefined;
+
+            nextState.productPrice =
+              undefined;
+
+            nextState.productCurrency =
+              undefined;
+
+            nextState.awaitingQuantity =
+              false;
+
+            nextState.awaitingConfirmation =
+              false;
+
+            nextState.quantity =
+              undefined;
           }
 
           if (!toolResult.query) {
@@ -972,6 +1018,12 @@ export async function handleConversation(
 
       nextState.productName =
         product.name;
+
+      nextState.productPrice =
+        product.price;
+
+      nextState.productCurrency =
+        product.currency;
 
       nextState.candidateProducts =
         undefined;

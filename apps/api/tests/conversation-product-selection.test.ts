@@ -190,6 +190,16 @@ describe(
         it(
             "stores multiple authoritative search results as ordered unselected candidates",
             async () => {
+                setConversationState(chatId, {
+                    productId:
+                        "old-product",
+                    productName:
+                        "Old Selected Product",
+                    productPrice:
+                        1800,
+                    productCurrency:
+                        "ETB"
+                });
                 runAIConversationMock.mockResolvedValue({
                     response: {
                         intent:
@@ -290,6 +300,14 @@ describe(
                 ).toBeUndefined();
 
                 expect(
+                    state.productPrice
+                ).toBeUndefined();
+
+                expect(
+                    state.productCurrency
+                ).toBeUndefined();
+
+                expect(
                     state.awaitingQuantity
                 ).not.toBe(true);
 
@@ -376,6 +394,14 @@ describe(
                 ).toBe(
                     "product-budget"
                 );
+
+                expect(
+                    state.productPrice
+                ).toBe(1800);
+
+                expect(
+                    state.productCurrency
+                ).toBe("ETB");
 
                 expect(
                     state.productName
@@ -614,6 +640,14 @@ describe(
                 expect(state.productName).toBe(
                     "Blue Habesha Kemis"
                 );
+
+                expect(
+                    state.productPrice
+                ).toBe(2800);
+
+                expect(
+                    state.productCurrency
+                ).toBe("ETB");
 
                 expect(
                     state.candidateProducts
@@ -882,6 +916,89 @@ describe(
         );
 
         it(
+            "preserves the validated product search context after a relative-price search",
+            async () => {
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "SEARCH_PRODUCT",
+                        message:
+                            "I found a cheaper option.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "searchProducts",
+                            query:
+                                "Men Shoes",
+                            isRelativePriceSearch:
+                                true,
+                            result: []
+                        }
+                    ],
+                    searchContexts: [
+                        {
+                            query:
+                                "Men Shoes"
+                        }
+                    ]
+                });
+
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "product-selected",
+                        productName:
+                            "Selected Men Shoes",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        lastProductSearch: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                "ETB"
+                        }
+                    }
+                );
+
+                await handleConversation(
+                    {
+                        merchantId:
+                            "merchant-test",
+                        customerId:
+                            "customer-test",
+                        chatId,
+                        customerName:
+                            "Test Customer",
+                        merchantName:
+                            "Test Merchant"
+                    },
+                    "show me something cheaper"
+                );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(
+                    state.lastProductSearch
+                ).toEqual({
+                    query:
+                        "Men Shoes",
+                    maxPrice:
+                        2000,
+                    currency:
+                        "ETB"
+                });
+            }
+        );
+
+        it(
             "clears stale candidates when releasing an order already in payment review",
             async () => {
                 setConversationState(
@@ -890,6 +1007,14 @@ describe(
                         awaitingPayment: true,
                         pendingOrderId:
                             "order-under-review",
+                        productId:
+                            "product-selected",
+                        productName:
+                            "Selected Men Shoes",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
                         candidateProducts: [
                             {
                                 id:
@@ -949,6 +1074,22 @@ describe(
 
                 expect(
                     state.pendingOrderId
+                ).toBeUndefined();
+
+                expect(
+                    state.productId
+                ).toBeUndefined();
+
+                expect(
+                    state.productName
+                ).toBeUndefined();
+
+                expect(
+                    state.productPrice
+                ).toBeUndefined();
+
+                expect(
+                    state.productCurrency
                 ).toBeUndefined();
 
                 expect(

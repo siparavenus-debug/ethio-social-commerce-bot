@@ -455,6 +455,12 @@ describe(
           ).toMatchObject({
             productId:
               fixture.product.id,
+            productPrice:
+              Number(
+                fixture.product.price
+              ),
+            productCurrency:
+              fixture.product.currency,
             quantity:
               expectedQuantity,
             awaitingConfirmation: true
@@ -588,6 +594,12 @@ describe(
               fixture.product.id,
             productName:
               fixture.product.name,
+            productPrice:
+              Number(
+                fixture.product.price
+              ),
+            productCurrency:
+              fixture.product.currency,
             quantity: 3,
             awaitingConfirmation: true
           });

@@ -22,6 +22,8 @@ export type AIToolExecutionContext = {
   merchantId: string;
   customerId: string;
   excludeProductIds?: string[];
+  priceBelow?: number;
+  priceCurrency?: string;
 };
 
 export type AIProductSearchContext = {
@@ -138,9 +140,12 @@ export async function executeAITool(
         rawMaxPrice as number | undefined;
 
       const currency =
-        typeof rawCurrency === "string"
-          ? rawCurrency.trim().toUpperCase()
-          : undefined;
+        context.priceCurrency ??
+        (
+          typeof rawCurrency === "string"
+            ? rawCurrency.trim().toUpperCase()
+            : undefined
+        );
 
       const rawAlternativeQueries =
         args.alternativeQueries;
@@ -220,6 +225,8 @@ export async function executeAITool(
                 candidateQuery,
                 {
                   maxPrice,
+                  priceBelow:
+                    context.priceBelow,
                   currency,
                   excludeProductIds:
                     context.excludeProductIds

@@ -1033,6 +1033,28 @@ import {
           ).toContain(
             "do not guess a currency"
           );
+
+          expect(systemPrompt).toContain(
+            "cheaperThanSelectedProduct"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "authoritative selected product price and currency"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "do not provide a numeric comparison price"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "reuse the validated query from lastproductsearch"
+          );
         }
       );
 
@@ -1458,6 +1480,11 @@ import {
           ).toBe(true);
 
           expect(
+            searchToolResult
+              ?.isRelativePriceSearch
+          ).toBeUndefined();
+
+          expect(
             searchResult.map(
               (product) => product.id
             )
@@ -1751,6 +1778,124 @@ import {
       );
 
       it(
+        "rejects a cheaper-product search without a previous validated product search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "SEARCH_PRODUCT",
+              message:
+                "Searching for something cheaper.",
+              toolCalls: [
+                {
+                  tool:
+                    "searchProducts",
+                  arguments: {
+                    query:
+                      "Men Shoes",
+                    cheaperThanSelectedProduct:
+                      true
+                  }
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "show me something cheaper",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice: 1800,
+                  productCurrency:
+                    "ETB"
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI requested a cheaper product without a previous validated product search."
+          );
+        }
+      );
+
+      it(
+        "rejects a cheaper-product search without authoritative selected product price and currency",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "SEARCH_PRODUCT",
+              message:
+                "Searching for something cheaper.",
+              toolCalls: [
+                {
+                  tool:
+                    "searchProducts",
+                  arguments: {
+                    query:
+                      "Men Shoes",
+                    cheaperThanSelectedProduct:
+                      true
+                  }
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "show me something cheaper",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice: 2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI requested a cheaper product without an authoritative selected product price and currency."
+          );
+        }
+      );
+
+      it(
         "excludes the selected product when continuing a single-result product search",
         async () => {
           const fixture =
@@ -1977,6 +2122,401 @@ import {
                 "Men Shoes"
             }
           ]);
+        }
+      );
+
+      it(
+        "uses authoritative selected product price and currency for a cheaper-product search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const existingProduct =
+            await prisma.product.findUniqueOrThrow({
+              where: {
+                id:
+                  fixture.product.id
+              }
+            });
+
+          const cheaperProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  existingProduct.categoryId,
+                name:
+                  "Cheaper Men Shoes",
+                description:
+                  "Lower priced everyday shoes",
+                price:
+                  1700,
+                currency:
+                  "ETB",
+                stock:
+                  3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          await prisma.product.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              categoryId:
+                existingProduct.categoryId,
+              name:
+                "Cheaper USD Men Shoes",
+              description:
+                "Lower numeric price in another currency",
+              price:
+                100,
+              currency:
+                "USD",
+              stock:
+                3,
+              status:
+                ProductStatus.ACTIVE
+            }
+          });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for something cheaper.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Wrong Search",
+                      maxPrice:
+                        9999,
+                      currency:
+                        "USD",
+                      cheaperThanSelectedProduct:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Cheaper Men Shoes is a lower-priced option."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "show me something cheaper",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice:
+                      2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          const searchToolResult =
+            result.toolResults.find(
+              (toolResult) =>
+                toolResult.tool ===
+                "searchProducts"
+            );
+
+            expect(
+              searchToolResult
+                ?.isRelativePriceSearch
+            ).toBe(true);
+
+            expect(
+              searchToolResult
+                ?.isProductSearchContinuation
+            ).toBeUndefined();
+
+          const searchResult =
+            searchToolResult?.result as Array<{
+              id: string;
+              currency: string;
+            }>;
+
+          expect(
+            searchResult.map(
+              (product) => product.id
+            )
+          ).toEqual([
+            cheaperProduct.id
+          ]);
+
+          expect(
+            searchResult.every(
+              (product) =>
+                product.currency === "ETB"
+            )
+          ).toBe(true);
+
+        const finalCall =
+          generateAIResponseMock.mock
+            .calls[1]?.[0];
+
+        expect(finalCall).toBeDefined();
+
+        const finalCallContent =
+          finalCall.messages
+            .map(
+              (message: {
+                content: string;
+              }) => message.content
+            )
+            .join("\n");
+
+        const commerceToolResultsContent =
+          finalCallContent.split(
+            "Commerce tool results:"
+          )[1];
+
+        expect(
+          commerceToolResultsContent
+        ).toBeDefined();
+
+        expect(
+          commerceToolResultsContent
+        ).not.toContain(
+          "cheaperThanSelectedProduct"
+        );
+
+        expect(
+          commerceToolResultsContent
+        ).not.toContain(
+          "Wrong Search"
+        );
+
+        expect(
+          commerceToolResultsContent
+        ).not.toContain(
+          "9999"
+        );
+
+        expect(
+          commerceToolResultsContent
+        ).not.toContain(
+          '"USD"'
+        );
+
+
+        }
+      );
+
+      it(
+        "does not broaden a cheaper-product search when no cheaper matching product exists",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "Searching for something cheaper.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Wrong Search",
+                      maxPrice:
+                        9999,
+                      currency:
+                        "USD",
+                      cheaperThanSelectedProduct:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "I couldn't find a cheaper matching option."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "show me something cheaper",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice: 1,
+                  productCurrency:
+                    "ETB",
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(result.toolResults).toHaveLength(
+            1
+          );
+
+          expect(
+            result.toolResults[0]?.tool
+          ).toBe(
+            "searchProducts"
+          );
+
+          expect(
+            result.toolResults[0]?.result
+          ).toEqual([]);
+
+          const finalCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(finalCall).toBeDefined();
+
+          const commerceToolResultsContent =
+            finalCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .find((content: string) =>
+                content.startsWith(
+                  "Commerce tool results:"
+                )
+              );
+
+          expect(
+            commerceToolResultsContent
+          ).toBeDefined();
+
+          expect(
+            commerceToolResultsContent
+          ).toContain(
+            '"result":[]'
+          );
+        }
+      );
+
+      it(
+        "exposes authoritative selected product price and currency to interpretation context",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "I can help with that.",
+              toolCalls: []
+            })
+          });
+
+          await runAIConversation(
+            {
+              text:
+                "show me something cheaper",
+              state: {
+                productId:
+                  fixture.product.id,
+                productName:
+                  fixture.product.name,
+                productPrice:
+                  1800,
+                productCurrency:
+                  "ETB"
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          const firstCallContent =
+            firstCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(
+            firstCallContent
+          ).toContain(
+            `"selectedProduct":{"id":"${fixture.product.id}","name":"${fixture.product.name}","price":1800,"currency":"ETB"}`
+          );
         }
       );
 

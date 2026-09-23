@@ -18,6 +18,7 @@ export type ProductSearchResult = {
 
 export type ProductSearchOptions = {
   maxPrice?: number;
+  priceBelow?: number;
   currency?: string;
   excludeProductIds?: string[];
 };
@@ -78,13 +79,23 @@ export async function searchProducts(
               }
             }
           : {}),
-        ...(options.maxPrice !== undefined
-          ? {
-              price: {
-                lte: options.maxPrice
+        ...(options.maxPrice !== undefined ||
+          options.priceBelow !== undefined
+            ? {
+                price: {
+                  ...(options.maxPrice !== undefined
+                    ? {
+                        lte: options.maxPrice
+                      }
+                    : {}),
+                  ...(options.priceBelow !== undefined
+                    ? {
+                        lt: options.priceBelow
+                      }
+                    : {})
+                }
               }
-            }
-          : {}),
+            : {}),
         ...(options.currency !== undefined
           ? {
               currency: options.currency

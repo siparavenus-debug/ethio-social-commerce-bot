@@ -3,6 +3,8 @@ import type { AIMessage } from "../ai/ai-provider.js";
 export type ShoppingState = {
   productId?: string;
   productName?: string;
+  productPrice?: number;
+  productCurrency?: string;
 
   candidateProducts?: Array<{
     id: string;

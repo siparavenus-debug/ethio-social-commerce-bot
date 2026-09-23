@@ -45,6 +45,7 @@ export type AIConversationToolResult = {
   result: unknown;
   query?: string;
   isProductSearchContinuation?: boolean;
+  isRelativePriceSearch?: boolean;
 };
 
 const SYSTEM_PROMPT = `
@@ -119,6 +120,17 @@ Language understanding:
   validated query, maxPrice, and currency from lastProductSearch.
 - Never provide excludeProductIds. Product exclusions are determined
   deterministically by the application from authoritative conversation state.
+- When the customer asks for a product cheaper than the currently selected
+  product, use searchProducts with arguments.cheaperThanSelectedProduct set to true.
+- Use cheaperThanSelectedProduct only when selectedProduct has an authoritative
+  selected product price and currency and lastProductSearch exists in the
+  conversation state.
+- When cheaperThanSelectedProduct is true, do not provide a numeric comparison price.
+  The application will derive the strict price bound and currency from the
+  authoritative selected product price and currency and reuse the validated query from lastProductSearch.
+- cheaperThanSelectedProduct is distinct from maxPrice and excludePreviousResults.
+  Do not turn a relative cheaper-product request into a new maximum budget or an
+  another-option request.
 - Do not include conversational filler in query or alternativeQueries when that
   filler is not part of the requested product constraints.
 - If the customer's meaning or product reference is genuinely ambiguous and the
@@ -445,9 +457,12 @@ function buildContext(
   return JSON.stringify({
     selectedProduct: state.productId
       ? {
-        id: state.productId,
-        name: state.productName
-      }
+          id: state.productId,
+          name: state.productName,
+          price: state.productPrice,
+          currency:
+            state.productCurrency
+        }
       : null,
 
     candidateProducts:
@@ -582,6 +597,9 @@ export async function runAIConversation(
     let isProductSearchContinuation =
       false;
 
+    let isRelativePriceSearch =
+      false;
+
     if (
       toolCall.tool === "searchProducts" &&
       toolCall.arguments
@@ -657,6 +675,77 @@ export async function runAIConversation(
       };
     }
 
+    if (
+      toolCall.tool === "searchProducts" &&
+      toolCall.arguments
+        .cheaperThanSelectedProduct === true
+    ) {
+      isRelativePriceSearch =
+        true;
+
+      const lastProductSearch =
+        request.state.lastProductSearch;
+
+      const selectedProductPrice =
+        request.state.productPrice;
+
+      const selectedProductCurrency =
+        request.state.productCurrency;
+
+      if (!lastProductSearch) {
+        throw new Error(
+          "AI requested a cheaper product without a previous validated product search."
+        );
+      }
+
+      if (
+        typeof selectedProductPrice !==
+          "number" ||
+        !Number.isFinite(
+          selectedProductPrice
+        ) ||
+        selectedProductPrice <= 0 ||
+        typeof selectedProductCurrency !==
+          "string" ||
+        !selectedProductCurrency.trim()
+      ) {
+        throw new Error(
+          "AI requested a cheaper product without an authoritative selected product price and currency."
+        );
+      }
+
+      executionContext = {
+        ...executionContext,
+        priceBelow:
+          selectedProductPrice,
+        priceCurrency:
+          selectedProductCurrency
+            .trim()
+            .toUpperCase()
+      };
+
+      const {
+        cheaperThanSelectedProduct:
+          _cheaperThanSelectedProduct,
+        query:
+          _modelQuery,
+        maxPrice:
+          _modelMaxPrice,
+        currency:
+          _modelCurrency,
+        ...remainingArguments
+      } = executionToolCall.arguments;
+
+      executionToolCall = {
+        ...executionToolCall,
+        arguments: {
+          ...remainingArguments,
+          query:
+            lastProductSearch.query
+        }
+      };
+    }
+
     const result =
       await executeAITool(
         executionToolCall,
@@ -683,6 +772,12 @@ export async function runAIConversation(
       ...(isProductSearchContinuation
         ? {
             isProductSearchContinuation:
+              true
+          }
+        : {}),
+      ...(isRelativePriceSearch
+        ? {
+            isRelativePriceSearch:
               true
           }
         : {})
