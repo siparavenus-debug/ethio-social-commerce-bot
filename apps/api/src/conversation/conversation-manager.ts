@@ -1019,7 +1019,9 @@ export async function handleConversation(
 
     if (
       toolResult.tool === "getProduct" &&
-      toolResult.result
+      toolResult.result &&
+      toolResult.isSelectedProductDetails !==
+        true
     ) {
       const product =
         toolResult.result as {

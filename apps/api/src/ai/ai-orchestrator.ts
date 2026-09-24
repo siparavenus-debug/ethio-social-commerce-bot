@@ -47,6 +47,7 @@ export type AIConversationToolResult = {
   isProductSearchContinuation?: boolean;
   isRelativePriceSearch?: boolean;
   isCrossSellSearch?: boolean;
+  isSelectedProductDetails?: boolean;
 };
 
 const SYSTEM_PROMPT = `
@@ -205,6 +206,13 @@ Candidate product references:
 - Product names, descriptive references, and multilingual references may resolve to a candidate only when the conversation context identifies that candidate clearly.
 - If the reference could identify more than one candidate, ask for clarification instead of guessing.
 
+Selected product details:
+
+- When the customer asks for factual details about the already selected product, use getProduct with selectedProductDetails set to true.
+- Do not provide productId for a selected-product detail request; the application supplies the authoritative selected product id.
+- Use selectedProductDetails only for the already selected product, never to select from candidateProducts.
+- If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductDetails.
+
 7. If the customer asks for a product search, use searchProducts.
    If the customer asks to see all available products, asks what products
    are available, asks what the store sells, or makes a general catalog
@@ -300,6 +308,13 @@ Comparison and recommendation rules:
 - Factual comparisons such as cheaper, more expensive, or having more stock are allowed when directly supported by the supplied catalog facts.
 - Do not claim that one product is better quality, more durable, more authentic, or otherwise superior unless the supplied catalog facts explicitly support that comparison.
 - If the available catalog facts do not support the requested comparison or recommendation, say what can be compared from the available information and do not manufacture a reason.
+
+Selected product detail response rules:
+
+- For selected-product detail questions, answer only from factual details explicitly present in the supplied commerce tool result.
+- Do not infer an unstated color, material, size, fit, brand, model, origin, or other product attribute from the product name, category, price, image, or general product knowledge.
+- If the customer asks for a specific product detail that the supplied catalog facts do not state, clearly say that the catalog does not specify that detail.
+
 
 Cross-sell response rules:
 
@@ -472,6 +487,8 @@ function parseAIResponse(
 
       if (
         toolCall.tool === "getProduct" &&
+        toolArguments
+          .selectedProductDetails !== true &&
         (
           typeof toolArguments.productId !==
           "string" ||
@@ -613,7 +630,40 @@ export async function runAIConversation(
     [];
 
   for (const toolCall of initial.toolCalls) {
-    if (
+    const isSelectedProductDetails =
+      toolCall.tool === "getProduct" &&
+      toolCall.arguments
+        .selectedProductDetails === true;
+
+    let executionContext:
+      AIToolExecutionContext =
+        context;
+
+    let executionToolCall =
+      toolCall;
+
+    if (isSelectedProductDetails) {
+      const selectedProductId =
+        request.state.productId;
+
+      if (
+        typeof selectedProductId !==
+          "string" ||
+        selectedProductId.trim() === ""
+      ) {
+        throw new Error(
+          "AI requested selected product details without an authoritative selected product."
+        );
+      }
+
+      executionToolCall = {
+        ...toolCall,
+        arguments: {
+          productId:
+            selectedProductId
+        }
+      };
+    } else if (
       toolCall.tool === "getProduct" &&
       request.state.candidateProducts?.length
     ) {
@@ -633,13 +683,6 @@ export async function runAIConversation(
         );
       }
     }
-
-    let executionContext:
-      AIToolExecutionContext =
-        context;
-
-    let executionToolCall =
-      toolCall;
 
     let isProductSearchContinuation =
       false;
@@ -853,9 +896,15 @@ export async function runAIConversation(
               true
           }
         : {}),
-      ...(isCrossSellSearch
+    ...(isCrossSellSearch
         ? {
             isCrossSellSearch:
+              true
+          }
+        : {}),
+    ...(isSelectedProductDetails
+        ? {
+            isSelectedProductDetails:
               true
           }
         : {})

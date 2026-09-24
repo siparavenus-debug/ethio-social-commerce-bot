@@ -1397,5 +1397,174 @@ describe(
                 ).toBeUndefined();
             }
         );
+
+        it(
+            "preserves selection and search state for a selected-product detail lookup",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        candidateProducts: [
+                            {
+                                id:
+                                    "candidate-one",
+                                name:
+                                    "First Candidate"
+                            },
+                            {
+                                id:
+                                    "candidate-two",
+                                name:
+                                    "Second Candidate"
+                            }
+                        ],
+                        seenProductIds: [
+                            "selected-product",
+                            "candidate-one",
+                            "candidate-two"
+                        ],
+                        lastProductSearch: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                "ETB"
+                        },
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "GET_PRODUCT",
+                        message:
+                            "The catalog describes it as a leather shoe.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "getProduct",
+                            isSelectedProductDetails:
+                                true,
+                            result: {
+                                id:
+                                    "selected-product",
+                                name:
+                                    "Refreshed Product Name",
+                                description:
+                                    "Leather shoe",
+                                price:
+                                    1900,
+                                currency:
+                                    "ETB",
+                                stock:
+                                    5,
+                                imageUrl:
+                                    null,
+                                category:
+                                    null
+                            }
+                        }
+                    ]
+                });
+
+                const result =
+                    await handleConversation(
+                        {
+                            merchantId:
+                                "merchant-test",
+                            customerId:
+                                "customer-test",
+                            chatId,
+                            customerName:
+                                "Test Customer",
+                            merchantName:
+                                "Test Merchant"
+                        },
+                        "What material is this one?"
+                    );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(result.reply).toBe(
+                    "The catalog describes it as a leather shoe."
+                );
+
+                expect(state.productId).toBe(
+                    "selected-product"
+                );
+
+                expect(state.productName).toBe(
+                    "Selected Product"
+                );
+
+                expect(state.productPrice).toBe(
+                    1800
+                );
+
+                expect(state.productCurrency).toBe(
+                    "ETB"
+                );
+
+                expect(
+                    state.candidateProducts
+                ).toEqual([
+                    {
+                        id:
+                            "candidate-one",
+                        name:
+                            "First Candidate"
+                    },
+                    {
+                        id:
+                            "candidate-two",
+                        name:
+                            "Second Candidate"
+                    }
+                ]);
+
+                expect(
+                    state.seenProductIds
+                ).toEqual([
+                    "selected-product",
+                    "candidate-one",
+                    "candidate-two"
+                ]);
+
+                expect(
+                    state.lastProductSearch
+                ).toEqual({
+                    query:
+                        "Men Shoes",
+                    maxPrice:
+                        2000,
+                    currency:
+                        "ETB"
+                });
+
+                expect(
+                    state.awaitingQuantity
+                ).toBe(false);
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(false);
+            }
+        );
     }
 );

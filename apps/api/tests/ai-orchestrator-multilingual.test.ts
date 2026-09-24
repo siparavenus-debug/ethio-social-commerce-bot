@@ -2822,6 +2822,326 @@ import {
       );
 
       it(
+        "re-fetches the authoritative selected product for a product-detail question without treating it as candidate selection",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "GET_PRODUCT",
+                message:
+                  "Let me check that product.",
+                toolCalls: [
+                  {
+                    tool:
+                      "getProduct",
+                    arguments: {
+                      selectedProductDetails:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Here are the available product details."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "Tell me more about this one.",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  candidateProducts: [
+                    {
+                      id:
+                        "candidate-one",
+                      name:
+                        "First Candidate"
+                    },
+                    {
+                      id:
+                        "candidate-two",
+                      name:
+                        "Second Candidate"
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]?.tool
+          ).toBe(
+            "getProduct"
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                id: string;
+              }
+            ).id
+          ).toBe(
+            fixture.product.id
+          );
+        }
+      );
+
+      it(
+        "rejects a selected-product detail request without an authoritative selected product",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GET_PRODUCT",
+              message:
+                "Let me check that product.",
+              toolCalls: [
+                {
+                  tool:
+                    "getProduct",
+                  arguments: {
+                    selectedProductDetails:
+                      true
+                  }
+                }
+              ]
+            })
+          });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "Tell me more about this one.",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI requested selected product details without an authoritative selected product."
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
+        "gives the interpretation model a safe selected-product detail contract",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "I can help with that.",
+              toolCalls: []
+            })
+          });
+
+          await runAIConversation(
+            {
+              text:
+                "What material is this one?",
+              state: {
+                productId:
+                  fixture.product.id,
+                productName:
+                  fixture.product.name,
+                productPrice:
+                  1800,
+                productCurrency:
+                  "ETB"
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          expect(firstCall.system).toContain(
+            "When the customer asks for factual details about the already selected product, use getProduct with selectedProductDetails set to true."
+          );
+
+          expect(firstCall.system).toContain(
+            "Do not provide productId for a selected-product detail request; the application supplies the authoritative selected product id."
+          );
+
+          expect(firstCall.system).toContain(
+            "Use selectedProductDetails only for the already selected product, never to select from candidateProducts."
+          );
+
+          expect(firstCall.system).toContain(
+            "If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductDetails."
+          );
+        }
+      );
+
+      it(
+        "gives the final response model a safe missing selected-product detail contract",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "GET_PRODUCT",
+                message:
+                  "Let me check that product.",
+                toolCalls: [
+                  {
+                    tool:
+                      "getProduct",
+                    arguments: {
+                      selectedProductDetails:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockImplementationOnce(
+              async (request) => {
+                expect(
+                  request.system
+                ).toContain(
+                  "For selected-product detail questions, answer only from factual details explicitly present in the supplied commerce tool result."
+                );
+
+                expect(
+                  request.system
+                ).toContain(
+                  "Do not infer an unstated color, material, size, fit, brand, model, origin, or other product attribute from the product name, category, price, image, or general product knowledge."
+                );
+
+                expect(
+                  request.system
+                ).toContain(
+                  "If the customer asks for a specific product detail that the supplied catalog facts do not state, clearly say that the catalog does not specify that detail."
+                );
+
+                return {
+                  text:
+                    "The catalog does not specify the material for this product."
+                };
+              }
+            );
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "What material is this one?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB"
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  "customer-test"
+              }
+            );
+
+          expect(
+            result.response.message
+          ).toBe(
+            "The catalog does not specify the material for this product."
+          );
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "getProduct",
+            isSelectedProductDetails:
+              true
+          });
+        }
+      );
+
+      it(
         "gives the interpretation model a safe ordered-candidate reference contract",
         async () => {
           const fixture =
