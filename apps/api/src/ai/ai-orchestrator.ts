@@ -218,7 +218,9 @@ Selected product stock:
 
 - When the customer asks for informational stock or availability about the already selected product, use checkStock with selectedProductStock set to true.
 - Do not provide productId for a selected-product stock request; the application supplies the authoritative selected product id.
-- Do not provide quantity for a general informational selected-product stock request. The application checks availability for one unit and returns the authoritative stock count.
+- For a general informational selected-product stock request with no quantity explicitly stated in the current customer message, do not provide quantity. The application checks availability for one unit and returns the authoritative stock count.
+- When the current customer message explicitly asks whether a specific quantity of the selected product is available, provide that quantity to checkStock.
+- Use only a quantity explicitly stated in the current customer message. Never infer, copy, or reuse a quantity from conversation state or earlier messages.
 - Do not reuse a quantity from conversation state for an informational selected-product stock request.
 - Use selectedProductStock only for informational stock or availability about the already selected product, not to advance checkout or confirm an order.
 - If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductStock.
@@ -719,13 +721,19 @@ export async function runAIConversation(
         );
       }
 
+      const requestedQuantity =
+        toolCall.arguments.quantity;
+
       executionToolCall = {
         ...toolCall,
         arguments: {
           productId:
             selectedProductId,
           quantity:
-            1
+            requestedQuantity ===
+              undefined
+              ? 1
+              : requestedQuantity
         }
       };
     }

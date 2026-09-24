@@ -3523,6 +3523,156 @@ import {
       );
 
       it(
+        "checks an explicit quantity against authoritative selected-product stock",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "CHECK_STOCK",
+                message:
+                  "Let me check whether 5 are available.",
+                toolCalls: [
+                  {
+                    tool:
+                      "checkStock",
+                    arguments: {
+                      selectedProductStock:
+                        true,
+                      productId:
+                        fixture.otherProduct.id,
+                      quantity:
+                        5
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Only 4 are currently available."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "Do you have 5 of these?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  quantity:
+                    2
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "checkStock",
+            isSelectedProductStock:
+              true,
+            result: {
+              available:
+                false,
+              stock:
+                4
+            }
+          });
+        }
+      );
+
+      it(
+        "rejects an invalid explicit selected-product stock quantity instead of defaulting to one",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "CHECK_STOCK",
+                message:
+                  "Let me check that quantity.",
+                toolCalls: [
+                  {
+                    tool:
+                      "checkStock",
+                    arguments: {
+                      selectedProductStock:
+                        true,
+                      quantity:
+                        "5"
+                    }
+                  }
+                ]
+              })
+            });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "Do you have 5 of these?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB"
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            'AI tool argument "quantity" must be a positive integer.'
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
         "rejects a selected-product stock request without an authoritative selected product",
         async () => {
           const fixture =
@@ -3607,6 +3757,18 @@ import {
                 request.system
               ).toContain(
                 "Do not provide productId for a selected-product stock request; the application supplies the authoritative selected product id."
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "When the current customer message explicitly asks whether a specific quantity of the selected product is available, provide that quantity to checkStock."
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "Use only a quantity explicitly stated in the current customer message. Never infer, copy, or reuse a quantity from conversation state or earlier messages."
               );
 
               expect(
