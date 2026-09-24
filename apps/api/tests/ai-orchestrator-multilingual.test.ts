@@ -2822,6 +2822,154 @@ import {
       );
 
       it(
+        "uses the authoritative candidate product for an explicit candidate price question",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const secondProduct =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                name:
+                  "Brown Men Shoes",
+                description:
+                  "Brown everyday shoes",
+                price:
+                  "2200.00",
+                currency:
+                  "ETB",
+                stock: 3,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "GET_PRODUCT",
+                message:
+                  "Let me check the second product.",
+                toolCalls: [
+                  {
+                    tool:
+                      "getProduct",
+                    arguments: {
+                      productId:
+                        secondProduct.id
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "The second product costs 2200 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "How much is the second one?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    },
+                    {
+                      id:
+                        secondProduct.id,
+                      name:
+                        secondProduct.name
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]?.tool
+          ).toBe(
+            "getProduct"
+          );
+
+          expect(
+            result.toolResults[0]
+              ?.isSelectedProductDetails
+          ).not.toBe(true);
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                id: string;
+                price: number;
+                currency: string;
+              }
+            ).id
+          ).toBe(
+            secondProduct.id
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                price: number;
+              }
+            ).price
+          ).toBe(
+            2200
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                currency: string;
+              }
+            ).currency
+          ).toBe(
+            "ETB"
+          );
+
+          expect(
+            result.response.message
+          ).toBe(
+            "The second product costs 2200 ETB."
+          );
+        }
+      );
+
+      it(
         "re-fetches the authoritative selected product for a product-detail question without treating it as candidate selection",
         async () => {
           const fixture =
@@ -2913,6 +3061,144 @@ import {
             ).id
           ).toBe(
             fixture.product.id
+          );
+        }
+      );
+
+      it(
+        "uses authoritative selected-product price for a price question without treating candidates as the product source",
+        async () => {
+          const fixture =
+            await createFixture();
+
+            await prisma.product.update({
+              where: {
+                id: fixture.product.id
+              },
+              data: {
+                price:
+                  "1900.00"
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "GET_PRODUCT",
+                message:
+                  "Let me check the current price.",
+                toolCalls: [
+                  {
+                    tool:
+                      "getProduct",
+                    arguments: {
+                      selectedProductDetails:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "The current price is 1900 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "How much is it?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  candidateProducts: [
+                    {
+                      id:
+                        "candidate-one",
+                      name:
+                        "First Candidate"
+                    },
+                    {
+                      id:
+                        "candidate-two",
+                      name:
+                        "Second Candidate"
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(
+            result.response.message
+          ).toBe(
+            "The current price is 1900 ETB."
+          );
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]?.tool
+          ).toBe(
+            "getProduct"
+          );
+
+          expect(
+            result.toolResults[0]?.isSelectedProductDetails
+          ).toBe(true);
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                id: string;
+                price: number;
+                currency: string;
+              }
+            ).id
+          ).toBe(
+            fixture.product.id
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                price: number;
+              }
+            ).price
+          ).toBe(
+            1900
+          );
+
+          expect(
+            (
+              result.toolResults[0]?.result as {
+                currency: string;
+              }
+            ).currency
+          ).toBe(
+            "ETB"
           );
         }
       );
