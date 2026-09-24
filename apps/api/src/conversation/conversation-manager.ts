@@ -821,6 +821,9 @@ export async function handleConversation(
 
   let responseImageUrl: string | undefined;
 
+  let selectedProductPurchaseReply:
+    string | undefined;
+
   for (const toolResult of aiResult.toolResults) {
     if (
       toolResult.tool === "searchProducts" &&
@@ -1062,12 +1065,70 @@ export async function handleConversation(
         };
 
       if (stock.available) {
-        nextState.awaitingConfirmation =
-          true;
+        if (
+          toolResult.isSelectedProductPurchase ===
+            true &&
+          typeof toolResult.quantity ===
+            "number" &&
+          Number.isInteger(
+            toolResult.quantity
+          ) &&
+          toolResult.quantity > 0 &&
+          typeof nextState.productId ===
+            "string"
+        ) {
+          const product =
+            await getProduct(
+              merchantId,
+              nextState.productId
+            );
+
+          if (product) {
+            nextState.productId =
+              product.id;
+
+            nextState.productName =
+              product.name;
+
+            nextState.productPrice =
+              product.price;
+
+            nextState.productCurrency =
+              product.currency;
+
+            nextState.quantity =
+              toolResult.quantity;
+
+            const total =
+              product.price *
+              toolResult.quantity;
+
+            selectedProductPurchaseReply =
+              `${toolResult.quantity} × ${product.name}\n` +
+              `Unit price: ${product.price} ${product.currency}\n` +
+              `Total: ${total.toFixed(2)} ${product.currency}\n\n` +
+              "Would you like to place this order?\n" +
+              "Reply YES or NO.";
+          }
+        }
+
+        if (
+          toolResult.isSelectedProductPurchase !==
+            true ||
+          selectedProductPurchaseReply !==
+            undefined
+        ) {
+          nextState.awaitingConfirmation =
+            true;
+        }
       }
     }
 
   }
+
+  const reply =
+    selectedProductPurchaseReply ??
+    aiResponse.message;
 
   const history =
     currentState.history ?? [];
@@ -1079,7 +1140,7 @@ export async function handleConversation(
     },
     {
       role: "assistant",
-      content: aiResponse.message
+      content: reply
     }
   );
 
@@ -1092,7 +1153,7 @@ export async function handleConversation(
   );
 
   return {
-    reply: aiResponse.message,
+    reply,
     ...(responseImageUrl
       ? {
         imageUrl: responseImageUrl

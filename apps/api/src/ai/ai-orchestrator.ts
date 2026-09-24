@@ -1,4 +1,4 @@
-
+﻿
 import {
   generateAIResponse,
   type AIMessage
@@ -49,6 +49,8 @@ export type AIConversationToolResult = {
   isCrossSellSearch?: boolean;
   isSelectedProductDetails?: boolean;
   isSelectedProductStock?: boolean;
+  isSelectedProductPurchase?: boolean;
+  quantity?: number;
 };
 
 const SYSTEM_PROMPT = `
@@ -224,6 +226,16 @@ Selected product stock:
 - Do not reuse a quantity from conversation state for an informational selected-product stock request.
 - Use selectedProductStock only for informational stock or availability about the already selected product, not to advance checkout or confirm an order.
 - If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductStock.
+
+Selected product purchase:
+
+- When the customer explicitly expresses intent to buy the already selected product and explicitly states the quantity in the current customer message, use checkStock with selectedProductPurchase set to true.
+- Use selectedProductPurchase only when the customer explicitly expresses intent to buy the already selected product and explicitly states the quantity in the current customer message.
+- Do not use selectedProductPurchase for informational stock or availability questions; use selectedProductStock instead.
+- Do not provide productId for a selected-product purchase request; the application supplies the authoritative selected product id.
+- Use only the purchase quantity explicitly stated in the current customer message. Never infer, copy, or reuse a quantity from conversation state or earlier messages.
+- If the customer expresses purchase intent for the selected product without an explicit quantity in the current customer message, ask for the quantity instead of using selectedProductPurchase.
+- If there is no selected product, ask for clarification instead of using selectedProductPurchase or promoting a candidate product.
 
 7. If the customer asks for a product search, use searchProducts.
    If the customer asks to see all available products, asks what products
@@ -658,6 +670,11 @@ export async function runAIConversation(
       toolCall.arguments
         .selectedProductStock === true;
 
+    const isSelectedProductPurchase =
+      toolCall.tool === "checkStock" &&
+      toolCall.arguments
+        .selectedProductPurchase === true;
+
     let executionContext:
       AIToolExecutionContext =
         context;
@@ -707,7 +724,10 @@ export async function runAIConversation(
       }
     }
 
-    if (isSelectedProductStock) {
+    if (
+      isSelectedProductStock ||
+      isSelectedProductPurchase
+    ) {
       const selectedProductId =
         request.state.productId;
 
@@ -717,7 +737,9 @@ export async function runAIConversation(
         selectedProductId.trim() === ""
       ) {
         throw new Error(
-          "AI requested selected product stock without an authoritative selected product."
+          isSelectedProductPurchase
+            ? "AI requested selected product purchase without an authoritative selected product."
+            : "AI requested selected product stock without an authoritative selected product."
         );
       }
 
@@ -730,10 +752,12 @@ export async function runAIConversation(
           productId:
             selectedProductId,
           quantity:
-            requestedQuantity ===
-              undefined
-              ? 1
-              : requestedQuantity
+            isSelectedProductPurchase
+              ? requestedQuantity
+              : requestedQuantity ===
+                  undefined
+                ? 1
+                : requestedQuantity
         }
       };
     }
@@ -967,6 +991,14 @@ export async function runAIConversation(
             isSelectedProductStock:
               true
           }
+        : {}),
+    ...(isSelectedProductPurchase
+      ? {
+          isSelectedProductPurchase:
+            true,
+          quantity:
+            result.quantity
+        }
         : {})
     });
   }

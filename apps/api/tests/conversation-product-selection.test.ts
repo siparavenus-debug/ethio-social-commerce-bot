@@ -14,10 +14,12 @@ import {
 
 const {
     runAIConversationMock,
-    getOrderStatusMock
+    getOrderStatusMock,
+    getProductMock
 } = vi.hoisted(() => ({
     runAIConversationMock: vi.fn(),
-    getOrderStatusMock: vi.fn()
+    getOrderStatusMock: vi.fn(),
+    getProductMock: vi.fn()
 }));
 
 vi.mock(
@@ -46,6 +48,24 @@ vi.mock(
     }
 );
 
+vi.mock(
+    "../src/tools/products.js",
+    async (importOriginal) => {
+        const actual =
+            await importOriginal<
+                typeof import(
+                    "../src/tools/products.js"
+                )
+            >();
+
+        return {
+            ...actual,
+            getProduct:
+                getProductMock
+        };
+    }
+);
+
 import {
     handleConversation
 } from "../src/conversation/conversation-manager.js";
@@ -57,6 +77,7 @@ afterEach(() => {
     clearConversationState(chatId);
     runAIConversationMock.mockReset();
     getOrderStatusMock.mockReset();
+    getProductMock.mockReset();
 });
 
 describe(
@@ -1793,6 +1814,266 @@ describe(
                 expect(
                     state.awaitingConfirmation
                 ).toBe(true);
+            }
+        );
+
+        it(
+            "persists the trusted quantity for selected-product purchase intent before confirmation",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        quantity:
+                            1,
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                getProductMock.mockResolvedValue({
+                    id: "selected-product",
+                    name: "Selected Product",
+                    description: "Selected product description",
+                    price: 2000,
+                    currency: "ETB",
+                    stock: 5,
+                    imageUrl: null,
+                    category: null
+                });
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "CHECK_STOCK",
+                        message:
+                            "Yes, 3 are available.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "checkStock",
+                            result: {
+                                available:
+                                    true,
+                                stock:
+                                    5
+                            },
+                            isSelectedProductPurchase:
+                                true,
+                            quantity:
+                                3
+                        }
+                    ]
+                });
+
+                const result =
+                    await handleConversation(
+                        {
+                            merchantId:
+                                "merchant-test",
+                            customerId:
+                                "customer-test",
+                            chatId,
+                            customerName:
+                                "Test Customer",
+                            merchantName:
+                                "Test Merchant"
+                        },
+                        "I'll take 3 of these."
+                    );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(result.reply).toBe(
+                    "3 × Selected Product\n" +
+                    "Unit price: 2000 ETB\n" +
+                    "Total: 6000.00 ETB\n\n" +
+                    "Would you like to place this order?\n" +
+                    "Reply YES or NO."
+                );
+
+                expect(
+                    state.quantity
+                ).toBe(3);
+
+                expect(state.productPrice).toBe(
+                    2000
+                );
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(true);
+            }
+        );
+
+        it(
+            "does not persist purchase quantity or enter confirmation when selected-product stock is unavailable",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        quantity:
+                            1,
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "CHECK_STOCK",
+                        message:
+                            "Only 2 are available.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "checkStock",
+                            result: {
+                                available:
+                                    false,
+                                stock:
+                                    2
+                            },
+                            isSelectedProductPurchase:
+                                true,
+                            quantity:
+                                3
+                        }
+                    ]
+                });
+
+                const result =
+                    await handleConversation(
+                        {
+                            merchantId:
+                                "merchant-test",
+                            customerId:
+                                "customer-test",
+                            chatId,
+                            customerName:
+                                "Test Customer",
+                            merchantName:
+                                "Test Merchant"
+                        },
+                        "I'll take 3 of these."
+                    );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(result.reply).toBe(
+                    "Only 2 are available."
+                );
+
+                expect(
+                    state.quantity
+                ).toBe(1);
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(false);
+            }
+        );
+
+        it(
+            "does not persist malformed selected-product purchase quantity metadata",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        quantity:
+                            1,
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "CHECK_STOCK",
+                        message:
+                            "The requested quantity is available.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "checkStock",
+                            result: {
+                                available:
+                                    true,
+                                stock:
+                                    5
+                            },
+                            isSelectedProductPurchase:
+                                true,
+                            quantity:
+                                "3"
+                        }
+                    ]
+                });
+
+                await handleConversation(
+                    {
+                        merchantId:
+                            "merchant-test",
+                        customerId:
+                            "customer-test",
+                        chatId,
+                        customerName:
+                            "Test Customer",
+                        merchantName:
+                            "Test Merchant"
+                    },
+                    "I'll take 3 of these."
+                );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(
+                    state.quantity
+                ).toBe(1);
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(false);
             }
         );
     }

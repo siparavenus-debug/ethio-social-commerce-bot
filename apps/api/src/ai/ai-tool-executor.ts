@@ -37,6 +37,7 @@ export type AIToolExecutionResult = {
   result: unknown;
   query?: string;
   searchContext?: AIProductSearchContext;
+  quantity?: number;
 };
 
 function requireString(
@@ -327,7 +328,8 @@ export async function executeAITool(
 
       return {
         tool: toolCall.tool,
-        result
+        result,
+        quantity
       };
     }
 
