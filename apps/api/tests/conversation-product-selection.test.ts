@@ -916,6 +916,306 @@ describe(
         );
 
         it(
+            "preserves the primary shopping state after an informational cross-sell search",
+            async () => {
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "SEARCH_PRODUCT",
+                        message:
+                            "Yes. Black Leather Belt is available for 650 ETB.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "searchProducts",
+                            query:
+                                "Belt",
+                            isCrossSellSearch:
+                                true,
+                            result: [
+                                {
+                                    id:
+                                        "product-belt",
+                                    name:
+                                        "Black Leather Belt",
+                                    description:
+                                        "Black leather belt",
+                                    price: 650,
+                                    currency:
+                                        "ETB",
+                                    stock: 5,
+                                    imageUrl:
+                                        null,
+                                    category:
+                                        {
+                                            id:
+                                                "category-belts",
+                                            name:
+                                                "Belts"
+                                        }
+                                }
+                            ]
+                        }
+                    ],
+                    searchContexts: [
+                        {
+                            query:
+                                "Belt"
+                        }
+                    ]
+                });
+
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "product-selected",
+                        productName:
+                            "Black Men Shoes",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        candidateProducts: [
+                            {
+                                id:
+                                    "product-original-candidate",
+                                name:
+                                    "Premium Men Shoes"
+                            }
+                        ],
+                        seenProductIds: [
+                            "product-selected",
+                            "product-original-candidate"
+                        ],
+                        lastProductSearch: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                "ETB"
+                        },
+                        awaitingQuantity:
+                            false
+                    }
+                );
+
+                await handleConversation(
+                    {
+                        merchantId:
+                            "merchant-test",
+                        customerId:
+                            "customer-test",
+                        chatId,
+                        customerName:
+                            "Test Customer",
+                        merchantName:
+                            "Test Merchant"
+                    },
+                    "Do you also have belts?"
+                );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(
+                    state.productId
+                ).toBe(
+                    "product-selected"
+                );
+
+                expect(
+                    state.productName
+                ).toBe(
+                    "Black Men Shoes"
+                );
+
+                expect(
+                    state.productPrice
+                ).toBe(1800);
+
+                expect(
+                    state.productCurrency
+                ).toBe("ETB");
+
+                expect(
+                    state.candidateProducts
+                ).toEqual([
+                    {
+                        id:
+                            "product-original-candidate",
+                        name:
+                            "Premium Men Shoes"
+                    }
+                ]);
+
+                expect(
+                    state.seenProductIds
+                ).toEqual([
+                    "product-selected",
+                    "product-original-candidate"
+                ]);
+
+                expect(
+                    state.lastProductSearch
+                ).toEqual({
+                    query:
+                        "Men Shoes",
+                    maxPrice:
+                        2000,
+                    currency:
+                        "ETB"
+                });
+
+                expect(
+                    state.awaitingQuantity
+                ).toBe(false);
+            }
+        );
+
+        it(
+            "preserves the primary shopping state when an informational cross-sell search returns no results",
+            async () => {
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "SEARCH_PRODUCT",
+                        message:
+                            "I couldn't find belts.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "searchProducts",
+                            query:
+                                "Belt",
+                            isCrossSellSearch:
+                                true,
+                            result: []
+                        }
+                    ],
+                    searchContexts: [
+                        {
+                            query:
+                                "Belt"
+                        }
+                    ]
+                });
+
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "product-selected",
+                        productName:
+                            "Black Men Shoes",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        candidateProducts: [
+                            {
+                                id:
+                                    "product-original-candidate",
+                                name:
+                                    "Premium Men Shoes"
+                            }
+                        ],
+                        seenProductIds: [
+                            "product-selected",
+                            "product-original-candidate"
+                        ],
+                        lastProductSearch: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                "ETB"
+                        },
+                        awaitingQuantity:
+                            false
+                    }
+                );
+
+                await handleConversation(
+                    {
+                        merchantId:
+                            "merchant-test",
+                        customerId:
+                            "customer-test",
+                        chatId,
+                        customerName:
+                            "Test Customer",
+                        merchantName:
+                            "Test Merchant"
+                    },
+                    "Do you also have belts?"
+                );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(
+                    state.productId
+                ).toBe(
+                    "product-selected"
+                );
+
+                expect(
+                    state.productName
+                ).toBe(
+                    "Black Men Shoes"
+                );
+
+                expect(
+                    state.productPrice
+                ).toBe(1800);
+
+                expect(
+                    state.productCurrency
+                ).toBe("ETB");
+
+                expect(
+                    state.candidateProducts
+                ).toEqual([
+                    {
+                        id:
+                            "product-original-candidate",
+                        name:
+                            "Premium Men Shoes"
+                    }
+                ]);
+
+                expect(
+                    state.seenProductIds
+                ).toEqual([
+                    "product-selected",
+                    "product-original-candidate"
+                ]);
+
+                expect(
+                    state.lastProductSearch
+                ).toEqual({
+                    query:
+                        "Men Shoes",
+                    maxPrice:
+                        2000,
+                    currency:
+                        "ETB"
+                });
+
+                expect(
+                    state.awaitingQuantity
+                ).toBe(false);
+            }
+        );
+
+        it(
             "preserves the validated product search context after a relative-price search",
             async () => {
                 runAIConversationMock.mockResolvedValue({

@@ -46,6 +46,7 @@ export type AIConversationToolResult = {
   query?: string;
   isProductSearchContinuation?: boolean;
   isRelativePriceSearch?: boolean;
+  isCrossSellSearch?: boolean;
 };
 
 const SYSTEM_PROMPT = `
@@ -146,6 +147,23 @@ Language understanding:
 - Do not reinterpret a request for another product, a price objection, or an
   explicit spending limit as one another unless the customer's wording clearly
   expresses that intent.
+- When selectedProduct exists and the customer explicitly asks for an additional
+  product while keeping the selected product, use searchProducts with
+  arguments.additionalProductSearch set to true.
+- Use additionalProductSearch only for an explicit additional-product request.
+  Search only for the additional product or constraints the customer actually
+  requested; do not infer an accessory, complementary category, bundle, or
+  related product that the customer did not identify.
+- A vague request such as "what goes with this?" does not identify an additional
+  product to search for. Ask for clarification instead of guessing a product
+  category or issuing a speculative cross-sell search.
+- additionalProductSearch is distinct from excludePreviousResults,
+  cheaperThanSelectedProduct, and an ordinary replacement product search. Do not
+  combine or reinterpret these intents unless the customer's wording clearly
+  expresses each requested behavior.
+- Do not proactively or spontaneously search for additional products merely
+  because a product is selected. Cross-sell search requires explicit customer
+  intent.
 - Do not include conversational filler in query or alternativeQueries when that
   filler is not part of the requested product constraints.
 - If the customer's meaning or product reference is genuinely ambiguous and the
@@ -282,6 +300,20 @@ Comparison and recommendation rules:
 - Factual comparisons such as cheaper, more expensive, or having more stock are allowed when directly supported by the supplied catalog facts.
 - Do not claim that one product is better quality, more durable, more authentic, or otherwise superior unless the supplied catalog facts explicitly support that comparison.
 - If the available catalog facts do not support the requested comparison or recommendation, say what can be compared from the available information and do not manufacture a reason.
+
+Cross-sell response rules:
+
+- When commerce tool results contain an explicitly requested additional product,
+  present it as a secondary option and keep the customer's primary selected
+  product or request distinct.
+- Describe an additional product only using authoritative supplied catalog facts.
+- Do not claim that an additional product matches, fits, works with, complements,
+  or is compatible with the selected product unless the supplied catalog facts
+  explicitly support that relationship.
+- Do not invent a bundle, bundle price, discount, promotion, package, accessory
+  relationship, or other commercial relationship between products.
+- Do not pressure the customer to add the additional product or imply that it is
+  necessary for the primary product.
 
 7. If stock information was returned, use that information accurately.
 
@@ -615,6 +647,9 @@ export async function runAIConversation(
     let isRelativePriceSearch =
       false;
 
+    let isCrossSellSearch =
+      false;
+
     if (
       toolCall.tool === "searchProducts" &&
       toolCall.arguments
@@ -686,6 +721,28 @@ export async function runAIConversation(
                   lastProductSearch.currency
               }
             : {})
+        }
+      };
+    }
+
+    if (
+      toolCall.tool === "searchProducts" &&
+      toolCall.arguments
+        .additionalProductSearch === true
+    ) {
+      isCrossSellSearch =
+        true;
+
+      const {
+        additionalProductSearch:
+          _additionalProductSearch,
+        ...remainingArguments
+      } = executionToolCall.arguments;
+
+      executionToolCall = {
+        ...executionToolCall,
+        arguments: {
+          ...remainingArguments
         }
       };
     }
@@ -793,6 +850,12 @@ export async function runAIConversation(
       ...(isRelativePriceSearch
         ? {
             isRelativePriceSearch:
+              true
+          }
+        : {}),
+      ...(isCrossSellSearch
+        ? {
+            isCrossSellSearch:
               true
           }
         : {})

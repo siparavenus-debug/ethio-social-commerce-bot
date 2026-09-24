@@ -3259,6 +3259,236 @@ import {
       );
 
       it(
+        "executes an explicit additional-product search without turning it into continuation or relative-price search",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          const beltCategory =
+            await prisma.productCategory.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                name:
+                  "Belts"
+              }
+            });
+
+          const belt =
+            await prisma.product.create({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                categoryId:
+                  beltCategory.id,
+                name:
+                  "Black Leather Belt",
+                description:
+                  "Black leather belt",
+                price:
+                  "650.00",
+                currency:
+                  "ETB",
+                stock: 5,
+                status:
+                  ProductStatus.ACTIVE
+              }
+            });
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "SEARCH_PRODUCT",
+                message:
+                  "I found belts.",
+                toolCalls: [
+                  {
+                    tool:
+                      "searchProducts",
+                    arguments: {
+                      query:
+                        "Belt",
+                      additionalProductSearch:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Yes. Black Leather Belt is available for 650 ETB."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "I'll take the Black Men Shoes. Do you also have belts?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          const firstCall =
+            generateAIResponseMock.mock
+              .calls[0]?.[0];
+
+          expect(firstCall).toBeDefined();
+
+          expect(firstCall.system).toContain(
+            "arguments.additionalProductSearch set to true"
+          );
+
+          expect(firstCall.system).toContain(
+            "Use additionalProductSearch only for an explicit additional-product request."
+          );
+
+          expect(firstCall.system).toContain(
+            "do not infer an accessory, complementary category, bundle, or"
+          );
+
+          expect(firstCall.system).toContain(
+            "Ask for clarification instead of guessing a product"
+          );
+
+          expect(firstCall.system).toContain(
+            "Do not proactively or spontaneously search for additional products"
+          );
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "searchProducts",
+            query:
+              "Belt",
+            isCrossSellSearch:
+              true
+          });
+
+          expect(
+            result.toolResults[0]
+              .isProductSearchContinuation
+          ).toBeUndefined();
+
+          expect(
+            result.toolResults[0]
+              .isRelativePriceSearch
+          ).toBeUndefined();
+
+          const products =
+            result.toolResults[0]
+              .result as Array<{
+                id: string;
+                name: string;
+                price: number;
+                currency: string;
+              }>;
+
+          expect(products).toEqual([
+            expect.objectContaining({
+              id:
+                belt.id,
+              name:
+                "Black Leather Belt",
+              price: 650,
+              currency:
+                "ETB"
+            })
+          ]);
+
+          expect(
+            products.some(
+              (product) =>
+                product.id ===
+                fixture.otherProduct.id
+            )
+          ).toBe(false);
+
+          const secondCall =
+            generateAIResponseMock.mock
+              .calls[1]?.[0];
+
+          expect(secondCall).toBeDefined();
+
+          const finalCallContent =
+            secondCall.messages
+              .map(
+                (message: {
+                  content: string;
+                }) => message.content
+              )
+              .join("\n");
+
+          expect(finalCallContent).toContain(
+            '"name":"Black Leather Belt"'
+          );
+
+          expect(finalCallContent).toContain(
+            '"price":650'
+          );
+
+          expect(finalCallContent).not.toContain(
+            "Other Merchant Men Shoes"
+          );
+
+          expect(secondCall.system).toContain(
+            "present it as a secondary option and keep the customer's primary selected"
+          );
+
+          expect(secondCall.system).toContain(
+            "Do not claim that an additional product matches, fits, works with, complements,"
+          );
+
+          expect(secondCall.system).toContain(
+            "Do not invent a bundle, bundle price, discount, promotion, package, accessory"
+          );
+
+          expect(secondCall.system).toContain(
+            "Do not pressure the customer to add the additional product"
+          );
+
+          expect(result.response).toMatchObject({
+            intent:
+              "SEARCH_PRODUCT",
+            message:
+              "Yes. Black Leather Belt is available for 650 ETB.",
+            toolCalls: []
+          });
+        }
+      );
+
+      it(
         "requires the final-response model to preserve authoritative product result order",
         async () => {
           const fixture =

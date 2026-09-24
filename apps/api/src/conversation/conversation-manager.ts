@@ -799,9 +799,20 @@ export async function handleConversation(
           true
     );
 
+  const hasCrossSellSearch =
+    aiResult.toolResults.some(
+      (toolResult) =>
+        toolResult.tool ===
+          "searchProducts" &&
+        toolResult
+          .isCrossSellSearch ===
+          true
+    );
+
   if (
     latestProductSearch &&
-    !hasRelativePriceSearch
+    !hasRelativePriceSearch &&
+    !hasCrossSellSearch
   ) {
     nextState.lastProductSearch = {
       ...latestProductSearch
@@ -815,6 +826,13 @@ export async function handleConversation(
       toolResult.tool === "searchProducts" &&
       Array.isArray(toolResult.result)
     ) {
+      if (
+        toolResult.isCrossSellSearch ===
+          true
+      ) {
+        continue;
+      }
+
       const products =
         toolResult.result as Array<{
           id: string;
