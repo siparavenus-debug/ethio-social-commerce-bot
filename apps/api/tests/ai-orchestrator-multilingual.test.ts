@@ -553,7 +553,7 @@ import {
             await runAIConversation(
               {
                 text:
-                  "Show me men's shoes under 2000 ETB.",
+                  "That's too expensive. I can only spend 2000 ETB on men's shoes.",
                 state: {},
                 merchantName:
                   fixture.merchant.name
@@ -1054,6 +1054,30 @@ import {
             systemPrompt.toLowerCase()
           ).toContain(
             "reuse the validated query from lastproductsearch"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "price objection"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "invent a numeric budget"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "explicit spending limit"
+          );
+
+          expect(
+            systemPrompt.toLowerCase()
+          ).toContain(
+            "show me something cheaper"
           );
         }
       );
@@ -2216,7 +2240,7 @@ import {
             await runAIConversation(
               {
                 text:
-                  "show me something cheaper",
+                  "That's too expensive, show me something cheaper",
                 state: {
                   productId:
                     fixture.product.id,
@@ -2451,6 +2475,81 @@ import {
           );
         }
       );
+
+      it(
+        "does not invent a commerce action for a vague price objection",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockResolvedValueOnce({
+            text: JSON.stringify({
+              intent:
+                "GENERAL",
+              message:
+                "I understand. Would you like a cheaper option or do you have a budget in mind?",
+              toolCalls: []
+            })
+          });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "That's too expensive.",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  lastProductSearch: {
+                    query:
+                      "Men Shoes",
+                    maxPrice:
+                      2000,
+                    currency:
+                      "ETB"
+                  }
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+
+          expect(
+            result.toolResults
+          ).toEqual([]);
+
+          expect(
+            result.searchContexts
+          ).toEqual([]);
+
+          expect(
+            result.response
+          ).toMatchObject({
+            intent:
+              "GENERAL",
+            message:
+              "I understand. Would you like a cheaper option or do you have a budget in mind?",
+            toolCalls: []
+          });
+        }
+      );
+
 
       it(
         "exposes authoritative selected product price and currency to interpretation context",

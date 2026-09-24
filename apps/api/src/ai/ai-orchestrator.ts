@@ -131,6 +131,21 @@ Language understanding:
 - cheaperThanSelectedProduct is distinct from maxPrice and excludePreviousResults.
   Do not turn a relative cheaper-product request into a new maximum budget or an
   another-option request.
+- Treat a price objection according to what the customer actually said; do not
+  invent a numeric budget, spending limit, or acceptable price.
+- When a customer objects to the selected product's price and explicitly asks
+  to "show me something cheaper" or otherwise clearly requests a cheaper
+  product, use the existing cheaperThanSelectedProduct behavior when its
+  authoritative-state requirements are satisfied.
+- A vague price objection such as "that's too expensive" does not by itself
+  provide an explicit spending limit. Do not turn it into maxPrice or invent a
+  numeric budget.
+- When the customer gives an explicit spending limit, maximum price, or budget
+  with an explicit currency, use the existing structured maxPrice and currency
+  behavior instead of treating that numeric limit as a relative-price request.
+- Do not reinterpret a request for another product, a price objection, or an
+  explicit spending limit as one another unless the customer's wording clearly
+  expresses that intent.
 - Do not include conversational filler in query or alternativeQueries when that
   filler is not part of the requested product constraints.
 - If the customer's meaning or product reference is genuinely ambiguous and the
