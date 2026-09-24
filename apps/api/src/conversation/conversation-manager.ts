@@ -1051,7 +1051,9 @@ export async function handleConversation(
 
     if (
       toolResult.tool === "checkStock" &&
-      toolResult.result
+      toolResult.result &&
+      toolResult.isSelectedProductStock !==
+        true
     ) {
       const stock =
         toolResult.result as {

@@ -3142,6 +3142,340 @@ import {
       );
 
       it(
+        "checks authoritative selected-product stock without treating candidates as the product source",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "CHECK_STOCK",
+                message:
+                  "Let me check the current stock.",
+                toolCalls: [
+                  {
+                    tool:
+                      "checkStock",
+                    arguments: {
+                      selectedProductStock:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockResolvedValueOnce({
+              text:
+                "Yes, this product is currently in stock."
+            });
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "Is this available?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name,
+                  productPrice:
+                    1800,
+                  productCurrency:
+                    "ETB",
+                  quantity:
+                    7,
+                  candidateProducts: [
+                    {
+                      id:
+                        "candidate-one",
+                      name:
+                        "First Candidate"
+                    },
+                    {
+                      id:
+                        "candidate-two",
+                      name:
+                        "Second Candidate"
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(2);
+
+          expect(
+            result.toolResults
+          ).toHaveLength(1);
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "checkStock",
+            isSelectedProductStock:
+              true,
+            result: {
+              available:
+                true
+            }
+          });
+        }
+      );
+
+      it(
+        "rejects a selected-product stock request without an authoritative selected product",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "CHECK_STOCK",
+                message:
+                  "Let me check the current stock.",
+                toolCalls: [
+                  {
+                    tool:
+                      "checkStock",
+                    arguments: {
+                      selectedProductStock:
+                        true
+                    }
+                  }
+                ]
+              })
+            });
+
+          await expect(
+            runAIConversation(
+              {
+                text:
+                  "Is this available?",
+                state: {
+                  candidateProducts: [
+                    {
+                      id:
+                        fixture.product.id,
+                      name:
+                        fixture.product.name
+                    }
+                  ]
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            )
+          ).rejects.toThrow(
+            "AI requested selected product stock without an authoritative selected product."
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
+        "gives the interpretation model a safe selected-product stock contract",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock.mockImplementationOnce(
+            async (request) => {
+              expect(
+                request.system
+              ).toContain(
+                "Selected product stock:"
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "use checkStock with selectedProductStock set to true"
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "Do not provide productId for a selected-product stock request; the application supplies the authoritative selected product id."
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "Do not reuse a quantity from conversation state for an informational selected-product stock request."
+              );
+
+              expect(
+                request.system
+              ).toContain(
+                "If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductStock."
+              );
+
+              return {
+                text: JSON.stringify({
+                  intent:
+                    "GENERAL",
+                  message:
+                    "Which product do you mean?",
+                  toolCalls: []
+                })
+              };
+            }
+          );
+
+          await runAIConversation(
+            {
+              text:
+                "Is this available?",
+              state: {
+                productId:
+                  fixture.product.id,
+                productName:
+                  fixture.product.name
+              },
+              merchantName:
+                fixture.merchant.name
+            },
+            {
+              merchantId:
+                fixture.merchant.id,
+              customerId:
+                fixture.customer.id
+            }
+          );
+
+          expect(
+            generateAIResponseMock
+          ).toHaveBeenCalledTimes(1);
+        }
+      );
+
+      it(
+        "gives the final response model a safe selected-product stock grounding contract",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          generateAIResponseMock
+            .mockResolvedValueOnce({
+              text: JSON.stringify({
+                intent:
+                  "CHECK_STOCK",
+                message:
+                  "Let me check the current stock.",
+                toolCalls: [
+                  {
+                    tool:
+                      "checkStock",
+                    arguments: {
+                      selectedProductStock:
+                        true
+                    }
+                  }
+                ]
+              })
+            })
+            .mockImplementationOnce(
+              async (request) => {
+                expect(
+                  request.system
+                ).toContain(
+                  "Selected product stock response rules:"
+                );
+
+                expect(
+                  request.system
+                ).toContain(
+                  "answer only from the authoritative available and stock values in the supplied commerce tool result"
+                );
+
+                expect(
+                  request.system
+                ).toContain(
+                  "Do not invent a restock date, future availability, reservation, hold, or replenishment information."
+                );
+
+                expect(
+                  request.system
+                ).toContain(
+                  "Do not infer availability for a color, size, model, variant, or other product option that was not checked by the commerce tool."
+                );
+
+                return {
+                  text:
+                    "Yes. 5 are currently in stock."
+                };
+              }
+            );
+
+          const result =
+            await runAIConversation(
+              {
+                text:
+                  "How many are left?",
+                state: {
+                  productId:
+                    fixture.product.id,
+                  productName:
+                    fixture.product.name
+                },
+                merchantName:
+                  fixture.merchant.name
+              },
+              {
+                merchantId:
+                  fixture.merchant.id,
+                customerId:
+                  fixture.customer.id
+              }
+            );
+
+          expect(
+            result.response.message
+          ).toBe(
+            "Yes. 5 are currently in stock."
+          );
+
+          expect(
+            result.toolResults[0]
+          ).toMatchObject({
+            tool:
+              "checkStock",
+            isSelectedProductStock:
+              true,
+            result: {
+              available:
+                true
+            }
+          });
+        }
+      );
+
+      it(
         "gives the interpretation model a safe ordered-candidate reference contract",
         async () => {
           const fixture =

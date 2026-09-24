@@ -48,6 +48,7 @@ export type AIConversationToolResult = {
   isRelativePriceSearch?: boolean;
   isCrossSellSearch?: boolean;
   isSelectedProductDetails?: boolean;
+  isSelectedProductStock?: boolean;
 };
 
 const SYSTEM_PROMPT = `
@@ -213,6 +214,15 @@ Selected product details:
 - Use selectedProductDetails only for the already selected product, never to select from candidateProducts.
 - If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductDetails.
 
+Selected product stock:
+
+- When the customer asks for informational stock or availability about the already selected product, use checkStock with selectedProductStock set to true.
+- Do not provide productId for a selected-product stock request; the application supplies the authoritative selected product id.
+- Do not provide quantity for a general informational selected-product stock request. The application checks availability for one unit and returns the authoritative stock count.
+- Do not reuse a quantity from conversation state for an informational selected-product stock request.
+- Use selectedProductStock only for informational stock or availability about the already selected product, not to advance checkout or confirm an order.
+- If there is no selected product and the requested product is unclear, ask for clarification instead of using selectedProductStock.
+
 7. If the customer asks for a product search, use searchProducts.
    If the customer asks to see all available products, asks what products
    are available, asks what the store sells, or makes a general catalog
@@ -315,6 +325,12 @@ Selected product detail response rules:
 - Do not infer an unstated color, material, size, fit, brand, model, origin, or other product attribute from the product name, category, price, image, or general product knowledge.
 - If the customer asks for a specific product detail that the supplied catalog facts do not state, clearly say that the catalog does not specify that detail.
 
+Selected product stock response rules:
+
+- For informational selected-product stock questions, answer only from the authoritative available and stock values in the supplied commerce tool result.
+- Do not invent a restock date, future availability, reservation, hold, or replenishment information.
+- Do not infer availability for a color, size, model, variant, or other product option that was not checked by the commerce tool.
+- Do not imply that stock has been reserved, held, purchased, or added to an order merely because it is currently available.
 
 Cross-sell response rules:
 
@@ -635,6 +651,11 @@ export async function runAIConversation(
       toolCall.arguments
         .selectedProductDetails === true;
 
+    const isSelectedProductStock =
+      toolCall.tool === "checkStock" &&
+      toolCall.arguments
+        .selectedProductStock === true;
+
     let executionContext:
       AIToolExecutionContext =
         context;
@@ -682,6 +703,31 @@ export async function runAIConversation(
           "AI getProduct selection must reference a current candidate product."
         );
       }
+    }
+
+    if (isSelectedProductStock) {
+      const selectedProductId =
+        request.state.productId;
+
+      if (
+        typeof selectedProductId !==
+          "string" ||
+        selectedProductId.trim() === ""
+      ) {
+        throw new Error(
+          "AI requested selected product stock without an authoritative selected product."
+        );
+      }
+
+      executionToolCall = {
+        ...toolCall,
+        arguments: {
+          productId:
+            selectedProductId,
+          quantity:
+            1
+        }
+      };
     }
 
     let isProductSearchContinuation =
@@ -905,6 +951,12 @@ export async function runAIConversation(
     ...(isSelectedProductDetails
         ? {
             isSelectedProductDetails:
+              true
+          }
+        : {}),
+    ...(isSelectedProductStock
+        ? {
+            isSelectedProductStock:
               true
           }
         : {})

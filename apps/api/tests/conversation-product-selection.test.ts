@@ -1566,5 +1566,234 @@ describe(
                 ).toBe(false);
             }
         );
+
+        it(
+            "preserves selection and search state for an informational selected-product stock lookup",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        candidateProducts: [
+                            {
+                                id:
+                                    "candidate-one",
+                                name:
+                                    "First Candidate"
+                            },
+                            {
+                                id:
+                                    "candidate-two",
+                                name:
+                                    "Second Candidate"
+                            }
+                        ],
+                        seenProductIds: [
+                            "selected-product",
+                            "candidate-one",
+                            "candidate-two"
+                        ],
+                        lastProductSearch: {
+                            query:
+                                "Men Shoes",
+                            maxPrice:
+                                2000,
+                            currency:
+                                "ETB"
+                        },
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "CHECK_STOCK",
+                        message:
+                            "Yes, this product is currently in stock.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "checkStock",
+                            isSelectedProductStock:
+                                true,
+                            result: {
+                                available:
+                                    true,
+                                stock:
+                                    5
+                            }
+                        }
+                    ]
+                });
+
+                const result =
+                    await handleConversation(
+                        {
+                            merchantId:
+                                "merchant-test",
+                            customerId:
+                                "customer-test",
+                            chatId,
+                            customerName:
+                                "Test Customer",
+                            merchantName:
+                                "Test Merchant"
+                        },
+                        "Is this available?"
+                    );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(result.reply).toBe(
+                    "Yes, this product is currently in stock."
+                );
+
+                expect(state.productId).toBe(
+                    "selected-product"
+                );
+
+                expect(state.productName).toBe(
+                    "Selected Product"
+                );
+
+                expect(state.productPrice).toBe(
+                    1800
+                );
+
+                expect(state.productCurrency).toBe(
+                    "ETB"
+                );
+
+                expect(
+                    state.candidateProducts
+                ).toEqual([
+                    {
+                        id:
+                            "candidate-one",
+                        name:
+                            "First Candidate"
+                    },
+                    {
+                        id:
+                            "candidate-two",
+                        name:
+                            "Second Candidate"
+                    }
+                ]);
+
+                expect(
+                    state.seenProductIds
+                ).toEqual([
+                    "selected-product",
+                    "candidate-one",
+                    "candidate-two"
+                ]);
+
+                expect(
+                    state.lastProductSearch
+                ).toEqual({
+                    query:
+                        "Men Shoes",
+                    maxPrice:
+                        2000,
+                    currency:
+                        "ETB"
+                });
+
+                expect(
+                    state.awaitingQuantity
+                ).toBe(false);
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(false);
+            }
+        );
+
+        it(
+            "keeps ordinary successful stock checks advancing to confirmation",
+            async () => {
+                setConversationState(
+                    chatId,
+                    {
+                        productId:
+                            "selected-product",
+                        productName:
+                            "Selected Product",
+                        productPrice:
+                            1800,
+                        productCurrency:
+                            "ETB",
+                        awaitingQuantity:
+                            false,
+                        awaitingConfirmation:
+                            false
+                    }
+                );
+
+                runAIConversationMock.mockResolvedValue({
+                    response: {
+                        intent:
+                            "CHECK_STOCK",
+                        message:
+                            "The requested quantity is available.",
+                        toolCalls: []
+                    },
+                    toolResults: [
+                        {
+                            tool:
+                                "checkStock",
+                            result: {
+                                available:
+                                    true,
+                                stock:
+                                    5
+                            }
+                        }
+                    ]
+                });
+
+                const result =
+                    await handleConversation(
+                        {
+                            merchantId:
+                                "merchant-test",
+                            customerId:
+                                "customer-test",
+                            chatId,
+                            customerName:
+                                "Test Customer",
+                            merchantName:
+                                "Test Merchant"
+                        },
+                        "Check the stock"
+                    );
+
+                const state =
+                    getConversationState(chatId);
+
+                expect(result.reply).toBe(
+                    "The requested quantity is available."
+                );
+
+                expect(
+                    state.awaitingConfirmation
+                ).toBe(true);
+            }
+        );
     }
 );
