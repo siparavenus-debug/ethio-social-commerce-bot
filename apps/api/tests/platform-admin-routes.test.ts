@@ -5,6 +5,9 @@ import type {
 import express from "express";
 
 import {
+    MerchantInvoiceStatus,
+    MerchantSettlementProvider,
+    MerchantSettlementStatus,
     OrderStatus,
     PaymentProvider,
     PaymentStatus,
@@ -1425,6 +1428,861 @@ describe(
                     _count: {
                         subscriptions:
                             0
+                    }
+                });
+            }
+        );
+
+        it(
+            "returns only settlements requiring platform review",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "settlement-review"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "settlement-review"
+                    );
+
+                const invoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-settlement-review`,
+                            periodStart:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                new Prisma.Decimal(
+                                    "500.00"
+                                ),
+                            commissionAmount:
+                                new Prisma.Decimal(
+                                    "50.00"
+                                ),
+                            totalAmount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const reviewSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .TELEBIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .REVIEW_REQUIRED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-review-required`,
+                            transactionReference:
+                                `${testPrefix}-review-required-tx`
+                        }
+                    });
+
+                const verifiedSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .CBE_BIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .VERIFIED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-verified`,
+                            transactionReference:
+                                `${testPrefix}-verified-tx`,
+                            verifiedAt:
+                                new Date(
+                                    "2026-10-02T10:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const rejectedSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .TELEBIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .REJECTED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-rejected`,
+                            transactionReference:
+                                `${testPrefix}-rejected-tx`
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/settlements/review`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        settlements: Array<{
+                            id: string;
+                            status: string;
+                            merchant: {
+                                id: string;
+                                name: string;
+                            };
+                            invoice: {
+                                id: string;
+                                invoiceNumber: string;
+                                status: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            reviewSettlement.id
+                    )
+                ).toBe(true);
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            verifiedSettlement.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            rejectedSettlement.id
+                    )
+                ).toBe(false);
+
+                const returnedSettlement =
+                    body.settlements.find(
+                        (settlement) =>
+                            settlement.id ===
+                            reviewSettlement.id
+                    );
+
+                expect(
+                    returnedSettlement
+                ).toMatchObject({
+                    id:
+                        reviewSettlement.id,
+                    status:
+                        "REVIEW_REQUIRED",
+                    merchant: {
+                        id:
+                            merchant.id,
+                        name:
+                            merchant.name
+                    },
+                    invoice: {
+                        id:
+                            invoice.id,
+                        invoiceNumber:
+                            invoice.invoiceNumber,
+                        status:
+                            "OPEN"
+                    }
+                });
+            }
+        );
+
+        it(
+            "returns only resolved merchant settlements",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "settlement-resolved"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "settlement-resolved"
+                    );
+
+                const invoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-settlement-resolved`,
+                            periodStart:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                new Prisma.Decimal(
+                                    "500.00"
+                                ),
+                            commissionAmount:
+                                new Prisma.Decimal(
+                                    "50.00"
+                                ),
+                            totalAmount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const reviewSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .TELEBIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .REVIEW_REQUIRED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-resolved-review`,
+                            transactionReference:
+                                `${testPrefix}-resolved-review-tx`
+                        }
+                    });
+
+                const verifiedSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .CBE_BIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .VERIFIED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-resolved-verified`,
+                            transactionReference:
+                                `${testPrefix}-resolved-verified-tx`,
+                            verifiedAt:
+                                new Date(
+                                    "2026-10-02T10:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const rejectedSettlement =
+                    await prisma.merchantSettlement.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceId:
+                                invoice.id,
+                            provider:
+                                MerchantSettlementProvider
+                                    .TELEBIRR,
+                            status:
+                                MerchantSettlementStatus
+                                    .REJECTED,
+                            amount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            idempotencyKey:
+                                `${testPrefix}-resolved-rejected`,
+                            transactionReference:
+                                `${testPrefix}-resolved-rejected-tx`,
+                            reviewNote:
+                                "Payment evidence rejected"
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/settlements/resolved`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        settlements: Array<{
+                            id: string;
+                            status: string;
+                            merchant: {
+                                id: string;
+                                name: string;
+                            };
+                            invoice: {
+                                id: string;
+                                invoiceNumber: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            verifiedSettlement.id
+                    )
+                ).toBe(true);
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            rejectedSettlement.id
+                    )
+                ).toBe(true);
+
+                expect(
+                    body.settlements.some(
+                        (settlement) =>
+                            settlement.id ===
+                            reviewSettlement.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.settlements.find(
+                        (settlement) =>
+                            settlement.id ===
+                            verifiedSettlement.id
+                    )
+                ).toMatchObject({
+                    id:
+                        verifiedSettlement.id,
+                    status:
+                        "VERIFIED",
+                    merchant: {
+                        id:
+                            merchant.id,
+                        name:
+                            merchant.name
+                    },
+                    invoice: {
+                        id:
+                            invoice.id,
+                        invoiceNumber:
+                            invoice.invoiceNumber
+                    }
+                });
+
+                expect(
+                    body.settlements.find(
+                        (settlement) =>
+                            settlement.id ===
+                            rejectedSettlement.id
+                    )
+                ).toMatchObject({
+                    id:
+                        rejectedSettlement.id,
+                    status:
+                        "REJECTED",
+                    merchant: {
+                        id:
+                            merchant.id,
+                        name:
+                            merchant.name
+                    },
+                    invoice: {
+                        id:
+                            invoice.id,
+                        invoiceNumber:
+                            invoice.invoiceNumber
+                    }
+                });
+            }
+        );
+
+        it(
+            "returns only draft invoices for platform billing work",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "draft-invoices"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "draft-invoices"
+                    );
+
+                const draftInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-draft-work`,
+                            periodStart:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "50.00",
+                            totalAmount:
+                                "550.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.DRAFT
+                        }
+                    });
+
+                const openInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-draft-work-open`,
+                            periodStart:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-11-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "75.00",
+                            totalAmount:
+                                "575.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2026-11-01T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const paidInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-draft-work-paid`,
+                            periodStart:
+                                new Date(
+                                    "2026-11-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-12-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "100.00",
+                            totalAmount:
+                                "600.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.PAID,
+                            openedAt:
+                                new Date(
+                                    "2026-12-01T00:00:00.000Z"
+                                ),
+                            paidAt:
+                                new Date(
+                                    "2026-12-02T10:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/invoices/draft`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        invoices: Array<{
+                            id: string;
+                            status: string;
+                            invoiceNumber: string;
+                            merchant: {
+                                id: string;
+                                name: string;
+                                currency: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            draftInvoice.id
+                    )
+                ).toBe(true);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            openInvoice.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            paidInvoice.id
+                    )
+                ).toBe(false);
+
+                const returnedInvoice =
+                    body.invoices.find(
+                        (invoice) =>
+                            invoice.id ===
+                            draftInvoice.id
+                    );
+
+                expect(
+                    returnedInvoice
+                ).toMatchObject({
+                    id:
+                        draftInvoice.id,
+                    invoiceNumber:
+                        draftInvoice.invoiceNumber,
+                    status:
+                        "DRAFT",
+                    merchant: {
+                        id:
+                            merchant.id,
+                        name:
+                            merchant.name,
+                        currency:
+                            "ETB"
+                    }
+                });
+            }
+        );
+
+        it(
+            "returns only open invoices awaiting merchant payment",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "awaiting-payment"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "awaiting-payment"
+                    );
+
+                const openInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-awaiting-payment-open`,
+                            periodStart:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "75.00",
+                            totalAmount:
+                                "575.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2026-10-10T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const draftInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-awaiting-payment-draft`,
+                            periodStart:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-11-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "50.00",
+                            totalAmount:
+                                "550.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.DRAFT
+                        }
+                    });
+
+                const overdueInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-awaiting-payment-overdue`,
+                            periodStart:
+                                new Date(
+                                    "2026-08-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "100.00",
+                            totalAmount:
+                                "600.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OVERDUE,
+                            openedAt:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2026-09-10T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/invoices/awaiting-payment`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        invoices: Array<{
+                            id: string;
+                            invoiceNumber: string;
+                            status: string;
+                            merchant: {
+                                id: string;
+                                name: string;
+                                currency: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            openInvoice.id
+                    )
+                ).toBe(true);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            draftInvoice.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            overdueInvoice.id
+                    )
+                ).toBe(false);
+
+                const returnedInvoice =
+                    body.invoices.find(
+                        (invoice) =>
+                            invoice.id ===
+                            openInvoice.id
+                    );
+
+                expect(
+                    returnedInvoice
+                ).toMatchObject({
+                    id:
+                        openInvoice.id,
+                    invoiceNumber:
+                        openInvoice.invoiceNumber,
+                    status:
+                        "OPEN",
+                    merchant: {
+                        id:
+                            merchant.id,
+                        name:
+                            merchant.name,
+                        currency:
+                            "ETB"
                     }
                 });
             }

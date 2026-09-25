@@ -1,5 +1,6 @@
 ﻿import {
   MerchantInvoiceStatus,
+  MerchantSettlementStatus,
   MerchantSubscriptionStatus,
   SubscriptionBillingInterval,
   prisma
@@ -88,6 +89,159 @@ router.get(
       res.status(500).json({
         error:
           "Failed to load platform audit log"
+      });
+    }
+  }
+);
+
+router.get(
+  "/billing/settlements/review",
+  async (_req, res) => {
+    try {
+      const settlements =
+        await prisma.merchantSettlement.findMany({
+          where: {
+            status:
+              MerchantSettlementStatus
+                .REVIEW_REQUIRED
+          },
+          include: {
+            merchant: {
+              select: {
+                id: true,
+                name: true,
+                currency: true
+              }
+            },
+            invoice: true
+          },
+          orderBy: {
+            submittedAt: "asc"
+          }
+        });
+
+      res.json({
+        settlements
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load settlements requiring review"
+      });
+    }
+  }
+);
+
+router.get(
+  "/billing/settlements/resolved",
+  async (_req, res) => {
+    try {
+      const settlements =
+        await prisma.merchantSettlement.findMany({
+          where: {
+            status: {
+              in: [
+                MerchantSettlementStatus
+                  .VERIFIED,
+                MerchantSettlementStatus
+                  .REJECTED
+              ]
+            }
+          },
+          include: {
+            merchant: {
+              select: {
+                id: true,
+                name: true,
+                currency: true
+              }
+            },
+            invoice: true
+          },
+          orderBy: {
+            updatedAt: "desc"
+          }
+        });
+
+      res.json({
+        settlements
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load resolved settlements"
+      });
+    }
+  }
+);
+
+router.get(
+  "/billing/invoices/draft",
+  async (_req, res) => {
+    try {
+      const invoices =
+        await prisma.merchantInvoice.findMany({
+          where: {
+            status:
+              MerchantInvoiceStatus.DRAFT
+          },
+          include: {
+            merchant: {
+              select: {
+                id: true,
+                name: true,
+                currency: true
+              }
+            }
+          },
+          orderBy: {
+            createdAt: "asc"
+          }
+        });
+
+      res.json({
+        invoices
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load draft invoices"
+      });
+    }
+  }
+);
+
+router.get(
+  "/billing/invoices/awaiting-payment",
+  async (_req, res) => {
+    try {
+      const invoices =
+        await prisma.merchantInvoice.findMany({
+          where: {
+            status:
+              MerchantInvoiceStatus.OPEN
+          },
+          include: {
+            merchant: {
+              select: {
+                id: true,
+                name: true,
+                currency: true
+              }
+            }
+          },
+          orderBy: {
+            openedAt: "asc"
+          }
+        });
+
+      res.json({
+        invoices
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load invoices awaiting payment"
       });
     }
   }
