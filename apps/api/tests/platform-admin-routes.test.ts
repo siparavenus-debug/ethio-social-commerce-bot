@@ -2438,6 +2438,226 @@ describe(
         );
 
         it(
+            "summarizes collected monthly platform revenue by currency",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "revenue-monthly-summary"
+                    );
+
+                const etbMerchant =
+                    await createMerchant(
+                        "revenue-monthly-summary-etb"
+                    );
+
+                const usdMerchant =
+                    await createMerchant(
+                        "revenue-monthly-summary-usd"
+                    );
+
+                await prisma.merchant.update({
+                    where: {
+                        id:
+                            usdMerchant.id
+                    },
+                    data: {
+                        currency:
+                            "USD"
+                    }
+                });
+
+                const createInvoice =
+                    (
+                        merchantId: string,
+                        invoiceNumber: string,
+                        periodStart: Date,
+                        periodEnd: Date,
+                        subscriptionAmount: string,
+                        commissionAmount: string,
+                        totalAmount: string,
+                        currency: string,
+                        status:
+                            MerchantInvoiceStatus,
+                        paidAt:
+                            Date | null
+                    ) =>
+                        prisma.merchantInvoice.create({
+                            data: {
+                                merchantId,
+                                invoiceNumber,
+                                periodStart,
+                                periodEnd,
+                                subscriptionAmount,
+                                commissionAmount,
+                                totalAmount,
+                                currency,
+                                status,
+                                paidAt
+                            }
+                        });
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-monthly-summary-start`,
+                    new Date(
+                        "2026-07-01T00:00:00.000Z"
+                    ),
+                    new Date(
+                        "2026-08-01T00:00:00.000Z"
+                    ),
+                    "500.00",
+                    "125.00",
+                    "625.00",
+                    "ETB",
+                    MerchantInvoiceStatus.PAID,
+                    new Date(
+                        "2036-09-01T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-monthly-summary-etb`,
+                    new Date(
+                        "2026-08-01T00:00:00.000Z"
+                    ),
+                    new Date(
+                        "2026-09-01T00:00:00.000Z"
+                    ),
+                    "700.00",
+                    "175.00",
+                    "875.00",
+                    "ETB",
+                    MerchantInvoiceStatus.PAID,
+                    new Date(
+                        "2036-09-20T12:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    usdMerchant.id,
+                    `${testPrefix}-monthly-summary-usd`,
+                    new Date(
+                        "2026-08-01T00:00:00.000Z"
+                    ),
+                    new Date(
+                        "2026-09-01T00:00:00.000Z"
+                    ),
+                    "20.00",
+                    "5.00",
+                    "25.00",
+                    "USD",
+                    MerchantInvoiceStatus.PAID,
+                    new Date(
+                        "2036-09-15T08:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-monthly-summary-next-month`,
+                    new Date(
+                        "2026-09-01T00:00:00.000Z"
+                    ),
+                    new Date(
+                        "2026-10-01T00:00:00.000Z"
+                    ),
+                    "900.00",
+                    "225.00",
+                    "1125.00",
+                    "ETB",
+                    MerchantInvoiceStatus.PAID,
+                    new Date(
+                        "2036-10-01T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-monthly-summary-open`,
+                    new Date(
+                        "2026-10-01T00:00:00.000Z"
+                    ),
+                    new Date(
+                        "2026-11-01T00:00:00.000Z"
+                    ),
+                    "1000.00",
+                    "250.00",
+                    "1250.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OPEN,
+                    null
+                );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/revenue/monthly-summary?month=2036-09`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        periodStart: string;
+                        periodEnd: string;
+                        currencies: Array<{
+                            currency: string;
+                            subscriptionAmount: string;
+                            commissionAmount: string;
+                            totalAmount: string;
+                        }>;
+                    };
+
+                expect(
+                    body.periodStart
+                ).toBe(
+                    "2036-09-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.periodEnd
+                ).toBe(
+                    "2036-10-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.currencies
+                ).toEqual([
+                    {
+                        currency:
+                            "ETB",
+                        subscriptionAmount:
+                            "1200.00",
+                        commissionAmount:
+                            "300.00",
+                        totalAmount:
+                            "1500.00"
+                    },
+                    {
+                        currency:
+                            "USD",
+                        subscriptionAmount:
+                            "20.00",
+                        commissionAmount:
+                            "5.00",
+                        totalAmount:
+                            "25.00"
+                    }
+                ]);
+            }
+        );
+
+        it(
             "returns only overdue invoices from platform overdue billing",
             async () => {
                 const {

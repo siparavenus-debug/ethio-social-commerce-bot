@@ -2,6 +2,7 @@
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
   MerchantSubscriptionStatus,
+  Prisma,
   SubscriptionBillingInterval,
   prisma
 } from "@ethio-commerce/database";
@@ -242,6 +243,174 @@ router.get(
       res.status(500).json({
         error:
           "Failed to load invoices awaiting payment"
+      });
+    }
+  }
+);
+
+router.get(
+  "/billing/revenue/monthly-summary",
+  async (req, res) => {
+    try {
+      const month =
+        typeof req.query.month === "string"
+          ? req.query.month
+          : "";
+
+      if (!/^\d{4}-\d{2}$/.test(month)) {
+        res.status(400).json({
+          error:
+            "month must use YYYY-MM format"
+        });
+        return;
+      }
+
+      const [
+        yearText,
+        monthText
+      ] =
+        month.split("-");
+
+      const year =
+        Number(yearText);
+
+      const monthIndex =
+        Number(monthText) - 1;
+
+      if (
+        monthIndex < 0 ||
+        monthIndex > 11
+      ) {
+        res.status(400).json({
+          error:
+            "month must use YYYY-MM format"
+        });
+        return;
+      }
+
+      const periodStart =
+        new Date(
+          Date.UTC(
+            year,
+            monthIndex,
+            1
+          )
+        );
+
+      const periodEnd =
+        new Date(
+          Date.UTC(
+            year,
+            monthIndex + 1,
+            1
+          )
+        );
+
+      const invoices =
+        await prisma.merchantInvoice.findMany({
+          where: {
+            status:
+              MerchantInvoiceStatus.PAID,
+            paidAt: {
+              gte: periodStart,
+              lt: periodEnd
+            }
+          },
+          select: {
+            subscriptionAmount: true,
+            commissionAmount: true,
+            totalAmount: true,
+            currency: true
+          }
+        });
+
+      const totals =
+        new Map<
+          string,
+          {
+            subscriptionAmount:
+              Prisma.Decimal;
+            commissionAmount:
+              Prisma.Decimal;
+            totalAmount:
+              Prisma.Decimal;
+          }
+        >();
+
+      for (const invoice of invoices) {
+        const existing =
+          totals.get(
+            invoice.currency
+          ) ?? {
+            subscriptionAmount:
+              new Prisma.Decimal(0),
+            commissionAmount:
+              new Prisma.Decimal(0),
+            totalAmount:
+              new Prisma.Decimal(0)
+          };
+
+        totals.set(
+          invoice.currency,
+          {
+            subscriptionAmount:
+              existing.subscriptionAmount.plus(
+                invoice.subscriptionAmount
+              ),
+            commissionAmount:
+              existing.commissionAmount.plus(
+                invoice.commissionAmount
+              ),
+            totalAmount:
+              existing.totalAmount.plus(
+                invoice.totalAmount
+              )
+          }
+        );
+      }
+
+      const currencies =
+        Array.from(
+          totals.entries()
+        )
+          .sort(
+            ([currencyA], [currencyB]) =>
+              currencyA.localeCompare(
+                currencyB
+              )
+          )
+          .map(
+            ([
+              currency,
+              amounts
+            ]) => ({
+              currency,
+              subscriptionAmount:
+                amounts.subscriptionAmount.toFixed(
+                  2
+                ),
+              commissionAmount:
+                amounts.commissionAmount.toFixed(
+                  2
+                ),
+              totalAmount:
+                amounts.totalAmount.toFixed(
+                  2
+                )
+            })
+          );
+
+      res.json({
+        periodStart:
+          periodStart.toISOString(),
+        periodEnd:
+          periodEnd.toISOString(),
+        currencies
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load monthly platform revenue summary"
       });
     }
   }
