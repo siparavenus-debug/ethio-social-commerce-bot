@@ -31,7 +31,19 @@ type Merchant = Row & {
   createdAt?: string;
   subscription: Subscription | null;
 };
-type View = "Merchants" | "Plans" | "Overdue" | "Revenue" | "Audit";
+type View =
+  | "Merchants"
+  | "Billing Work"
+  | "Plans"
+  | "Overdue"
+  | "Revenue"
+  | "Audit";
+
+type BillingWorkTab =
+  | "draft"
+  | "awaiting-payment"
+  | "review"
+  | "resolved";
 type Field = { name: string; label: string; type?: string; optional?: boolean; options?: string[]; value?: unknown };
 type Action = { title: string; path: string; method: string; fields: Field[]; note?: string; transform?: (values: Record<string, unknown>) => unknown };
 const transitions: Record<string, string[]> = { TRIAL: ["ACTIVE", "CANCELLED"], ACTIVE: ["PAST_DUE", "CANCELLED"], PAST_DUE: ["ACTIVE", "SUSPENDED", "CANCELLED"], SUSPENDED: ["ACTIVE", "CANCELLED"], CANCELLED: [] };
@@ -40,6 +52,54 @@ const field = (name: string, label: string, type = "text", optional = false): Fi
 const dateFields = (start: string, end: string): Field[] => [field(start, "Period start (local time)", "datetime-local"), field(end, "Period end (local time)", "datetime-local")];
 const display = (value: unknown): string => value == null ? "—" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
 const label = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
+
+function rowMerchantId(
+  row: Row
+): string {
+  const merchant = row.merchant;
+
+  return (
+    merchant &&
+    typeof merchant === "object" &&
+    "id" in merchant &&
+    typeof merchant.id === "string"
+      ? merchant.id
+      : ""
+  );
+}
+
+function billingWorkRows(
+  rows: Row[]
+): Row[] {
+  return rows.map(row => {
+    const merchant = row.merchant;
+    const invoice = row.invoice;
+
+    const merchantName =
+      merchant &&
+      typeof merchant === "object" &&
+      "name" in merchant &&
+      typeof merchant.name === "string"
+        ? merchant.name
+        : "—";
+
+    const invoiceNumber =
+      invoice &&
+      typeof invoice === "object" &&
+      "invoiceNumber" in invoice &&
+      typeof invoice.invoiceNumber === "string"
+        ? invoice.invoiceNumber
+        : typeof row.invoiceNumber === "string"
+          ? row.invoiceNumber
+          : "—";
+
+    return {
+      ...row,
+      merchantName,
+      invoiceNumber
+    };
+  });
+}
 
 function RecordModal({ row, close }: { row: Row; close: () => void }) {
   return <div className="pa-modal-backdrop" onMouseDown={close}><section className="pa-modal pa-record-modal" role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}><div className="pa-modal-head"><div><p className="pa-eyebrow">FULL RECORD</p><h2>{String(row.name || row.invoiceNumber || row.id)}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><dl className="pa-record-grid">{Object.entries(row).map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{typeof v === "object" && v !== null ? <pre>{JSON.stringify(v, null, 2)}</pre> : display(v)}</dd></div>)}</dl></section></div>;
@@ -86,6 +146,8 @@ export default function PlatformApp() {
   const [selected, setSelected] = useState("");
   const [merchant, setMerchant] = useState<Merchant | null>(null);
   const [ledger, setLedger] = useState("invoices");
+  const [billingWorkTab, setBillingWorkTab] =
+    useState<BillingWorkTab>("review");
   const [rows, setRows] = useState<Row[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -132,9 +194,12 @@ export default function PlatformApp() {
       return;
     }
 
-    if (!selected) {
+    const merchantId =
+      rowMerchantId(settlement) || selected;
+
+    if (!merchantId) {
       setError(
-        "Select a merchant before viewing settlement evidence."
+        "Merchant information is not available for this settlement."
       );
       return;
     }
@@ -152,7 +217,7 @@ export default function PlatformApp() {
       const response =
         await platformFetch(
           `/merchants/${encodeURIComponent(
-            selected
+            merchantId
           )}/billing/settlements/${encodeURIComponent(
             settlement.id
           )}/evidence`,
@@ -231,16 +296,87 @@ export default function PlatformApp() {
         const [d, history] = await Promise.all([
           platformRequest<{ merchant: Merchant }>(`/merchants/${encodeURIComponent(selected)}`, token, "GET", undefined, controller.signal),
           platformRequest<Record<string, Row[]>>(`/merchants/${encodeURIComponent(selected)}/billing/${ledger}`, token, "GET", undefined, controller.signal)
-        ]); detail = d.merchant; data = history[ledger];
-      } else if (view !== "Merchants" && view !== "Plans") {
-        const result = await platformRequest<Record<string, Row[]>>(view === "Audit" ? "/audit" : `/billing/${view.toLowerCase()}`, token, "GET", undefined, controller.signal);
-        data = result[view === "Audit" ? "auditLogs" : "invoices"];
+        ]);
+        detail = d.merchant;
+        data = history[ledger];
+      } else if (view === "Billing Work") {
+        const billingWorkRoutes: Record<
+          BillingWorkTab,
+          {
+            path: string;
+            key: "invoices" | "settlements";
+          }
+        > = {
+          draft: {
+            path: "/billing/invoices/draft",
+            key: "invoices"
+          },
+          "awaiting-payment": {
+            path: "/billing/invoices/awaiting-payment",
+            key: "invoices"
+          },
+          review: {
+            path: "/billing/settlements/review",
+            key: "settlements"
+          },
+          resolved: {
+            path: "/billing/settlements/resolved",
+            key: "settlements"
+          }
+        };
+
+        const route =
+          billingWorkRoutes[billingWorkTab];
+
+        const result =
+          await platformRequest<
+            Record<string, Row[]>
+          >(
+            route.path,
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
+
+        data = result[route.key];
+      } else if (
+        view !== "Merchants" &&
+        view !== "Plans"
+      ) {
+        const result =
+          await platformRequest<
+            Record<string, Row[]>
+          >(
+            view === "Audit"
+              ? "/audit"
+              : `/billing/${view.toLowerCase()}`,
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
+
+        data =
+          result[
+            view === "Audit"
+              ? "auditLogs"
+              : "invoices"
+          ];
       }
       if (!controller.signal.aborted) { setMerchants(m.merchants); setPlans(p.plans); setMerchant(detail); setRows(data); setLoading(false); }
     }
     load().catch(e => { if (!controller.signal.aborted) { fail(e); setLoading(false); } });
     return () => controller.abort();
-  }, [user, token, view, selected, ledger, revision]);
+  }, [
+    user,
+    token,
+    view,
+    selected,
+    ledger,
+    billingWorkTab,
+    revision
+  ]);
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true); setError("");
     try {
@@ -264,7 +400,14 @@ export default function PlatformApp() {
   }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
   if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button>{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
-  return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons"><a href="/">Merchant dashboard</a><button onClick={logout}>Sign out</button></div></div></header><nav aria-label="Platform sections">{(["Merchants", "Plans", "Overdue", "Revenue", "Audit"] as View[]).map(v => <button key={v} aria-current={view === v ? "page" : undefined} disabled={busy} onClick={() => { setView(v); setSelected(""); setAction(null); setSearch(""); }}>{v}</button>)}</nav><main>
+  return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons"><a href="/">Merchant dashboard</a><button onClick={logout}>Sign out</button></div></div></header><nav aria-label="Platform sections">{([
+    "Merchants",
+    "Billing Work",
+    "Revenue",
+    "Overdue",
+    "Plans",
+    "Audit"
+  ] as View[]).map(v => <button key={v} aria-current={view === v ? "page" : undefined} disabled={busy} onClick={() => { setView(v); setSelected(""); setAction(null); setSearch(""); }}>{v}</button>)}</nav><main>
     {view === "Merchants" && selected ? <div className="pa-detail-header"><button className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
     {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
     {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
@@ -331,7 +474,190 @@ export default function PlatformApp() {
     View receipt
   </button>
 )}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
-      {view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
+      {view === "Billing Work" && (
+  <>
+    <div className="pa-tabs">
+      {(
+        [
+          ["draft", "Draft Invoices"],
+          [
+            "awaiting-payment",
+            "Awaiting Payment"
+          ],
+          ["review", "Payment Review"],
+          ["resolved", "Resolved"]
+        ] as [
+          BillingWorkTab,
+          string
+        ][]
+      ).map(([tab, text]) => (
+        <button
+          key={tab}
+          type="button"
+          disabled={busy}
+          aria-pressed={
+            billingWorkTab === tab
+          }
+          onClick={() => {
+            setBillingWorkTab(tab);
+            setAction(null);
+          }}
+        >
+          {text}
+        </button>
+      ))}
+    </div>
+
+    {(billingWorkTab === "draft" ||
+      billingWorkTab ===
+        "awaiting-payment") && (
+<Table
+  rows={billingWorkRows(rows)}
+  columns={[
+    "invoiceNumber",
+    "merchantName",
+    "totalAmount",
+    "currency",
+    "status",
+    billingWorkTab === "draft"
+      ? "createdAt"
+      : "openedAt"
+  ]}
+  actions={r => {
+    const merchantId =
+      rowMerchantId(r);
+
+    if (
+      billingWorkTab !== "draft" ||
+      r.status !== "DRAFT" ||
+      !merchantId
+    ) {
+      return null;
+    }
+
+    return (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() =>
+          setAction({
+            title:
+              `Open invoice ${r.invoiceNumber}`,
+            path:
+              `/merchants/${encodeURIComponent(
+                merchantId
+              )}/billing/invoices/${encodeURIComponent(
+                r.id
+              )}/open`,
+            method: "POST",
+            fields: [],
+            note:
+              `Open invoice ${r.invoiceNumber} for ${r.totalAmount} ${r.currency}. The server enforces invoice lifecycle eligibility.`
+          })
+        }
+      >
+        Open invoice
+      </button>
+    );
+  }}
+/>
+    )}
+
+    {(billingWorkTab === "review" ||
+      billingWorkTab === "resolved") && (
+<Table
+  rows={billingWorkRows(rows)}
+  columns={[
+    "merchantName",
+    "invoiceNumber",
+    "amount",
+    "currency",
+    "status",
+    "provider",
+    "transactionReference",
+    billingWorkTab === "review"
+      ? "submittedAt"
+      : "verifiedAt"
+  ]}
+  actions={r => {
+    const merchantId =
+      rowMerchantId(r);
+
+    const hasReceipt =
+      r.hasReceiptEvidence === true ||
+      (
+        typeof r.receiptUrl ===
+          "string" &&
+        /^https?:\/\//i.test(
+          r.receiptUrl
+        )
+      );
+
+    return (
+      <>
+        {hasReceipt && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void openSettlementEvidence(
+                r
+              )
+            }
+          >
+            View receipt
+          </button>
+        )}
+
+        {billingWorkTab === "review" &&
+          r.status ===
+            "REVIEW_REQUIRED" &&
+          merchantId &&
+          ["verify", "reject"].map(
+            operation => (
+              <button
+                key={operation}
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  setAction({
+                    title:
+                      `${label(
+                        operation
+                      )} settlement ${r.id}`,
+                    path:
+                      `/merchants/${encodeURIComponent(
+                        merchantId
+                      )}/billing/settlements/${encodeURIComponent(
+                        r.id
+                      )}/${operation}`,
+                    method: "POST",
+                    fields: [
+                      field(
+                        "reviewNote",
+                        "Review note",
+                        "text",
+                        true
+                      )
+                    ],
+                    note:
+                      `${label(
+                        operation
+                      )} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.`
+                  })
+                }
+              >
+                {label(operation)}
+              </button>
+            )
+          )}
+      </>
+    );
+  }}
+/>
+    )}
+  </>
+)}{view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
       {(view === "Revenue" || view === "Overdue") && <Table rows={rows} columns={["invoiceNumber", "merchant", "totalAmount", "currency", "status", view === "Revenue" ? "paidAt" : "dueAt"]} />}
       {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}
     </>}</main></div>;
