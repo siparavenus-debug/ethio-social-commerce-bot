@@ -44,6 +44,20 @@ type BillingWorkTab =
   | "awaiting-payment"
   | "review"
   | "resolved";
+
+type RevenueCurrencySummary = {
+  currency: string;
+  subscriptionAmount: string;
+  commissionAmount: string;
+  totalAmount: string;
+};
+
+type RevenueMonthlySummary = {
+  periodStart: string;
+  periodEnd: string;
+  currencies: RevenueCurrencySummary[];
+};
+
 type Field = { name: string; label: string; type?: string; optional?: boolean; options?: string[]; value?: unknown };
 type Action = { title: string; path: string; method: string; fields: Field[]; note?: string; transform?: (values: Record<string, unknown>) => unknown };
 const transitions: Record<string, string[]> = { TRIAL: ["ACTIVE", "CANCELLED"], ACTIVE: ["PAST_DUE", "CANCELLED"], PAST_DUE: ["ACTIVE", "SUSPENDED", "CANCELLED"], SUSPENDED: ["ACTIVE", "CANCELLED"], CANCELLED: [] };
@@ -149,6 +163,8 @@ export default function PlatformApp() {
   const [billingWorkTab, setBillingWorkTab] =
     useState<BillingWorkTab>("review");
   const [rows, setRows] = useState<Row[]>([]);
+  const [revenueSummary, setRevenueSummary] =
+    useState<RevenueMonthlySummary | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [planFilter, setPlanFilter] = useState("ALL");
@@ -285,7 +301,7 @@ export default function PlatformApp() {
   useEffect(() => {
     if (!user || !token) return;
     const controller = new AbortController();
-    setLoading(true); setError(""); setRows([]); setMerchant(null);
+    setLoading(true); setError(""); setRows([]); setMerchant(null); setRevenueSummary(null);
     async function load() {
       const [m, p] = await Promise.all([
         platformRequest<{ merchants: Merchant[] }>("/merchants", token, "GET", undefined, controller.signal),
@@ -340,6 +356,43 @@ export default function PlatformApp() {
           );
 
         data = result[route.key];
+      } else if (view === "Revenue") {
+        const now =
+          new Date();
+
+        const month =
+          `${now.getUTCFullYear()}-${String(
+            now.getUTCMonth() + 1
+          ).padStart(2, "0")}`;
+
+        const [
+          revenue,
+          summary
+        ] =
+          await Promise.all([
+            platformRequest<{
+              invoices: Row[];
+            }>(
+              "/billing/revenue",
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            ),
+            platformRequest<RevenueMonthlySummary>(
+              `/billing/revenue/monthly-summary?month=${month}`,
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            )
+          ]);
+
+        data = revenue.invoices;
+
+        if (!controller.signal.aborted) {
+          setRevenueSummary(summary);
+        }
       } else if (
         view !== "Merchants" &&
         view !== "Plans"
@@ -658,7 +711,79 @@ export default function PlatformApp() {
     )}
   </>
 )}{view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
-      {(view === "Revenue" || view === "Overdue") && <Table rows={rows} columns={["invoiceNumber", "merchant", "totalAmount", "currency", "status", view === "Revenue" ? "paidAt" : "dueAt"]} />}
+      {view === "Revenue" && (
+        <>
+          <section className="pa-card">
+            <div className="pa-section-heading">
+              <div>
+                <h3>Current month collected revenue</h3>
+                <p>
+                  Paid invoices collected during the current UTC month.
+                  Amounts remain separated by currency.
+                </p>
+              </div>
+            </div>
+
+            {revenueSummary &&
+            revenueSummary.currencies.length > 0 ? (
+              <div className="pa-metric-grid">
+                {revenueSummary.currencies.map(
+                  summary => (
+                    <div key={summary.currency}>
+                      <span>{summary.currency}</span>
+                      <strong>
+                        Collected total:{" "}
+                        {summary.totalAmount}{" "}
+                        {summary.currency}
+                      </strong>
+                      <small>
+                        Collected subscription:{" "}
+                        {summary.subscriptionAmount}{" "}
+                        {summary.currency}
+                      </small>
+                      <small>
+                        Collected commission:{" "}
+                        {summary.commissionAmount}{" "}
+                        {summary.currency}
+                      </small>
+                    </div>
+                  )
+                )}
+              </div>
+            ) : (
+              <p className="pa-empty">
+                No collected revenue for the current month.
+              </p>
+            )}
+          </section>
+
+          <Table
+            rows={rows}
+            columns={[
+              "invoiceNumber",
+              "merchant",
+              "totalAmount",
+              "currency",
+              "status",
+              "paidAt"
+            ]}
+          />
+        </>
+      )}
+
+      {view === "Overdue" && (
+        <Table
+          rows={rows}
+          columns={[
+            "invoiceNumber",
+            "merchant",
+            "totalAmount",
+            "currency",
+            "status",
+            "dueAt"
+          ]}
+        />
+      )}
       {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}
     </>}</main></div>;
 }
