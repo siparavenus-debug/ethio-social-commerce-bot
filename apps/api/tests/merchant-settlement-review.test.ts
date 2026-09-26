@@ -652,7 +652,7 @@ describe(
               fixture.settlement.id
           })
         ).rejects.toThrow(
-          "Merchant settlement can only be verified for an open invoice"
+          "Merchant settlement can only be verified for an open or overdue invoice"
         );
 
         const stored =
@@ -922,7 +922,7 @@ describe(
               second.id
           })
         ).rejects.toThrow(
-          "Merchant settlement can only be verified for an open invoice"
+          "Merchant settlement can only be verified for an open or overdue invoice"
         );
 
         const storedSecond =
@@ -1232,6 +1232,179 @@ describe(
         ).toBe(
           0
         );
+      }
+    );
+
+    it(
+      "verifies settlement for an OVERDUE invoice and pays the invoice",
+      async () => {
+        const fixture =
+          await createFixture(
+            "verify-overdue",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const result =
+          await verifyMerchantSettlement({
+            merchantId:
+              fixture.merchant.id,
+            settlementId:
+              fixture.settlement.id,
+            reviewNote:
+              "Platform confirmed overdue invoice payment"
+          });
+
+        expect(
+          result.settlement.status
+        ).toBe(
+          MerchantSettlementStatus.VERIFIED
+        );
+
+        expect(
+          result.settlement.verifiedAt
+        ).not.toBeNull();
+
+        expect(
+          result.invoice.status
+        ).toBe(
+          MerchantInvoiceStatus.PAID
+        );
+
+        expect(
+          result.invoice.paidAt
+        ).not.toBeNull();
+
+        expect(
+          result.invoice.paidAt
+            ?.getTime()
+        ).toBe(
+          result.settlement.verifiedAt
+            ?.getTime()
+        );
+      }
+    );
+
+    it(
+      "rejects settlement for an OVERDUE invoice while leaving it OVERDUE",
+      async () => {
+        const fixture =
+          await createFixture(
+            "reject-overdue",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const result =
+          await rejectMerchantSettlement({
+            merchantId:
+              fixture.merchant.id,
+            settlementId:
+              fixture.settlement.id,
+            reviewNote:
+              "Platform rejected overdue invoice payment"
+          });
+
+        expect(
+          result.settlement.status
+        ).toBe(
+          MerchantSettlementStatus.REJECTED
+        );
+
+        expect(
+          result.invoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OVERDUE
+        );
+
+        expect(
+          result.invoice.paidAt
+        ).toBeNull();
+      }
+    );
+
+    it(
+      "records OVERDUE as the previous invoice status when verification pays an overdue invoice",
+      async () => {
+        const fixture =
+          await createFixture(
+            "verify-overdue-audit",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const platformUser =
+          await createPlatformUser(
+            "verify-overdue-audit"
+          );
+
+        await verifyMerchantSettlement({
+          merchantId:
+            fixture.merchant.id,
+          settlementId:
+            fixture.settlement.id,
+          reviewNote:
+            "Platform confirmed overdue invoice payment",
+          actorPlatformUserId:
+            platformUser.id
+        });
+
+        const merchantAudit =
+          await prisma.auditLog.findFirst({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              action:
+                "INVOICE_PAID",
+              entityType:
+                "MERCHANT_INVOICE",
+              entityId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          merchantAudit
+        ).not.toBeNull();
+
+        expect(
+          merchantAudit?.metadata
+        ).toMatchObject({
+          settlementId:
+            fixture.settlement.id,
+          previousStatus:
+            MerchantInvoiceStatus.OVERDUE,
+          nextStatus:
+            MerchantInvoiceStatus.PAID
+        });
+
+        const platformAudit =
+          await prisma.platformAuditLog.findFirst({
+            where: {
+              actorPlatformUserId:
+                platformUser.id,
+              merchantId:
+                fixture.merchant.id,
+              action:
+                "MERCHANT_INVOICE_PAID",
+              entityType:
+                "MERCHANT_INVOICE",
+              entityId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          platformAudit
+        ).not.toBeNull();
+
+        expect(
+          platformAudit?.metadata
+        ).toMatchObject({
+          settlementId:
+            fixture.settlement.id,
+          previousStatus:
+            MerchantInvoiceStatus.OVERDUE,
+          nextStatus:
+            MerchantInvoiceStatus.PAID
+        });
       }
     );
   }

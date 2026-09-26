@@ -357,7 +357,6 @@ describe(
     it.each([
       MerchantInvoiceStatus.DRAFT,
       MerchantInvoiceStatus.PAID,
-      MerchantInvoiceStatus.OVERDUE,
       MerchantInvoiceStatus.VOID
     ])(
       "rejects submission for %s invoice",
@@ -378,7 +377,7 @@ describe(
               `TX-${status}`
           })
         ).rejects.toThrow(
-          "Merchant settlement can only be submitted for an open invoice"
+          "Merchant settlement can only be submitted for an open or overdue invoice"
         );
 
         expect(
@@ -858,6 +857,52 @@ describe(
 
         expect(
           invoice?.paidAt
+        ).toBeNull();
+      }
+    );
+
+    it(
+      "allows settlement submission for an OVERDUE invoice while leaving it OVERDUE",
+      async () => {
+        const fixture =
+          await createFixture(
+            "overdue-submission",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const settlement =
+          await submitMerchantSettlement({
+            ...baseInput(
+              fixture,
+              "overdue-submission"
+            ),
+            transactionReference:
+              "TX-OVERDUE-SUBMISSION-001"
+          });
+
+        expect(
+          settlement.status
+        ).toBe(
+          MerchantSettlementStatus
+            .REVIEW_REQUIRED
+        );
+
+        const storedInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.invoice.id
+            }
+          });
+
+        expect(
+          storedInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OVERDUE
+        );
+
+        expect(
+          storedInvoice.paidAt
         ).toBeNull();
       }
     );

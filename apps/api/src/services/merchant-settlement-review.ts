@@ -125,20 +125,21 @@ async function verifySettlementAttempt(
       }
 
       /*
-       * Day 15 reconciliation boundary:
+       * Settlement verification may pay an invoice
+       * that is still payable.
        *
-       * platform-side verification may only settle
-       * an invoice that is still OPEN.
-       *
-       * A previously paid, voided, overdue, or draft
-       * invoice cannot be paid through this review.
+       * OPEN and OVERDUE invoices remain payable.
+       * Draft, paid, and void invoices cannot be
+       * paid through this review.
        */
       if (
         invoice.status !==
-        MerchantInvoiceStatus.OPEN
+          MerchantInvoiceStatus.OPEN &&
+        invoice.status !==
+          MerchantInvoiceStatus.OVERDUE
       ) {
         throw new Error(
-          "Merchant settlement can only be verified for an open invoice"
+          "Merchant settlement can only be verified for an open or overdue invoice"
         );
       }
 
@@ -208,7 +209,7 @@ async function verifySettlementAttempt(
       /*
        * Second concurrency claim:
        * exactly one verified settlement may pay the
-       * OPEN invoice.
+       * invoice from its validated payable status.
        *
        * If another transaction already paid it,
        * this transaction throws and PostgreSQL rolls
@@ -222,7 +223,7 @@ async function verifySettlementAttempt(
             merchantId:
               input.merchantId,
             status:
-              MerchantInvoiceStatus.OPEN
+              invoice.status
           },
           data: {
             status:
@@ -336,7 +337,7 @@ async function verifySettlementAttempt(
             settlementId:
               verifiedSettlement.id,
             previousStatus:
-              MerchantInvoiceStatus.OPEN,
+              invoice.status,
             nextStatus:
               paidInvoice.status,
             amount:
@@ -404,7 +405,7 @@ async function verifySettlementAttempt(
               settlementId:
                 verifiedSettlement.id,
               previousStatus:
-                MerchantInvoiceStatus.OPEN,
+                invoice.status,
               nextStatus:
                 paidInvoice.status,
               amount:
@@ -490,17 +491,21 @@ async function rejectSettlementAttempt(
       }
 
       /*
-       * Day 15 keeps review tied to the active OPEN
-       * invoice lifecycle.
+       * Settlement rejection remains tied to a
+       * payable invoice lifecycle.
        *
-       * Rejection does not mutate the invoice.
+       * OPEN and OVERDUE invoices may have settlement
+       * evidence rejected. Rejection does not mutate
+       * the invoice.
        */
       if (
         invoice.status !==
-        MerchantInvoiceStatus.OPEN
+          MerchantInvoiceStatus.OPEN &&
+        invoice.status !==
+          MerchantInvoiceStatus.OVERDUE
       ) {
         throw new Error(
-          "Merchant settlement can only be rejected for an open invoice"
+          "Merchant settlement can only be rejected for an open or overdue invoice"
         );
       }
 

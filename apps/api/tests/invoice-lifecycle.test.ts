@@ -1679,7 +1679,9 @@ describe(
         expect(
           !pendingSettlement ||
             storedInvoice?.status ===
-              MerchantInvoiceStatus.OPEN
+              MerchantInvoiceStatus.OPEN ||
+            storedInvoice?.status ===
+              MerchantInvoiceStatus.OVERDUE
         ).toBe(true);
 
         expect(

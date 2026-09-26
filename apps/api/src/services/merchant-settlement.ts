@@ -258,16 +258,18 @@ async function submitSettlementAttempt(
       /*
        * Settlement evidence may only be submitted
        * against an invoice that has actually been
-       * issued to the merchant.
+       * issued to the merchant and remains payable.
        *
        * Submission never opens a DRAFT invoice.
        */
       if (
         invoice.status !==
-        MerchantInvoiceStatus.OPEN
+          MerchantInvoiceStatus.OPEN &&
+        invoice.status !==
+          MerchantInvoiceStatus.OVERDUE
       ) {
         throw new Error(
-          "Merchant settlement can only be submitted for an open invoice"
+          "Merchant settlement can only be submitted for an open or overdue invoice"
         );
       }
 
