@@ -385,3 +385,61 @@ export async function markMerchantInvoiceOverdue(
     "Merchant invoice overdue transition could not be completed"
   );
 }
+
+export type ProcessOverdueMerchantInvoicesInput = {
+  now?: Date;
+};
+
+export async function processOverdueMerchantInvoices(
+  input: ProcessOverdueMerchantInvoicesInput = {}
+) {
+  const now =
+    input.now ?? new Date();
+
+  const candidates =
+    await prisma.merchantInvoice.findMany({
+      where: {
+        status:
+          MerchantInvoiceStatus.OPEN,
+        dueAt: {
+          lt: now
+        }
+      },
+      select: {
+        id: true,
+        merchantId: true
+      },
+      orderBy: {
+        dueAt: "asc"
+      }
+    });
+
+  const results =
+    await Promise.allSettled(
+      candidates.map(
+        (invoice) =>
+          markMerchantInvoiceOverdue({
+            merchantId:
+              invoice.merchantId,
+            invoiceId:
+              invoice.id,
+            now
+          })
+      )
+    );
+
+  return {
+    discoveredCount:
+      candidates.length,
+    markedOverdueCount:
+      results.filter(
+        (result) =>
+          result.status === "fulfilled"
+      ).length,
+    skippedCount:
+      results.filter(
+        (result) =>
+          result.status === "rejected"
+      ).length
+  };
+}

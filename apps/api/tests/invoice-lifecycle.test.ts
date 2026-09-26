@@ -16,7 +16,8 @@ import {
 
 import {
   markMerchantInvoiceOverdue,
-  openMerchantInvoice
+  openMerchantInvoice,
+  processOverdueMerchantInvoices
 } from "../src/services/invoice-lifecycle.js";
 
 import {
@@ -1690,6 +1691,268 @@ describe(
               result.status === "fulfilled"
           )
         ).toBe(true);
+      }
+    );
+
+    it(
+      "processes only past-due OPEN invoices as overdue",
+      async () => {
+        const pastDue =
+          await createFixture(
+            "batch-past-due",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const futureDue =
+          await createFixture(
+            "batch-future-due",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const exactDue =
+          await createFixture(
+            "batch-exact-due",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const noDueDate =
+          await createFixture(
+            "batch-no-due-date",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const alreadyPaid =
+          await createFixture(
+            "batch-paid",
+            MerchantInvoiceStatus.PAID
+          );
+
+        const now =
+          new Date(
+            "2026-10-06T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              pastDue.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              futureDue.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-07T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              exactDue.invoice.id
+          },
+          data: {
+            dueAt: now
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              alreadyPaid.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        await processOverdueMerchantInvoices({
+          now
+        });
+
+        const storedInvoices =
+          await prisma.merchantInvoice.findMany({
+            where: {
+              id: {
+                in: [
+                  pastDue.invoice.id,
+                  futureDue.invoice.id,
+                  exactDue.invoice.id,
+                  noDueDate.invoice.id,
+                  alreadyPaid.invoice.id
+                ]
+              }
+            }
+          });
+
+        const statusById =
+          new Map(
+            storedInvoices.map(
+              (invoice) => [
+                invoice.id,
+                invoice.status
+              ]
+            )
+          );
+
+        expect(
+          statusById.get(
+            pastDue.invoice.id
+          )
+        ).toBe(
+          MerchantInvoiceStatus.OVERDUE
+        );
+
+        expect(
+          statusById.get(
+            futureDue.invoice.id
+          )
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          statusById.get(
+            exactDue.invoice.id
+          )
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          statusById.get(
+            noDueDate.invoice.id
+          )
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          statusById.get(
+            alreadyPaid.invoice.id
+          )
+        ).toBe(
+          MerchantInvoiceStatus.PAID
+        );
+      }
+    );
+
+    it(
+      "continues processing when one overdue candidate has settlement review pending",
+      async () => {
+        const protectedInvoice =
+          await createFixture(
+            "batch-pending-settlement",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const eligibleInvoice =
+          await createFixture(
+            "batch-eligible",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        const now =
+          new Date(
+            "2026-10-06T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.updateMany({
+          where: {
+            id: {
+              in: [
+                protectedInvoice.invoice.id,
+                eligibleInvoice.invoice.id
+              ]
+            }
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        await prisma.merchantSettlement.create({
+          data: {
+            merchantId:
+              protectedInvoice.merchant.id,
+            invoiceId:
+              protectedInvoice.invoice.id,
+            provider:
+              "TELEBIRR",
+            status:
+              MerchantSettlementStatus
+                .REVIEW_REQUIRED,
+            amount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            idempotencyKey:
+              "batch-pending-settlement",
+            transactionReference:
+              "TX-BATCH-PENDING-001"
+          }
+        });
+
+        const result =
+          await processOverdueMerchantInvoices({
+            now
+          });
+
+        const storedProtectedInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                protectedInvoice.invoice.id
+            }
+          });
+
+        const storedEligibleInvoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id:
+                eligibleInvoice.invoice.id
+            }
+          });
+
+        expect(
+          storedProtectedInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(
+          storedEligibleInvoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OVERDUE
+        );
+
+        expect(result).toEqual({
+          discoveredCount: 2,
+          markedOverdueCount: 1,
+          skippedCount: 1
+        });
       }
     );
 
