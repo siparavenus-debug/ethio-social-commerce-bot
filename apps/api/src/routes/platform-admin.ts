@@ -1,4 +1,5 @@
 ﻿import {
+  MerchantAccountStatus,
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
   MerchantSubscriptionStatus,
@@ -23,6 +24,10 @@ import {
   initializeMerchantSubscription,
   transitionMerchantSubscriptionStatus
 } from "../services/subscription.js";
+
+import {
+  transitionMerchantAccountStatus
+} from "../services/merchant-account-enforcement.js";
 
 import {
   getMerchantCommissionHistory,
@@ -505,6 +510,9 @@ router.get(
             phone: true,
             alternatePhone: true,
             address: true,
+            accountStatus: true,
+            accountSuspensionReason: true,
+            accountSuspendedAt: true,
             createdAt: true,
             updatedAt: true,
             subscription: {
@@ -581,6 +589,9 @@ router.get(
             phone: true,
             alternatePhone: true,
             address: true,
+            accountStatus: true,
+            accountSuspensionReason: true,
+            accountSuspendedAt: true,
             createdAt: true,
             updatedAt: true,
             subscription: {
@@ -892,6 +903,98 @@ router.patch(
       if (
         message ===
         "Merchant subscription not found"
+      ) {
+        res.status(404).json({
+          error: message
+        });
+        return;
+      }
+
+      res.status(400).json({
+        error: message
+      });
+    }
+  }
+);
+
+router.patch(
+  "/merchants/:merchantId/account/status",
+  async (req, res) => {
+    try {
+      const actorPlatformUserId =
+        req.platformAuth?.id;
+
+      if (!actorPlatformUserId) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+        return;
+      }
+
+      const merchantId =
+        req.params.merchantId?.trim();
+
+      if (!merchantId) {
+        res.status(400).json({
+          error: "Merchant ID is required"
+        });
+        return;
+      }
+
+      const {
+        nextStatus,
+        reason
+      } = req.body ?? {};
+
+      if (
+        !Object.values(
+          MerchantAccountStatus
+        ).includes(
+          nextStatus as
+          MerchantAccountStatus
+        )
+      ) {
+        res.status(400).json({
+          error:
+            "Invalid merchant account status"
+        });
+        return;
+      }
+
+      if (
+        typeof reason !== "string" ||
+        !reason.trim()
+      ) {
+        res.status(400).json({
+          error:
+            "Merchant account status change reason is required"
+        });
+        return;
+      }
+
+      const merchant =
+        await transitionMerchantAccountStatus({
+          merchantId,
+          nextStatus:
+            nextStatus as
+            MerchantAccountStatus,
+          reason,
+          actorPlatformUserId
+        });
+
+      res.json({
+        merchant
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to change merchant account status";
+
+      if (
+        message ===
+        "Merchant not found"
       ) {
         res.status(404).json({
           error: message

@@ -354,10 +354,16 @@ import type {
               "ETB",
             phone:
               merchant.phone,
-            alternatePhone:
+              alternatePhone:
               merchant.alternatePhone,
             address:
-              merchant.address
+              merchant.address,
+            accountStatus:
+              "ACTIVE",
+            accountSuspensionReason:
+              null,
+            accountSuspendedAt:
+              null
           });
         }
       );
@@ -406,10 +412,16 @@ import type {
               "ETB",
             phone:
               merchant.phone,
-            alternatePhone:
+              alternatePhone:
               merchant.alternatePhone,
             address:
-              merchant.address
+              merchant.address,
+            accountStatus:
+              "ACTIVE",
+            accountSuspensionReason:
+              null,
+            accountSuspendedAt:
+              null
           });
         }
       );

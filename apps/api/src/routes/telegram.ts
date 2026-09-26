@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import {
+  MerchantAccountStatus,
   prisma,
   PaymentProvider,
   PaymentStatus
@@ -317,6 +318,52 @@ router.post(
         res.status(503).json({
           error:
             "Telegram merchant is not available"
+        });
+
+        return;
+      }
+
+      if (
+        merchant.accountStatus ===
+        MerchantAccountStatus.SUSPENDED
+      ) {
+        if (!existingEvent) {
+          await prisma.webhookEvent.create({
+            data: {
+              merchantId,
+
+              provider:
+                "TELEGRAM",
+
+              eventId,
+
+              payload:
+                update as object,
+
+              processedAt:
+                new Date()
+            }
+          });
+        } else {
+          await prisma.webhookEvent.update({
+            where: {
+              provider_eventId: {
+                provider:
+                  "TELEGRAM",
+
+                eventId
+              }
+            },
+
+            data: {
+              processedAt:
+                new Date()
+            }
+          });
+        }
+
+        res.status(200).json({
+          ok: true
         });
 
         return;

@@ -4,7 +4,10 @@ import type {
   Response
 } from "express";
 
-import { prisma } from "@ethio-commerce/database";
+import {
+  MerchantAccountStatus,
+  prisma
+} from "@ethio-commerce/database";
 
 import {
   verifyAuthToken,
@@ -78,7 +81,12 @@ export async function requireAuth(
           email: true,
           displayName: true,
           role: true,
-          tokenVersion: true
+          tokenVersion: true,
+          merchant: {
+            select: {
+              accountStatus: true
+            }
+          }
         }
       });
 
@@ -118,6 +126,18 @@ export async function requireAuth(
     if (user.tokenVersion !== tokenPayload.tokenVersion) {
       res.status(401).json({
         error: "Authentication token is no longer valid"
+      });
+
+      return;
+    }
+
+    if (
+      user.merchant.accountStatus ===
+      MerchantAccountStatus.SUSPENDED
+    ) {
+      res.status(403).json({
+        error:
+          "Merchant account is suspended"
       });
 
       return;

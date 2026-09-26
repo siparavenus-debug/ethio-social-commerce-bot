@@ -797,6 +797,671 @@ describe(
         );
 
         it(
+            "allows a platform user to suspend and reinstate a merchant account with reasons",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-enforcement"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-enforcement"
+                    );
+
+                const suspendResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "SUSPENDED",
+                                    reason:
+                                        "Suspicious account activity"
+                                })
+                        }
+                    );
+
+                expect(
+                    suspendResponse.status
+                ).toBe(
+                    200
+                );
+
+                const suspendBody =
+                    await suspendResponse.json() as {
+                        merchant: {
+                            id: string;
+                            accountStatus: string;
+                            accountSuspensionReason:
+                                string | null;
+                            accountSuspendedAt:
+                                string | null;
+                        };
+                    };
+
+                expect(
+                    suspendBody.merchant
+                ).toMatchObject({
+                    id:
+                        merchant.id,
+                    accountStatus:
+                        "SUSPENDED",
+                    accountSuspensionReason:
+                        "Suspicious account activity"
+                });
+
+                expect(
+                    suspendBody.merchant.accountSuspendedAt
+                ).not.toBeNull();
+
+                const reinstateResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "ACTIVE",
+                                    reason:
+                                        "Platform review completed"
+                                })
+                        }
+                    );
+
+                expect(
+                    reinstateResponse.status
+                ).toBe(
+                    200
+                );
+
+                const reinstateBody =
+                    await reinstateResponse.json() as {
+                        merchant: {
+                            id: string;
+                            accountStatus: string;
+                            accountSuspensionReason:
+                                string | null;
+                            accountSuspendedAt:
+                                string | null;
+                        };
+                    };
+
+                    expect(
+                        reinstateBody.merchant
+                    ).toMatchObject({
+                        id:
+                            merchant.id,
+                        accountStatus:
+                            "ACTIVE",
+                        accountSuspensionReason:
+                            null,
+                        accountSuspendedAt:
+                            null
+                    });
+
+                    const persistedMerchant =
+                        await prisma.merchant.findUnique({
+                            where: {
+                                id: merchant.id
+                            }
+                        });
+
+                    expect(
+                        persistedMerchant
+                    ).not.toBeNull();
+
+                    expect(
+                        persistedMerchant
+                    ).toMatchObject({
+                        accountStatus:
+                            "ACTIVE",
+                        accountSuspensionReason:
+                            null,
+                        accountSuspendedAt:
+                            null
+                    });
+
+                    const accountAudits =
+                        await prisma.platformAuditLog.findMany({
+                            where: {
+                                actorPlatformUserId:
+                                    fixture.user.id,
+                                merchantId:
+                                    merchant.id,
+                                action:
+                                    "MERCHANT_ACCOUNT_STATUS_CHANGED",
+                                entityType:
+                                    "MERCHANT",
+                                entityId:
+                                    merchant.id
+                            },
+                            orderBy: {
+                                createdAt:
+                                    "asc"
+                            }
+                        });
+
+                    expect(
+                        accountAudits
+                    ).toHaveLength(
+                        2
+                    );
+
+                    expect(
+                        accountAudits[0]?.metadata
+                    ).toMatchObject({
+                        previousStatus:
+                            "ACTIVE",
+                        nextStatus:
+                            "SUSPENDED",
+                        reason:
+                            "Suspicious account activity"
+                    });
+
+                    expect(
+                        accountAudits[1]?.metadata
+                    ).toMatchObject({
+                        previousStatus:
+                            "SUSPENDED",
+                        nextStatus:
+                            "ACTIVE",
+                        reason:
+                            "Platform review completed"
+                    });
+                }
+            );
+
+        it(
+            "rejects merchant account suspension without a reason",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-suspension-reason"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-suspension-reason"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "SUSPENDED",
+                                    reason:
+                                        "   "
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(
+                    400
+                );
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant account status change reason is required"
+                );
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: merchant.id
+                        }
+                    });
+
+                expect(
+                    persistedMerchant
+                ).toMatchObject({
+                    accountStatus:
+                        "ACTIVE",
+                    accountSuspensionReason:
+                        null,
+                    accountSuspendedAt:
+                        null
+                });
+
+                const accountAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED"
+                        }
+                    });
+
+                expect(
+                    accountAudits
+                ).toBe(
+                    0
+                );
+            }
+        );
+
+        it(
+            "rejects merchant account reinstatement without a reason",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-reinstatement-reason"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-reinstatement-reason"
+                    );
+
+                const suspendResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "SUSPENDED",
+                                    reason:
+                                        "Suspicious account activity"
+                                })
+                        }
+                    );
+
+                expect(
+                    suspendResponse.status
+                ).toBe(
+                    200
+                );
+
+                const reinstateResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "ACTIVE",
+                                    reason:
+                                        "   "
+                                })
+                        }
+                    );
+
+                expect(
+                    reinstateResponse.status
+                ).toBe(
+                    400
+                );
+
+                const body =
+                    await reinstateResponse.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant account status change reason is required"
+                );
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: merchant.id
+                        }
+                    });
+
+                expect(
+                    persistedMerchant
+                ).not.toBeNull();
+
+                expect(
+                    persistedMerchant
+                ).toMatchObject({
+                    accountStatus:
+                        "SUSPENDED",
+                    accountSuspensionReason:
+                        "Suspicious account activity"
+                });
+
+                expect(
+                    persistedMerchant?.accountSuspendedAt
+                ).not.toBeNull();
+
+                const accountAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED"
+                        }
+                    });
+
+                expect(
+                    accountAudits
+                ).toHaveLength(
+                    1
+                );
+
+                expect(
+                    accountAudits[0]?.metadata
+                ).toMatchObject({
+                    previousStatus:
+                        "ACTIVE",
+                    nextStatus:
+                        "SUSPENDED",
+                    reason:
+                        "Suspicious account activity"
+                });
+            }
+        );
+
+        it(
+            "rejects an invalid merchant account status",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-invalid-status"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-invalid-status"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "DISABLED",
+                                    reason:
+                                        "Invalid transition test"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(
+                    400
+                );
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Invalid merchant account status"
+                );
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: merchant.id
+                        }
+                    });
+
+                expect(
+                    persistedMerchant
+                ).toMatchObject({
+                    accountStatus:
+                        "ACTIVE",
+                    accountSuspensionReason:
+                        null,
+                    accountSuspendedAt:
+                        null
+                });
+
+                const accountAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED"
+                        }
+                    });
+
+                expect(
+                    accountAudits
+                ).toBe(
+                    0
+                );
+            }
+        );
+
+        it(
+            "rejects a same-state merchant account transition",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-same-state"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-same-state"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "ACTIVE",
+                                    reason:
+                                        "Same-state transition test"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(
+                    400
+                );
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant account is already ACTIVE"
+                );
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: merchant.id
+                        }
+                    });
+
+                expect(
+                    persistedMerchant
+                ).toMatchObject({
+                    accountStatus:
+                        "ACTIVE",
+                    accountSuspensionReason:
+                        null,
+                    accountSuspendedAt:
+                        null
+                });
+
+                const accountAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED"
+                        }
+                    });
+
+                expect(
+                    accountAudits
+                ).toBe(
+                    0
+                );
+            }
+        );
+
+        it(
+            "returns 404 when changing account status for a nonexistent merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-missing"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/nonexistent-merchant/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "SUSPENDED",
+                                    reason:
+                                        "Missing merchant test"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(
+                    404
+                );
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant not found"
+                );
+
+                const accountAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                "nonexistent-merchant",
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED"
+                        }
+                    });
+
+                expect(
+                    accountAudits
+                ).toBe(
+                    0
+                );
+            }
+        );
+
+        it(
             "allows a platform user to create, update, and deactivate a subscription plan",
             async () => {
                 const fixture =
@@ -3039,5 +3704,6 @@ describe(
                 });
             }
         );
+
     }
 );
