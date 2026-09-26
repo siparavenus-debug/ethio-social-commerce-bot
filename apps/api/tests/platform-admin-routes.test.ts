@@ -2894,5 +2894,150 @@ describe(
                 });
             }
         );
+
+        it(
+            "allows an authenticated platform user to mark a past-due OPEN invoice OVERDUE",
+            async () => {
+                const {
+                    user,
+                    token
+                } =
+                    await createPlatformFixture(
+                        "mark-invoice-overdue"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "mark-invoice-overdue"
+                    );
+
+                const dueAt =
+                    new Date(
+                        Date.now() -
+                        60_000
+                    );
+
+                const invoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-mark-invoice-overdue`,
+                            periodStart:
+                                new Date(
+                                    "2026-08-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                new Prisma.Decimal(
+                                    "500.00"
+                                ),
+                            commissionAmount:
+                                new Prisma.Decimal(
+                                    "50.00"
+                                ),
+                            totalAmount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2026-09-01T00:00:00.000Z"
+                                ),
+                            dueAt
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/billing/invoices/${invoice.id}/overdue`,
+                        {
+                            method:
+                                "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        invoice: {
+                            id: string;
+                            status: string;
+                        };
+                    };
+
+                expect(
+                    body.invoice.id
+                ).toBe(
+                    invoice.id
+                );
+
+                expect(
+                    body.invoice.status
+                ).toBe(
+                    "OVERDUE"
+                );
+
+                const storedInvoice =
+                    await prisma.merchantInvoice.findUnique({
+                        where: {
+                            id:
+                                invoice.id
+                        }
+                    });
+
+                expect(
+                    storedInvoice!.status
+                ).toBe(
+                    MerchantInvoiceStatus.OVERDUE
+                );
+
+                const platformAudit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId:
+                                user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_INVOICE_MARKED_OVERDUE",
+                            entityType:
+                                "MERCHANT_INVOICE",
+                            entityId:
+                                invoice.id
+                        }
+                    });
+
+                expect(
+                    platformAudit
+                ).not.toBeNull();
+
+                expect(
+                    platformAudit!.metadata
+                ).toMatchObject({
+                    previousStatus:
+                        "OPEN",
+                    nextStatus:
+                        "OVERDUE",
+                    dueAt:
+                        dueAt.toISOString()
+                });
+            }
+        );
     }
 );

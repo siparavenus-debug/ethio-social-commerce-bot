@@ -35,6 +35,7 @@ import {
 } from "../services/invoice.js";
 
 import {
+  markMerchantInvoiceOverdue,
   openMerchantInvoice
 } from "../services/invoice-lifecycle.js";
 
@@ -1799,6 +1800,74 @@ router.post(
   }
 );
 
+/*
+ * Mark an existing past-due OPEN merchant invoice OVERDUE.
+ * Financial transition logic remains in the invoice lifecycle service.
+ */
+router.post(
+  "/merchants/:merchantId/billing/invoices/:invoiceId/overdue",
+  async (req, res) => {
+    try {
+      const actorPlatformUserId =
+        req.platformAuth?.id;
+
+      if (!actorPlatformUserId) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+        return;
+      }
+
+      const merchantId =
+        req.params.merchantId?.trim();
+      const invoiceId =
+        req.params.invoiceId?.trim();
+
+      if (!merchantId) {
+        res.status(400).json({
+          error: "Merchant ID is required"
+        });
+        return;
+      }
+
+      if (!invoiceId) {
+        res.status(400).json({
+          error: "Invoice ID is required"
+        });
+        return;
+      }
+
+      const invoice =
+        await markMerchantInvoiceOverdue({
+          merchantId,
+          invoiceId,
+          actorUserId: null,
+          actorPlatformUserId
+        });
+
+      res.json({
+        invoice
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to mark merchant invoice overdue";
+
+      if (
+        message === "Merchant invoice not found"
+      ) {
+        res.status(404).json({ error: message });
+        return;
+      }
+
+      res.status(400).json({
+        error: message
+      });
+    }
+  }
+);
 
 /*
  * Verify existing merchant-to-platform settlement
