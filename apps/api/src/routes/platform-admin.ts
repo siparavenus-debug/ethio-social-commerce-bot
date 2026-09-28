@@ -423,6 +423,176 @@ router.get(
 );
 
 router.get(
+  "/billing/revenue/range-summary",
+  async (req, res) => {
+    try {
+      const start =
+        typeof req.query.start === "string"
+          ? req.query.start
+          : "";
+
+      const end =
+        typeof req.query.end === "string"
+          ? req.query.end
+          : "";
+
+      const datePattern =
+        /^\d{4}-\d{2}-\d{2}$/;
+
+      if (
+        !datePattern.test(start) ||
+        !datePattern.test(end)
+      ) {
+        res.status(400).json({
+          error:
+            "start and end must use YYYY-MM-DD format"
+        });
+        return;
+      }
+
+      const periodStart =
+        new Date(
+          `${start}T00:00:00.000Z`
+        );
+
+      const periodEnd =
+        new Date(
+          `${end}T00:00:00.000Z`
+        );
+
+      if (
+        Number.isNaN(
+          periodStart.getTime()
+        ) ||
+        Number.isNaN(
+          periodEnd.getTime()
+        ) ||
+        periodStart
+          .toISOString()
+          .slice(0, 10) !== start ||
+        periodEnd
+          .toISOString()
+          .slice(0, 10) !== end ||
+        periodStart >= periodEnd
+      ) {
+        res.status(400).json({
+          error:
+            "start and end must define a valid date range"
+        });
+        return;
+      }
+
+      const invoices =
+        await prisma.merchantInvoice.findMany({
+          where: {
+            status:
+              MerchantInvoiceStatus.PAID,
+            paidAt: {
+              gte: periodStart,
+              lt: periodEnd
+            }
+          },
+          select: {
+            subscriptionAmount: true,
+            commissionAmount: true,
+            totalAmount: true,
+            currency: true
+          }
+        });
+
+      const totals =
+        new Map<
+          string,
+          {
+            subscriptionAmount:
+              Prisma.Decimal;
+            commissionAmount:
+              Prisma.Decimal;
+            totalAmount:
+              Prisma.Decimal;
+          }
+        >();
+
+      for (const invoice of invoices) {
+        const existing =
+          totals.get(
+            invoice.currency
+          ) ?? {
+            subscriptionAmount:
+              new Prisma.Decimal(0),
+            commissionAmount:
+              new Prisma.Decimal(0),
+            totalAmount:
+              new Prisma.Decimal(0)
+          };
+
+        totals.set(
+          invoice.currency,
+          {
+            subscriptionAmount:
+              existing.subscriptionAmount.plus(
+                invoice.subscriptionAmount
+              ),
+            commissionAmount:
+              existing.commissionAmount.plus(
+                invoice.commissionAmount
+              ),
+            totalAmount:
+              existing.totalAmount.plus(
+                invoice.totalAmount
+              )
+          }
+        );
+      }
+
+      const currencies =
+        Array.from(
+          totals.entries()
+        )
+          .sort(
+            ([currencyA], [currencyB]) =>
+              currencyA.localeCompare(
+                currencyB
+              )
+          )
+          .map(
+            ([
+              currency,
+              amounts
+            ]) => ({
+              currency,
+              subscriptionAmount:
+                amounts.subscriptionAmount.toFixed(
+                  2
+                ),
+              commissionAmount:
+                amounts.commissionAmount.toFixed(
+                  2
+                ),
+              totalAmount:
+                amounts.totalAmount.toFixed(
+                  2
+                )
+            })
+          );
+
+      res.json({
+        periodStart:
+          periodStart.toISOString(),
+        periodEnd:
+          periodEnd.toISOString(),
+        currencies
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load platform revenue range summary"
+      });
+    }
+  }
+);
+
+router.get(
   "/billing/revenue",
   async (_req, res) => {
     try {

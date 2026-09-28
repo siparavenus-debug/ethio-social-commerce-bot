@@ -3472,6 +3472,174 @@ describe(
         );
 
         it(
+            "summarizes collected platform revenue for a custom UTC date range",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "revenue-range-summary"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "revenue-range-summary"
+                    );
+
+                const createInvoice =
+                    (
+                        invoiceNumber: string,
+                        totalAmount: string,
+                        paidAt: Date
+                    ) =>
+                        prisma.merchantInvoice.create({
+                            data: {
+                                merchantId:
+                                    merchant.id,
+                                invoiceNumber,
+                                periodStart:
+                                    paidAt,
+                                periodEnd:
+                                    new Date(
+                                        paidAt.getTime() +
+                                        4 * 60 * 60 * 1000
+                                    ),
+                                subscriptionAmount:
+                                    totalAmount,
+                                commissionAmount:
+                                    "0.00",
+                                totalAmount,
+                                currency:
+                                    "ETB",
+                                status:
+                                    MerchantInvoiceStatus.PAID,
+                                paidAt
+                            }
+                        });
+
+                await createInvoice(
+                    `${testPrefix}-range-before`,
+                    "100.00",
+                    new Date(
+                        "2036-09-09T23:59:59.999Z"
+                    )
+                );
+
+                await createInvoice(
+                    `${testPrefix}-range-start`,
+                    "200.00",
+                    new Date(
+                        "2036-09-10T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    `${testPrefix}-range-middle`,
+                    "300.00",
+                    new Date(
+                        "2036-09-20T12:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    `${testPrefix}-range-end`,
+                    "400.00",
+                    new Date(
+                        "2036-10-01T00:00:00.000Z"
+                    )
+                );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/revenue/range-summary?start=2036-09-10&end=2036-10-01`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        periodStart: string;
+                        periodEnd: string;
+                        currencies: Array<{
+                            currency: string;
+                            subscriptionAmount: string;
+                            commissionAmount: string;
+                            totalAmount: string;
+                        }>;
+                    };
+
+                expect(
+                    body.periodStart
+                ).toBe(
+                    "2036-09-10T00:00:00.000Z"
+                );
+
+                expect(
+                    body.periodEnd
+                ).toBe(
+                    "2036-10-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.currencies
+                ).toEqual([
+                    {
+                        currency:
+                            "ETB",
+                        subscriptionAmount:
+                            "500.00",
+                        commissionAmount:
+                            "0.00",
+                        totalAmount:
+                            "500.00"
+                    }
+                ]);
+            }
+        );
+
+        it(
+            "rejects invalid calendar dates for platform revenue ranges",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "revenue-range-invalid-date"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/revenue/range-summary?start=2036-02-31&end=2036-03-10`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                expect(
+                    await response.json()
+                ).toEqual({
+                    error:
+                        "start and end must define a valid date range"
+                });
+            }
+        );
+
+        it(
             "returns platform audit records with their platform actor",
             async () => {
                 const {

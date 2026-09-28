@@ -7,19 +7,41 @@ const appSource = readFileSync(
 );
 
 describe("platform revenue UI contract", () => {
-  it("loads monthly collected revenue without replacing paid invoice history", () => {
+  it("loads selected-period revenue without replacing paid invoice history", () => {
     expect(appSource).toContain(
       "\"/billing/revenue\""
     );
 
     expect(appSource).toContain(
-      "`/billing/revenue/monthly-summary?month=${month}`"
+      "/billing/revenue/range-summary?start="
     );
   });
 
-  it("presents current-month collected revenue by currency", () => {
+  it("offers month year and custom revenue periods", () => {
     expect(appSource).toContain(
-      "Current month collected revenue"
+      "Month"
+    );
+
+    expect(appSource).toContain(
+      "Year"
+    );
+
+    expect(appSource).toContain(
+      "Custom range"
+    );
+
+    expect(appSource).toContain(
+      "type=\"month\""
+    );
+
+    expect(appSource).toContain(
+      "type=\"date\""
+    );
+  });
+
+  it("presents selected-period collected revenue by currency", () => {
+    expect(appSource).toContain(
+      "Collected revenue"
     );
 
     expect(appSource).toContain(

@@ -55,11 +55,92 @@ type RevenueCurrencySummary = {
   totalAmount: string;
 };
 
-type RevenueMonthlySummary = {
+type RevenuePeriodMode =
+  | "month"
+  | "year"
+  | "custom";
+
+type RevenuePeriodSummary = {
   periodStart: string;
   periodEnd: string;
   currencies: RevenueCurrencySummary[];
 };
+
+function currentUtcMonth(): string {
+  const now = new Date();
+
+  return `${now.getUTCFullYear()}-${String(
+    now.getUTCMonth() + 1
+  ).padStart(2, "0")}`;
+}
+
+function revenueMonthRange(
+  month: string
+): {
+  start: string;
+  end: string;
+} {
+  const [year, monthNumber] =
+    month.split("-").map(Number);
+
+  const periodStart =
+    new Date(
+      Date.UTC(
+        year,
+        monthNumber - 1,
+        1
+      )
+    );
+
+  const periodEnd =
+    new Date(
+      Date.UTC(
+        year,
+        monthNumber,
+        1
+      )
+    );
+
+  return {
+    start:
+      periodStart
+        .toISOString()
+        .slice(0, 10),
+    end:
+      periodEnd
+        .toISOString()
+        .slice(0, 10)
+  };
+}
+
+function revenueYearRange(
+  year: string
+): {
+  start: string;
+  end: string;
+} {
+  return {
+    start: `${year}-01-01`,
+    end: `${Number(year) + 1}-01-01`
+  };
+}
+
+function nextUtcDate(
+  date: string
+): string {
+  const next =
+    new Date(
+      `${date}T00:00:00.000Z`
+    );
+
+  next.setUTCDate(
+    next.getUTCDate() + 1
+  );
+
+  return next
+    .toISOString()
+    .slice(0, 10);
+}
 
 type Field = { name: string; label: string; type?: string; optional?: boolean; options?: string[]; value?: unknown };
 type Action = { title: string; path: string; method: string; fields: Field[]; note?: string; transform?: (values: Record<string, unknown>) => unknown };
@@ -167,7 +248,19 @@ export default function PlatformApp() {
     useState<BillingWorkTab>("review");
   const [rows, setRows] = useState<Row[]>([]);
   const [revenueSummary, setRevenueSummary] =
-    useState<RevenueMonthlySummary | null>(null);
+    useState<RevenuePeriodSummary | null>(null);
+  const [revenuePeriodMode, setRevenuePeriodMode] =
+    useState<RevenuePeriodMode>("month");
+  const [revenueMonth, setRevenueMonth] =
+    useState(currentUtcMonth);
+  const [revenueYear, setRevenueYear] =
+    useState(() =>
+      String(new Date().getUTCFullYear())
+    );
+  const [revenueCustomStart, setRevenueCustomStart] =
+    useState("");
+  const [revenueCustomEnd, setRevenueCustomEnd] =
+    useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [planFilter, setPlanFilter] = useState("ALL");
@@ -360,41 +453,66 @@ export default function PlatformApp() {
 
         data = result[route.key];
       } else if (view === "Revenue") {
-        const now =
-          new Date();
+        let range: {
+          start: string;
+          end: string;
+        } | null = null;
 
-        const month =
-          `${now.getUTCFullYear()}-${String(
-            now.getUTCMonth() + 1
-          ).padStart(2, "0")}`;
+        if (revenuePeriodMode === "month") {
+          range =
+            revenueMonthRange(
+              revenueMonth
+            );
+        } else if (
+          revenuePeriodMode === "year"
+        ) {
+          range =
+            revenueYearRange(
+              revenueYear
+            );
+        } else if (
+          revenueCustomStart &&
+          revenueCustomEnd
+        ) {
+          range = {
+            start: revenueCustomStart,
+            end:
+              nextUtcDate(
+                revenueCustomEnd
+              )
+          };
+        }
 
-        const [
-          revenue,
-          summary
-        ] =
-          await Promise.all([
-            platformRequest<{
-              invoices: Row[];
-            }>(
-              "/billing/revenue",
-              token,
-              "GET",
-              undefined,
-              controller.signal
-            ),
-            platformRequest<RevenueMonthlySummary>(
-              `/billing/revenue/monthly-summary?month=${month}`,
-              token,
-              "GET",
-              undefined,
-              controller.signal
-            )
-          ]);
+        const revenue =
+          await platformRequest<{
+            invoices: Row[];
+          }>(
+            "/billing/revenue",
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
 
         data = revenue.invoices;
 
-        if (!controller.signal.aborted) {
-          setRevenueSummary(summary);
+        if (range) {
+          const summary =
+            await platformRequest<RevenuePeriodSummary>(
+              `/billing/revenue/range-summary?start=${encodeURIComponent(
+                range.start
+              )}&end=${encodeURIComponent(
+                range.end
+              )}`,
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            );
+
+          if (!controller.signal.aborted) {
+            setRevenueSummary(summary);
+          }
         }
       } else if (
         view !== "Merchants" &&
@@ -431,6 +549,11 @@ export default function PlatformApp() {
     selected,
     ledger,
     billingWorkTab,
+    revenuePeriodMode,
+    revenueMonth,
+    revenueYear,
+    revenueCustomStart,
+    revenueCustomEnd,
     revision
   ]);
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -801,49 +924,163 @@ export default function PlatformApp() {
 )}{view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
       {view === "Revenue" && (
         <>
-          <section className="pa-card">
-            <div className="pa-section-heading">
-              <div>
-                <h3>Current month collected revenue</h3>
-                <p>
-                  Paid invoices collected during the current UTC month.
-                  Amounts remain separated by currency.
-                </p>
-              </div>
-            </div>
+      <section className="pa-card">
+        <div className="pa-section-heading">
+          <div>
+            <h3>Collected revenue</h3>
+            <p>
+              Review paid invoice revenue for a selected UTC period.
+              Amounts remain separated by currency.
+            </p>
+          </div>
+        </div>
 
-            {revenueSummary &&
-            revenueSummary.currencies.length > 0 ? (
-              <div className="pa-metric-grid">
-                {revenueSummary.currencies.map(
-                  summary => (
-                    <div key={summary.currency}>
-                      <span>{summary.currency}</span>
-                      <strong>
-                        Collected total:{" "}
-                        {summary.totalAmount}{" "}
-                        {summary.currency}
-                      </strong>
-                      <small>
-                        Collected subscription:{" "}
-                        {summary.subscriptionAmount}{" "}
-                        {summary.currency}
-                      </small>
-                      <small>
-                        Collected commission:{" "}
-                        {summary.commissionAmount}{" "}
-                        {summary.currency}
-                      </small>
-                    </div>
+        <div className="pa-tabs">
+          <button
+            type="button"
+            className={
+              revenuePeriodMode === "month"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setRevenuePeriodMode("month")
+            }
+          >
+            Month
+          </button>
+
+          <button
+            type="button"
+            className={
+              revenuePeriodMode === "year"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setRevenuePeriodMode("year")
+            }
+          >
+            Year
+          </button>
+
+          <button
+            type="button"
+            className={
+              revenuePeriodMode === "custom"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setRevenuePeriodMode("custom")
+            }
+          >
+            Custom range
+          </button>
+        </div>
+
+        {revenuePeriodMode === "month" && (
+          <label>
+            Month
+            <input
+              type="month"
+              value={revenueMonth}
+              onChange={event =>
+                setRevenueMonth(
+                  event.target.value
+                )
+              }
+            />
+          </label>
+        )}
+
+        {revenuePeriodMode === "year" && (
+          <label>
+            Year
+            <input
+              type="number"
+              min="2000"
+              max="2100"
+              value={revenueYear}
+              onChange={event =>
+                setRevenueYear(
+                  event.target.value
+                )
+              }
+            />
+          </label>
+        )}
+
+        {revenuePeriodMode === "custom" && (
+          <div className="pa-form-grid">
+            <label>
+              From
+              <input
+                type="date"
+                value={revenueCustomStart}
+                onChange={event =>
+                  setRevenueCustomStart(
+                    event.target.value
                   )
-                )}
-              </div>
-            ) : (
-              <p className="pa-empty">
-                No collected revenue for the current month.
-              </p>
+                }
+              />
+            </label>
+
+            <label>
+              Through
+              <input
+                type="date"
+                value={revenueCustomEnd}
+                min={
+                  revenueCustomStart ||
+                  undefined
+                }
+                onChange={event =>
+                  setRevenueCustomEnd(
+                    event.target.value
+                  )
+                }
+              />
+            </label>
+          </div>
+        )}
+
+        {revenueSummary &&
+        revenueSummary.currencies.length > 0 ? (
+          <div className="pa-metric-grid">
+            {revenueSummary.currencies.map(
+              summary => (
+                <div key={summary.currency}>
+                  <span>{summary.currency}</span>
+                  <strong>
+                    Collected total:{" "}
+                    {summary.totalAmount}{" "}
+                    {summary.currency}
+                  </strong>
+                  <small>
+                    Collected subscription:{" "}
+                    {summary.subscriptionAmount}{" "}
+                    {summary.currency}
+                  </small>
+                  <small>
+                    Collected commission:{" "}
+                    {summary.commissionAmount}{" "}
+                    {summary.currency}
+                  </small>
+                </div>
+              )
             )}
-          </section>
+          </div>
+        ) : (
+          <p className="pa-empty">
+            {revenuePeriodMode === "custom" &&
+            (!revenueCustomStart ||
+              !revenueCustomEnd)
+              ? "Choose both dates to view collected revenue."
+              : "No collected revenue for the selected period."}
+          </p>
+        )}
+      </section>
 
           <Table
             rows={rows}
