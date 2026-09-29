@@ -613,3 +613,261 @@ export async function processSecondOverdueInvoiceReminders(
       ).length
   };
 }
+
+export type ProcessPastDueSubscriptionSuspensionsInput = {
+  now?: Date;
+};
+
+async function suspendPastDueSubscriptionAttempt(
+  merchantId: string,
+  invoiceId: string,
+  now: Date
+) {
+  return prisma.$transaction(
+    async (tx) => {
+      const invoice =
+        await tx.merchantInvoice.findUnique({
+          where: {
+            id_merchantId: {
+              id: invoiceId,
+              merchantId
+            }
+          }
+        });
+
+      if (!invoice) {
+        throw new Error(
+          "Merchant invoice not found"
+        );
+      }
+
+      if (
+        invoice.status !==
+        MerchantInvoiceStatus.OVERDUE
+      ) {
+        throw new Error(
+          "Only overdue invoices can trigger subscription suspension"
+        );
+      }
+
+      if (!invoice.dueAt) {
+        throw new Error(
+          "Overdue invoice has no due date"
+        );
+      }
+
+      const suspensionDueAt =
+        new Date(
+          invoice.dueAt.getTime() +
+            7 * 24 * 60 * 60 * 1000
+        );
+
+      if (
+        now.getTime() <
+        suspensionDueAt.getTime()
+      ) {
+        throw new Error(
+          "Invoice grace period has not ended"
+        );
+      }
+
+      const pendingSettlement =
+        await tx.merchantSettlement.findFirst({
+          where: {
+            merchantId,
+            invoiceId:
+              invoice.id,
+            status:
+              MerchantSettlementStatus
+                .REVIEW_REQUIRED
+          },
+          select: {
+            id: true
+          }
+        });
+
+      if (pendingSettlement) {
+        throw new Error(
+          "Invoice has a settlement awaiting review"
+        );
+      }
+
+      const subscriptionTransition =
+        await tx.merchantSubscription.updateMany({
+          where: {
+            merchantId,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE
+          },
+          data: {
+            status:
+              MerchantSubscriptionStatus.SUSPENDED
+          }
+        });
+
+      if (subscriptionTransition.count !== 1) {
+        throw new Error(
+          "Merchant subscription is not past due"
+        );
+      }
+
+      const subscription =
+        await tx.merchantSubscription.findUnique({
+          where: {
+            merchantId
+          }
+        });
+
+      if (!subscription) {
+        throw new Error(
+          "Merchant subscription not found after status transition"
+        );
+      }
+
+      await tx.auditLog.create({
+        data: {
+          merchantId,
+          actorUserId: null,
+          action:
+            "SUBSCRIPTION_STATUS_CHANGED",
+          entityType:
+            "MERCHANT_SUBSCRIPTION",
+          entityId:
+            subscription.id,
+          metadata: {
+            previousStatus:
+              MerchantSubscriptionStatus.PAST_DUE,
+            nextStatus:
+              MerchantSubscriptionStatus.SUSPENDED
+          }
+        }
+      });
+
+      return subscription;
+    },
+    {
+      isolationLevel:
+        Prisma.TransactionIsolationLevel
+          .Serializable
+    }
+  );
+}
+
+async function suspendPastDueSubscription(
+  merchantId: string,
+  invoiceId: string,
+  now: Date
+) {
+  for (
+    let attempt = 1;
+    attempt <=
+      MAX_OVERDUE_SERIALIZABLE_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await suspendPastDueSubscriptionAttempt(
+        merchantId,
+        invoiceId,
+        now
+      );
+    } catch (error) {
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034" &&
+        attempt <
+          MAX_OVERDUE_SERIALIZABLE_ATTEMPTS
+      ) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    "Merchant subscription suspension could not be completed"
+  );
+}
+
+export async function processPastDueSubscriptionSuspensions(
+  input: ProcessPastDueSubscriptionSuspensionsInput = {}
+) {
+  const now =
+    input.now ?? new Date();
+
+  const suspensionDueAt =
+    new Date(
+      now.getTime() -
+        7 * 24 * 60 * 60 * 1000
+    );
+
+  const candidates =
+    await prisma.merchantInvoice.findMany({
+      where: {
+        status:
+          MerchantInvoiceStatus.OVERDUE,
+        dueAt: {
+          lte:
+            suspensionDueAt
+        },
+        settlements: {
+          none: {
+            status:
+              MerchantSettlementStatus
+                .REVIEW_REQUIRED
+          }
+        },
+        merchant: {
+          subscription: {
+            status:
+              MerchantSubscriptionStatus.PAST_DUE
+          }
+        }
+      },
+      select: {
+        id: true,
+        merchantId: true
+      },
+      orderBy: {
+        dueAt: "asc"
+      }
+    });
+
+  const candidatesByMerchant =
+    candidates.filter(
+      (invoice, index) =>
+        candidates.findIndex(
+          (candidate) =>
+            candidate.merchantId ===
+            invoice.merchantId
+        ) === index
+    );
+
+  const results =
+    await Promise.allSettled(
+      candidatesByMerchant.map(
+        (invoice) =>
+          suspendPastDueSubscription(
+            invoice.merchantId,
+            invoice.id,
+            now
+          )
+      )
+    );
+
+  return {
+    discoveredCount:
+      candidatesByMerchant.length,
+    suspendedCount:
+      results.filter(
+        (result) =>
+          result.status === "fulfilled"
+      ).length,
+    skippedCount:
+      results.filter(
+        (result) =>
+          result.status === "rejected"
+      ).length
+  };
+}

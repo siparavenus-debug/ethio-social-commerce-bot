@@ -21,12 +21,17 @@ import {
   markMerchantInvoiceOverdue,
   openMerchantInvoice,
   processOverdueMerchantInvoices,
-  processSecondOverdueInvoiceReminders
+  processSecondOverdueInvoiceReminders,
+  processPastDueSubscriptionSuspensions
 } from "../src/services/invoice-lifecycle.js";
 
 import {
   submitMerchantSettlement
 } from "../src/services/merchant-settlement.js";
+
+import {
+  rejectMerchantSettlement
+} from "../src/services/merchant-settlement-review.js";
 
 const testPrefix =
   "day15-invoice-lifecycle";
@@ -2448,6 +2453,673 @@ describe(
         expect(secondResult).toEqual({
           discoveredCount: 0,
           createdCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "suspends a PAST_DUE subscription exactly seven days after the invoice due date",
+      async () => {
+        const fixture =
+          await createFixture(
+            "past-due-suspension",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-past-due-suspension`,
+              name:
+                "Invoice Lifecycle Suspension Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+      const now =
+        new Date(
+          "2026-10-12T00:00:00.000Z"
+        );
+
+      const firstResult =
+        await processPastDueSubscriptionSuspensions({
+          now
+        });
+
+      const secondResult =
+        await processPastDueSubscriptionSuspensions({
+          now
+        });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+        expect(
+          subscription?.status
+        ).toBe(
+          MerchantSubscriptionStatus.SUSPENDED
+        );
+
+        const subscriptionLogs =
+          await prisma.auditLog.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              action:
+                "SUBSCRIPTION_STATUS_CHANGED",
+              entityType:
+                "MERCHANT_SUBSCRIPTION",
+              entityId:
+                subscription?.id
+            }
+          });
+
+        expect(
+          subscriptionLogs
+        ).toHaveLength(
+          1
+        );
+
+        expect(
+          subscriptionLogs[0]?.metadata
+        ).toMatchObject({
+          previousStatus:
+            MerchantSubscriptionStatus.PAST_DUE,
+          nextStatus:
+            MerchantSubscriptionStatus.SUSPENDED
+        });
+
+        expect(firstResult).toEqual({
+          discoveredCount: 1,
+          suspendedCount: 1,
+          skippedCount: 0
+        });
+
+        expect(secondResult).toEqual({
+          discoveredCount: 0,
+          suspendedCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "does not suspend a PAST_DUE subscription before seven days after the invoice due date",
+      async () => {
+        const fixture =
+          await createFixture(
+            "past-due-before-suspension",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-past-due-before-suspension`,
+              name:
+                "Invoice Lifecycle Pre-Suspension Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        const result =
+          await processPastDueSubscriptionSuspensions({
+            now:
+              new Date(
+                "2026-10-11T23:59:59.999Z"
+              )
+          });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+        expect(
+          subscription?.status
+        ).toBe(
+          MerchantSubscriptionStatus.PAST_DUE
+        );
+
+        expect(result).toEqual({
+          discoveredCount: 0,
+          suspendedCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "does not suspend a PAST_DUE subscription while settlement review is pending",
+      async () => {
+        const fixture =
+          await createFixture(
+            "past-due-suspension-pending-settlement",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-susp-pending`,
+              name:
+                "Invoice Lifecycle Suspension Pending Settlement Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantSettlement.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            invoiceId:
+              fixture.invoice.id,
+            provider:
+              MerchantSettlementProvider.TELEBIRR,
+            status:
+              MerchantSettlementStatus.REVIEW_REQUIRED,
+            amount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            idempotencyKey:
+              "suspension-pending-settlement",
+            transactionReference:
+              "TX-SUSPENSION-PENDING-001"
+          }
+        });
+
+        const result =
+          await processPastDueSubscriptionSuspensions({
+            now:
+              new Date(
+                "2026-10-12T00:00:00.000Z"
+              )
+          });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+        expect(
+          subscription?.status
+        ).toBe(
+          MerchantSubscriptionStatus.PAST_DUE
+        );
+
+        expect(result).toEqual({
+          discoveredCount: 0,
+          suspendedCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "suspends a PAST_DUE subscription after settlement review is rejected",
+      async () => {
+        const fixture =
+          await createFixture(
+            "past-due-suspension-rejected-settlement",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-susp-rejected`,
+              name:
+                "Invoice Lifecycle Rejected Settlement Suspension Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        const settlement =
+          await prisma.merchantSettlement.create({
+            data: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id,
+              provider:
+                MerchantSettlementProvider.TELEBIRR,
+              status:
+                MerchantSettlementStatus.REVIEW_REQUIRED,
+              amount:
+                new Prisma.Decimal(
+                  "550.00"
+                ),
+              currency:
+                "ETB",
+              idempotencyKey:
+                "suspension-rejected-settlement",
+              transactionReference:
+                "TX-SUSPENSION-REJECTED-001"
+            }
+          });
+
+        const rejected =
+          await rejectMerchantSettlement({
+            merchantId:
+              fixture.merchant.id,
+            settlementId:
+              settlement.id,
+            reviewNote:
+              "Platform rejected overdue invoice payment"
+          });
+
+        expect(
+          rejected.settlement.status
+        ).toBe(
+          MerchantSettlementStatus.REJECTED
+        );
+
+        expect(
+          rejected.invoice.status
+        ).toBe(
+          MerchantInvoiceStatus.OVERDUE
+        );
+
+        const result =
+          await processPastDueSubscriptionSuspensions({
+            now:
+              new Date(
+                "2026-10-12T00:00:00.000Z"
+              )
+          });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+        expect(
+          subscription?.status
+        ).toBe(
+          MerchantSubscriptionStatus.SUSPENDED
+        );
+
+        expect(result).toEqual({
+          discoveredCount: 1,
+          suspendedCount: 1,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "suspends a merchant only once when multiple overdue invoices are eligible",
+      async () => {
+        const fixture =
+          await createFixture(
+            "past-due-suspension-multiple-invoices",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-susp-multi`,
+              name:
+                "Invoice Lifecycle Multiple Invoice Suspension Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.PAST_DUE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-04T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            invoiceNumber:
+              "INV-past-due-suspension-multiple-invoices-2",
+            periodStart:
+              new Date(
+                "2026-08-01T00:00:00.000Z"
+              ),
+            periodEnd:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            subscriptionAmount:
+              new Prisma.Decimal(
+                "500.00"
+              ),
+            commissionAmount:
+              new Prisma.Decimal(
+                "50.00"
+              ),
+            totalAmount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            status:
+              MerchantInvoiceStatus.OVERDUE,
+            openedAt:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        const result =
+          await processPastDueSubscriptionSuspensions({
+            now:
+              new Date(
+                "2026-10-12T00:00:00.000Z"
+              )
+          });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+        const subscriptionLogs =
+          await prisma.auditLog.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              action:
+                "SUBSCRIPTION_STATUS_CHANGED",
+              entityType:
+                "MERCHANT_SUBSCRIPTION",
+              entityId:
+                subscription?.id
+            }
+          });
+
+        expect(
+          subscription?.status
+        ).toBe(
+          MerchantSubscriptionStatus.SUSPENDED
+        );
+
+        expect(
+          subscriptionLogs
+        ).toHaveLength(
+          1
+        );
+
+        expect(result).toEqual({
+          discoveredCount: 1,
+          suspendedCount: 1,
           skippedCount: 0
         });
       }
