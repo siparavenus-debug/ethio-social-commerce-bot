@@ -263,6 +263,48 @@ describe(
     );
 
     it(
+      "sets dueAt to seven days after openedAt",
+      async () => {
+        const fixture =
+          await createFixture(
+            "open-due-date"
+          );
+
+        const opened =
+          await openMerchantInvoice({
+            merchantId:
+              fixture.merchant.id,
+            invoiceId:
+              fixture.invoice.id
+          });
+
+        expect(
+          opened.openedAt
+        ).toBeInstanceOf(
+          Date
+        );
+
+        expect(
+          opened.dueAt
+        ).toBeInstanceOf(
+          Date
+        );
+
+        const expectedDueAt =
+          new Date(
+            opened.openedAt!.getTime() +
+              7 * 24 * 60 * 60 * 1000
+          );
+
+        expect(
+          opened.dueAt
+        ).toEqual(
+          expectedDueAt
+        );
+      }
+    );
+
+    it(
       "creates exactly one INVOICE_OPENED audit",
       async () => {
         const fixture =

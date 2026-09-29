@@ -64,6 +64,12 @@ export async function openMerchantInvoice(
       const openedAt =
         new Date();
 
+      const dueAt =
+        new Date(
+          openedAt.getTime() +
+            7 * 24 * 60 * 60 * 1000
+        );
+
       /*
        * The status in the WHERE clause is the
        * concurrency claim.
@@ -83,7 +89,8 @@ export async function openMerchantInvoice(
           data: {
             status:
               MerchantInvoiceStatus.OPEN,
-            openedAt
+            openedAt,
+            dueAt
           }
         });
 
