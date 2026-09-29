@@ -1,4 +1,5 @@
 import {
+  MerchantInvoiceReminderType,
   MerchantInvoiceStatus,
   MerchantSettlementProvider,
   MerchantSettlementStatus,
@@ -19,7 +20,8 @@ import {
 import {
   markMerchantInvoiceOverdue,
   openMerchantInvoice,
-  processOverdueMerchantInvoices
+  processOverdueMerchantInvoices,
+  processSecondOverdueInvoiceReminders
 } from "../src/services/invoice-lifecycle.js";
 
 import {
@@ -2205,5 +2207,251 @@ describe(
       }
     );
 
-    }
+    it(
+      "creates SECOND_OVERDUE reminder exactly three days after the invoice due date",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-reminder",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        await processSecondOverdueInvoiceReminders({
+          now:
+            new Date(
+              "2026-10-08T00:00:00.000Z"
+            )
+        });
+
+        const reminders =
+          await prisma.merchantInvoiceReminder.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(reminders).toHaveLength(1);
+
+        expect(
+          reminders[0]?.type
+        ).toBe(
+          "SECOND_OVERDUE"
+        );
+      }
     );
+
+    it(
+      "does not create SECOND_OVERDUE reminder while settlement review is pending",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-pending-settlement",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        await prisma.merchantSettlement.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            invoiceId:
+              fixture.invoice.id,
+            provider:
+              MerchantSettlementProvider.TELEBIRR,
+            status:
+              MerchantSettlementStatus.REVIEW_REQUIRED,
+            amount:
+              new Prisma.Decimal(
+                "550.00"
+              ),
+            currency:
+              "ETB",
+            idempotencyKey:
+              "second-overdue-pending-settlement",
+            transactionReference:
+              "TX-SECOND-OVERDUE-PENDING-001"
+          }
+        });
+
+        const result =
+          await processSecondOverdueInvoiceReminders({
+            now:
+              new Date(
+                "2026-10-08T00:00:00.000Z"
+              )
+          });
+
+        const reminders =
+          await prisma.merchantInvoiceReminder.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(reminders).toHaveLength(0);
+
+        expect(result).toEqual({
+          discoveredCount: 0,
+          createdCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "does not create SECOND_OVERDUE reminder before three days after the invoice due date",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-too-early",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        const result =
+          await processSecondOverdueInvoiceReminders({
+            now:
+              new Date(
+                "2026-10-07T23:59:59.999Z"
+              )
+          });
+
+        const reminders =
+          await prisma.merchantInvoiceReminder.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(reminders).toHaveLength(0);
+
+        expect(result).toEqual({
+          discoveredCount: 0,
+          createdCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+    it(
+      "does not create duplicate SECOND_OVERDUE reminders",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-idempotent",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        const now =
+          new Date(
+            "2026-10-08T00:00:00.000Z"
+          );
+
+        const firstResult =
+          await processSecondOverdueInvoiceReminders({
+            now
+          });
+
+        const secondResult =
+          await processSecondOverdueInvoiceReminders({
+            now
+          });
+
+        const reminders =
+          await prisma.merchantInvoiceReminder.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id,
+              type:
+                MerchantInvoiceReminderType
+                  .SECOND_OVERDUE
+            }
+          });
+
+        expect(reminders).toHaveLength(1);
+
+        expect(firstResult).toEqual({
+          discoveredCount: 1,
+          createdCount: 1,
+          skippedCount: 0
+        });
+
+        expect(secondResult).toEqual({
+          discoveredCount: 0,
+          createdCount: 0,
+          skippedCount: 0
+        });
+      }
+    );
+
+  }
+);

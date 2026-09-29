@@ -530,3 +530,86 @@ export async function processOverdueMerchantInvoices(
       ).length
   };
 }
+
+export type ProcessSecondOverdueInvoiceRemindersInput = {
+  now?: Date;
+};
+
+export async function processSecondOverdueInvoiceReminders(
+  input: ProcessSecondOverdueInvoiceRemindersInput = {}
+) {
+  const now =
+    input.now ?? new Date();
+
+  const secondReminderDueAt =
+    new Date(
+      now.getTime() -
+        3 * 24 * 60 * 60 * 1000
+    );
+
+  const candidates =
+    await prisma.merchantInvoice.findMany({
+      where: {
+        status:
+          MerchantInvoiceStatus.OVERDUE,
+        dueAt: {
+          lte:
+            secondReminderDueAt
+        },
+        settlements: {
+          none: {
+            status:
+              MerchantSettlementStatus
+                .REVIEW_REQUIRED
+          }
+        },
+        reminders: {
+          none: {
+            type:
+              MerchantInvoiceReminderType
+                .SECOND_OVERDUE
+          }
+        }
+      },
+      select: {
+        id: true,
+        merchantId: true
+      },
+      orderBy: {
+        dueAt: "asc"
+      }
+    });
+
+  const results =
+    await Promise.allSettled(
+      candidates.map(
+        (invoice) =>
+          prisma.merchantInvoiceReminder.create({
+            data: {
+              merchantId:
+                invoice.merchantId,
+              invoiceId:
+                invoice.id,
+              type:
+                MerchantInvoiceReminderType
+                  .SECOND_OVERDUE
+            }
+          })
+      )
+    );
+
+  return {
+    discoveredCount:
+      candidates.length,
+    createdCount:
+      results.filter(
+        (result) =>
+          result.status === "fulfilled"
+      ).length,
+    skippedCount:
+      results.filter(
+        (result) =>
+          result.status === "rejected"
+      ).length
+  };
+}
