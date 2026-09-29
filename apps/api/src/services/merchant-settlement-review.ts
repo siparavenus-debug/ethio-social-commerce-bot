@@ -1,6 +1,7 @@
 import {
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
+  MerchantSubscriptionStatus,
   Prisma,
   prisma
 } from "@ethio-commerce/database";
@@ -239,6 +240,110 @@ async function verifySettlementAttempt(
         throw new Error(
           "Merchant invoice status changed concurrently"
         );
+      }
+
+      if (
+        invoice.status ===
+        MerchantInvoiceStatus.OVERDUE
+      ) {
+        const remainingDelinquentInvoice =
+          await tx.merchantInvoice.findFirst({
+            where: {
+              merchantId:
+                input.merchantId,
+              OR: [
+                {
+                  status:
+                    MerchantInvoiceStatus.OVERDUE
+                },
+                {
+                  status:
+                    MerchantInvoiceStatus.OPEN,
+                  dueAt: {
+                    lt: verifiedAt
+                  }
+                }
+              ]
+            },
+            select: {
+              id: true
+            }
+          });
+
+        if (!remainingDelinquentInvoice) {
+          const subscriptionClaim =
+            await tx.merchantSubscription.updateMany({
+              where: {
+                merchantId:
+                  input.merchantId,
+                status:
+                  MerchantSubscriptionStatus.PAST_DUE
+              },
+              data: {
+                status:
+                  MerchantSubscriptionStatus.ACTIVE
+              }
+            });
+
+          if (subscriptionClaim.count === 1) {
+            const recoveredSubscription =
+              await tx.merchantSubscription.findUnique({
+                where: {
+                  merchantId:
+                    input.merchantId
+                }
+              });
+
+            if (!recoveredSubscription) {
+              throw new Error(
+                "Merchant subscription not found after recovery"
+              );
+            }
+
+            await tx.auditLog.create({
+              data: {
+                merchantId:
+                  input.merchantId,
+                actorUserId: null,
+                action:
+                  "SUBSCRIPTION_STATUS_CHANGED",
+                entityType:
+                  "MERCHANT_SUBSCRIPTION",
+                entityId:
+                  recoveredSubscription.id,
+                metadata: {
+                  previousStatus:
+                    MerchantSubscriptionStatus.PAST_DUE,
+                  nextStatus:
+                    recoveredSubscription.status
+                }
+              }
+            });
+
+            if (input.actorPlatformUserId) {
+              await tx.platformAuditLog.create({
+                data: {
+                  actorPlatformUserId:
+                    input.actorPlatformUserId,
+                  merchantId:
+                    input.merchantId,
+                  action:
+                    "MERCHANT_SUBSCRIPTION_STATUS_CHANGED",
+                  entityType:
+                    "MERCHANT_SUBSCRIPTION",
+                  entityId:
+                    recoveredSubscription.id,
+                  metadata: {
+                    previousStatus:
+                      MerchantSubscriptionStatus.PAST_DUE,
+                    nextStatus:
+                      recoveredSubscription.status
+                  }
+                }
+              });
+            }
+          }
+        }
       }
 
       const verifiedSettlement =
