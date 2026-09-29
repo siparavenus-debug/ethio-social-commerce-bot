@@ -1,6 +1,7 @@
 import {
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
+  MerchantSubscriptionStatus,
   Prisma,
   prisma
 } from "@ethio-commerce/database";
@@ -274,6 +275,74 @@ async function markMerchantInvoiceOverdueAttempt(
         throw new Error(
           "Invoice status changed concurrently"
         );
+      }
+
+      const subscriptionTransition =
+        await tx.merchantSubscription.updateMany({
+          where: {
+            merchantId,
+            status:
+              MerchantSubscriptionStatus.ACTIVE
+          },
+          data: {
+            status:
+              MerchantSubscriptionStatus.PAST_DUE
+          }
+        });
+
+      if (subscriptionTransition.count === 1) {
+        const subscription =
+          await tx.merchantSubscription.findUnique({
+            where: {
+              merchantId
+            }
+          });
+
+        if (!subscription) {
+          throw new Error(
+            "Merchant subscription not found after status transition"
+          );
+        }
+
+        await tx.auditLog.create({
+          data: {
+            merchantId,
+            actorUserId,
+            action:
+              "SUBSCRIPTION_STATUS_CHANGED",
+            entityType:
+              "MERCHANT_SUBSCRIPTION",
+            entityId:
+              subscription.id,
+            metadata: {
+              previousStatus:
+                MerchantSubscriptionStatus.ACTIVE,
+              nextStatus:
+                MerchantSubscriptionStatus.PAST_DUE
+            }
+          }
+        });
+
+        if (actorPlatformUserId) {
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId,
+              merchantId,
+              action:
+                "MERCHANT_SUBSCRIPTION_STATUS_CHANGED",
+              entityType:
+                "MERCHANT_SUBSCRIPTION",
+              entityId:
+                subscription.id,
+              metadata: {
+                previousStatus:
+                  MerchantSubscriptionStatus.ACTIVE,
+                nextStatus:
+                  MerchantSubscriptionStatus.PAST_DUE
+              }
+            }
+          });
+        }
       }
 
       const overdueInvoice =

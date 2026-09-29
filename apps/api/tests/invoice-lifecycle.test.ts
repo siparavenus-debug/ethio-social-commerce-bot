@@ -2,7 +2,9 @@ import {
   MerchantInvoiceStatus,
   MerchantSettlementProvider,
   MerchantSettlementStatus,
+  MerchantSubscriptionStatus,
   Prisma,
+  SubscriptionBillingInterval,
   prisma
 } from "@ethio-commerce/database";
 
@@ -93,6 +95,15 @@ async function cleanup(): Promise<void> {
       }
     });
 
+    await prisma.merchantSubscription.deleteMany({
+      where: {
+        merchantId: {
+          in:
+            merchantIds
+        }
+      }
+    });
+
     await prisma.merchant.deleteMany({
       where: {
         id: {
@@ -102,6 +113,15 @@ async function cleanup(): Promise<void> {
       }
     });
   }
+
+  await prisma.subscriptionPlan.deleteMany({
+    where: {
+      code: {
+        startsWith:
+          testPrefix
+      }
+    }
+  });
 
   await prisma.platformAuditLog.deleteMany({
     where: {
@@ -867,6 +887,131 @@ describe(
         );
       }
     );
+
+    it(
+      "moves an ACTIVE subscription to PAST_DUE when its invoice becomes OVERDUE",
+      async () => {
+        const fixture =
+          await createFixture(
+            "overdue-past-due",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const plan =
+          await prisma.subscriptionPlan.create({
+            data: {
+              code:
+                `${testPrefix}-overdue-past-due`,
+              name:
+                "Invoice Lifecycle Overdue Plan",
+              monthlyPrice:
+                "500.00",
+              annualPrice:
+                "5000.00",
+              currency:
+                "ETB",
+              commissionRate:
+                "0.035000",
+              isActive:
+                true
+            }
+          });
+
+        await prisma.merchantSubscription.create({
+          data: {
+            merchantId:
+              fixture.merchant.id,
+            planId:
+              plan.id,
+            status:
+              MerchantSubscriptionStatus.ACTIVE,
+            billingInterval:
+              SubscriptionBillingInterval.MONTHLY,
+            priceSnapshot:
+              "500.00",
+            commissionRateSnapshot:
+              "0.035000",
+            currency:
+              "ETB",
+            currentPeriodStart:
+              new Date(
+                "2026-09-01T00:00:00.000Z"
+              ),
+            currentPeriodEnd:
+              new Date(
+                "2026-10-01T00:00:00.000Z"
+              )
+          }
+        });
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt:
+              new Date(
+                "2026-10-05T00:00:00.000Z"
+              )
+          }
+        });
+
+        await markMerchantInvoiceOverdue({
+          merchantId:
+            fixture.merchant.id,
+          invoiceId:
+            fixture.invoice.id,
+          now:
+            new Date(
+              "2026-10-06T00:00:00.000Z"
+            )
+        });
+
+        const subscription =
+          await prisma.merchantSubscription.findUnique({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          expect(
+            subscription?.status
+          ).toBe(
+            MerchantSubscriptionStatus.PAST_DUE
+          );
+
+          const subscriptionLogs =
+            await prisma.auditLog.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                action:
+                  "SUBSCRIPTION_STATUS_CHANGED",
+                entityType:
+                  "MERCHANT_SUBSCRIPTION",
+                entityId:
+                  subscription?.id
+              }
+            });
+
+          expect(
+            subscriptionLogs
+          ).toHaveLength(
+            1
+          );
+
+          expect(
+            subscriptionLogs[0]?.metadata
+          ).toMatchObject({
+            previousStatus:
+              MerchantSubscriptionStatus.ACTIVE,
+            nextStatus:
+              MerchantSubscriptionStatus.PAST_DUE
+          });
+        }
+      );
 
     it(
       "does not mark an OPEN invoice overdue at its exact due time",
