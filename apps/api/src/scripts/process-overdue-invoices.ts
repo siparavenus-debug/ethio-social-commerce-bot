@@ -3,7 +3,9 @@ import {
 } from "@ethio-commerce/database";
 
 import {
-  processOverdueMerchantInvoices
+  processOverdueMerchantInvoices,
+  processPastDueSubscriptionSuspensions,
+  processSecondOverdueInvoiceReminders
 } from "../services/invoice-lifecycle.js";
 
 async function main() {
@@ -11,19 +13,58 @@ async function main() {
     "PROCESSING OVERDUE MERCHANT INVOICES"
   );
 
-  const result =
-    await processOverdueMerchantInvoices();
+  const now =
+    new Date();
+
+  const overdueResult =
+    await processOverdueMerchantInvoices({
+      now
+    });
 
   console.log(
-    `Discovered: ${result.discoveredCount}`
+    `Overdue discovered: ${overdueResult.discoveredCount}`
   );
 
   console.log(
-    `Marked overdue: ${result.markedOverdueCount}`
+    `Marked overdue: ${overdueResult.markedOverdueCount}`
   );
 
   console.log(
-    `Skipped: ${result.skippedCount}`
+    `Overdue skipped: ${overdueResult.skippedCount}`
+  );
+
+  const reminderResult =
+    await processSecondOverdueInvoiceReminders({
+      now
+    });
+
+  console.log(
+    `Second reminders discovered: ${reminderResult.discoveredCount}`
+  );
+
+  console.log(
+    `Second reminders created: ${reminderResult.createdCount}`
+  );
+
+  console.log(
+    `Second reminders skipped: ${reminderResult.skippedCount}`
+  );
+
+  const suspensionResult =
+    await processPastDueSubscriptionSuspensions({
+      now
+    });
+
+  console.log(
+    `Suspensions discovered: ${suspensionResult.discoveredCount}`
+  );
+
+  console.log(
+    `Subscriptions suspended: ${suspensionResult.suspendedCount}`
+  );
+
+  console.log(
+    `Suspensions skipped: ${suspensionResult.skippedCount}`
   );
 }
 
