@@ -77,6 +77,15 @@ async function cleanup(): Promise<void> {
       }
     });
 
+    await prisma.merchantInvoiceReminder.deleteMany({
+      where: {
+        merchantId: {
+          in:
+            merchantIds
+        }
+      }
+    });
+
     await prisma.auditLog.deleteMany({
       where: {
         merchantId: {
@@ -885,6 +894,59 @@ describe(
         ).toBe(
           MerchantInvoiceStatus.OVERDUE
         );
+      }
+    );
+
+    it(
+      "creates one FIRST_OVERDUE reminder when an invoice becomes OVERDUE",
+      async () => {
+        const fixture =
+          await createFixture(
+            "overdue-first-reminder",
+            MerchantInvoiceStatus.OPEN
+          );
+
+        const dueAt =
+          new Date(
+            "2026-10-05T00:00:00.000Z"
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id:
+              fixture.invoice.id
+          },
+          data: {
+            dueAt
+          }
+        });
+
+        await markMerchantInvoiceOverdue({
+          merchantId:
+            fixture.merchant.id,
+          invoiceId:
+            fixture.invoice.id,
+          now:
+            new Date(
+              "2026-10-06T00:00:00.000Z"
+            )
+        });
+
+        const reminders =
+          await prisma.merchantInvoiceReminder.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              invoiceId:
+                fixture.invoice.id
+            }
+          });
+
+        expect(reminders).toHaveLength(1);
+
+        expect(
+          reminders[0]?.type
+        ).toBe("FIRST_OVERDUE");
       }
     );
 

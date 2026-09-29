@@ -1,4 +1,5 @@
 import {
+  MerchantInvoiceReminderType,
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
   MerchantSubscriptionStatus,
@@ -276,6 +277,16 @@ async function markMerchantInvoiceOverdueAttempt(
           "Invoice status changed concurrently"
         );
       }
+
+      await tx.merchantInvoiceReminder.create({
+        data: {
+          merchantId,
+          invoiceId:
+            invoice.id,
+          type:
+            MerchantInvoiceReminderType.FIRST_OVERDUE
+        }
+      });
 
       const subscriptionTransition =
         await tx.merchantSubscription.updateMany({

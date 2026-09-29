@@ -127,6 +127,15 @@ async function cleanup():
         }
     });
 
+    await prisma.merchantInvoiceReminder.deleteMany({
+        where: {
+            merchantId: {
+                in:
+                    testMerchantIds
+            }
+        }
+    });
+
     await prisma.merchantInvoice.deleteMany({
         where: {
             merchantId: {

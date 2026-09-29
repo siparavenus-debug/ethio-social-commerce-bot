@@ -103,6 +103,10 @@ enum MerchantInvoiceItemType {
   ADJUSTMENT
 }
 
+enum MerchantInvoiceReminderType {
+  FIRST_OVERDUE
+}
+
 enum MerchantSettlementStatus {
   REVIEW_REQUIRED
   VERIFIED
@@ -144,6 +148,7 @@ model Merchant {
   commissionAdjustments CommissionAdjustment[]
   invoices              MerchantInvoice[]
   invoiceItems          MerchantInvoiceItem[]
+  invoiceReminders      MerchantInvoiceReminder[]
   settlements           MerchantSettlement[]
 }
 
@@ -448,8 +453,9 @@ model MerchantInvoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  merchant    Merchant              @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  merchant    Merchant                  @relation(fields: [merchantId], references: [id], onDelete: Restrict)
   items       MerchantInvoiceItem[]
+  reminders   MerchantInvoiceReminder[]
   settlements MerchantSettlement[]
 
   @@unique([merchantId, invoiceNumber])
@@ -494,6 +500,22 @@ model MerchantInvoiceItem {
   @@index([merchantId, invoiceId])
   @@index([type])
   @@index([subscriptionId])
+}
+
+model MerchantInvoiceReminder {
+  id         String                      @id @default(cuid())
+  merchantId String
+  invoiceId  String
+  type       MerchantInvoiceReminderType
+
+  createdAt DateTime @default(now())
+
+  merchant Merchant        @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  invoice  MerchantInvoice @relation(fields: [invoiceId, merchantId], references: [id, merchantId], onDelete: Restrict)
+
+  @@unique([invoiceId, type])
+  @@index([merchantId, createdAt])
+  @@index([invoiceId, createdAt])
 }
 
 model MerchantSettlement {
