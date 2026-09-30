@@ -3819,6 +3819,206 @@ describe(
         );
 
         it(
+            "returns paid invoices by paid date for a custom UTC date range",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "revenue-range-list"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "revenue-range-list"
+                    );
+
+                const createInvoice =
+                    (
+                        invoiceNumber: string,
+                        totalAmount: string,
+                        paidAt: Date
+                    ) =>
+                        prisma.merchantInvoice.create({
+                            data: {
+                                merchantId:
+                                    merchant.id,
+                                invoiceNumber,
+                                periodStart:
+                                    paidAt,
+                                periodEnd:
+                                    new Date(
+                                        paidAt.getTime() +
+                                        4 * 60 * 60 * 1000
+                                    ),
+                                subscriptionAmount:
+                                    totalAmount,
+                                commissionAmount:
+                                    "0.00",
+                                totalAmount,
+                                currency:
+                                    "ETB",
+                                status:
+                                    MerchantInvoiceStatus.PAID,
+                                paidAt
+                            }
+                        });
+
+                const beforeInvoice =
+                    await createInvoice(
+                        `${testPrefix}-revenue-list-before`,
+                        "100.00",
+                        new Date(
+                            "2039-09-09T23:59:59.999Z"
+                        )
+                    );
+
+                const startInvoice =
+                    await createInvoice(
+                        `${testPrefix}-revenue-list-start`,
+                        "200.00",
+                        new Date(
+                            "2039-09-10T00:00:00.000Z"
+                        )
+                    );
+
+                const middleInvoice =
+                    await createInvoice(
+                        `${testPrefix}-revenue-list-middle`,
+                        "300.00",
+                        new Date(
+                            "2039-09-20T12:00:00.000Z"
+                        )
+                    );
+
+                const endInvoice =
+                    await createInvoice(
+                        `${testPrefix}-revenue-list-end`,
+                        "400.00",
+                        new Date(
+                            "2039-10-01T00:00:00.000Z"
+                        )
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/revenue/range?start=2039-09-10&end=2039-10-01`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        periodStart: string;
+                        periodEnd: string;
+                        invoices: Array<{
+                            id: string;
+                            invoiceNumber: string;
+                            subscriptionAmount: string;
+                            commissionAmount: string;
+                            totalAmount: string;
+                            currency: string;
+                            status:
+                                MerchantInvoiceStatus;
+                            paidAt: string | null;
+                            merchant: {
+                                id: string;
+                                name: string;
+                                currency: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.periodStart
+                ).toBe(
+                    "2039-09-10T00:00:00.000Z"
+                );
+
+                expect(
+                    body.periodEnd
+                ).toBe(
+                    "2039-10-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.invoices.map(
+                        invoice =>
+                            invoice.id
+                    )
+                ).toEqual([
+                    startInvoice.id,
+                    middleInvoice.id
+                ]);
+
+                expect(
+                    body.invoices
+                ).toEqual([
+                    expect.objectContaining({
+                        id:
+                            startInvoice.id,
+                        invoiceNumber:
+                            startInvoice.invoiceNumber,
+                        subscriptionAmount:
+                            "200.00",
+                        commissionAmount:
+                            "0.00",
+                        totalAmount:
+                            "200.00",
+                        currency:
+                            "ETB",
+                        status:
+                            MerchantInvoiceStatus.PAID,
+                        paidAt:
+                            "2039-09-10T00:00:00.000Z",
+                        merchant: {
+                            id:
+                                merchant.id,
+                            name:
+                                merchant.name,
+                            currency:
+                                merchant.currency
+                        }
+                    }),
+                    expect.objectContaining({
+                        id:
+                            middleInvoice.id,
+                        invoiceNumber:
+                            middleInvoice.invoiceNumber,
+                        totalAmount:
+                            "300.00",
+                        paidAt:
+                            "2039-09-20T12:00:00.000Z"
+                    })
+                ]);
+
+                expect(
+                    body.invoices.some(
+                        invoice =>
+                            invoice.id ===
+                            beforeInvoice.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.invoices.some(
+                        invoice =>
+                            invoice.id ===
+                            endInvoice.id
+                    )
+                ).toBe(false);
+            }
+        );
+
+        it(
             "rejects invalid calendar dates for platform revenue ranges",
             async () => {
                 const {
