@@ -66,6 +66,18 @@ type RevenuePeriodSummary = {
   currencies: RevenueCurrencySummary[];
 };
 
+type OverdueCurrencySummary = {
+  currency: string;
+  invoiceCount: number;
+  totalAmount: string;
+};
+
+type OverduePeriodSummary = {
+  periodStart: string;
+  periodEnd: string;
+  currencies: OverdueCurrencySummary[];
+};
+
 function currentUtcMonth(): string {
   const now = new Date();
 
@@ -261,6 +273,20 @@ export default function PlatformApp() {
     useState("");
   const [revenueCustomEnd, setRevenueCustomEnd] =
     useState("");
+  const [overdueSummary, setOverdueSummary] =
+    useState<OverduePeriodSummary | null>(null);
+  const [overduePeriodMode, setOverduePeriodMode] =
+    useState<RevenuePeriodMode>("month");
+  const [overdueMonth, setOverdueMonth] =
+    useState(currentUtcMonth);
+  const [overdueYear, setOverdueYear] =
+    useState(() =>
+      String(new Date().getUTCFullYear())
+    );
+  const [overdueCustomStart, setOverdueCustomStart] =
+    useState("");
+  const [overdueCustomEnd, setOverdueCustomEnd] =
+    useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [planFilter, setPlanFilter] = useState("ALL");
@@ -397,7 +423,7 @@ export default function PlatformApp() {
   useEffect(() => {
     if (!user || !token) return;
     const controller = new AbortController();
-    setLoading(true); setError(""); setRows([]); setMerchant(null); setRevenueSummary(null);
+    setLoading(true); setError(""); setRows([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
     async function load() {
       const [m, p] = await Promise.all([
         platformRequest<{ merchants: Merchant[] }>("/merchants", token, "GET", undefined, controller.signal),
@@ -514,29 +540,85 @@ export default function PlatformApp() {
             setRevenueSummary(summary);
           }
         }
-      } else if (
-        view !== "Merchants" &&
-        view !== "Plans"
-      ) {
+      } else if (view === "Overdue") {
+        let range: {
+          start: string;
+          end: string;
+        } | null = null;
+
+        if (overduePeriodMode === "month") {
+          range =
+            revenueMonthRange(
+              overdueMonth
+            );
+        } else if (
+          overduePeriodMode === "year"
+        ) {
+          range =
+            revenueYearRange(
+              overdueYear
+            );
+        } else if (
+          overdueCustomStart &&
+          overdueCustomEnd
+        ) {
+          range = {
+            start: overdueCustomStart,
+            end:
+              nextUtcDate(
+                overdueCustomEnd
+              )
+          };
+        }
+
+        if (range) {
+          const [summary, overdue] =
+            await Promise.all([
+              platformRequest<OverduePeriodSummary>(
+                `/billing/overdue/range-summary?start=${encodeURIComponent(
+                  range.start
+                )}&end=${encodeURIComponent(
+                  range.end
+                )}`,
+                token,
+                "GET",
+                undefined,
+                controller.signal
+              ),
+              platformRequest<{
+                invoices: Row[];
+              }>(
+                `/billing/overdue/range?start=${encodeURIComponent(
+                  range.start
+                )}&end=${encodeURIComponent(
+                  range.end
+                )}`,
+                token,
+                "GET",
+                undefined,
+                controller.signal
+              )
+            ]);
+
+          data = overdue.invoices;
+
+          if (!controller.signal.aborted) {
+            setOverdueSummary(summary);
+          }
+        }
+      } else if (view === "Audit") {
         const result =
-          await platformRequest<
-            Record<string, Row[]>
-          >(
-            view === "Audit"
-              ? "/audit"
-              : `/billing/${view.toLowerCase()}`,
+          await platformRequest<{
+            auditLogs: Row[];
+          }>(
+            "/audit",
             token,
             "GET",
             undefined,
             controller.signal
           );
 
-        data =
-          result[
-            view === "Audit"
-              ? "auditLogs"
-              : "invoices"
-          ];
+        data = result.auditLogs;
       }
       if (!controller.signal.aborted) { setMerchants(m.merchants); setPlans(p.plans); setMerchant(detail); setRows(data); setLoading(false); }
     }
@@ -554,6 +636,11 @@ export default function PlatformApp() {
     revenueYear,
     revenueCustomStart,
     revenueCustomEnd,
+    overduePeriodMode,
+    overdueMonth,
+    overdueYear,
+    overdueCustomStart,
+    overdueCustomEnd,
     revision
   ]);
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -1097,17 +1184,171 @@ export default function PlatformApp() {
       )}
 
       {view === "Overdue" && (
-        <Table
-          rows={rows}
-          columns={[
-            "invoiceNumber",
-            "merchant",
-            "totalAmount",
-            "currency",
-            "status",
-            "dueAt"
-          ]}
-        />
+        <>
+          <section className="pa-card">
+            <div className="pa-section-heading">
+              <div>
+                <h3>Overdue invoices</h3>
+                <p>
+                  Review invoices currently marked OVERDUE for a selected UTC period.
+                  Amounts remain separated by currency.
+                </p>
+              </div>
+            </div>
+
+            <div className="pa-tabs">
+              <button
+                type="button"
+                className={
+                  overduePeriodMode === "month"
+                    ? "active"
+                    : ""
+                }
+                onClick={() =>
+                  setOverduePeriodMode("month")
+                }
+              >
+                Month
+              </button>
+
+              <button
+                type="button"
+                className={
+                  overduePeriodMode === "year"
+                    ? "active"
+                    : ""
+                }
+                onClick={() =>
+                  setOverduePeriodMode("year")
+                }
+              >
+                Year
+              </button>
+
+              <button
+                type="button"
+                className={
+                  overduePeriodMode === "custom"
+                    ? "active"
+                    : ""
+                }
+                onClick={() =>
+                  setOverduePeriodMode("custom")
+                }
+              >
+                Custom range
+              </button>
+            </div>
+
+            {overduePeriodMode === "month" && (
+              <label>
+                Month
+                <input
+                  type="month"
+                  value={overdueMonth}
+                  onChange={event =>
+                    setOverdueMonth(
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+            )}
+
+            {overduePeriodMode === "year" && (
+              <label>
+                Year
+                <input
+                  type="number"
+                  min="2000"
+                  max="2100"
+                  value={overdueYear}
+                  onChange={event =>
+                    setOverdueYear(
+                      event.target.value
+                    )
+                  }
+                />
+              </label>
+            )}
+
+            {overduePeriodMode === "custom" && (
+              <div className="pa-form-grid">
+                <label>
+                  From
+                  <input
+                    type="date"
+                    value={overdueCustomStart}
+                    onChange={event =>
+                      setOverdueCustomStart(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label>
+                  Through
+                  <input
+                    type="date"
+                    value={overdueCustomEnd}
+                    min={
+                      overdueCustomStart ||
+                      undefined
+                    }
+                    onChange={event =>
+                      setOverdueCustomEnd(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            )}
+
+            {overdueSummary &&
+            overdueSummary.currencies.length > 0 ? (
+              <div className="pa-metric-grid">
+                {overdueSummary.currencies.map(
+                  summary => (
+                    <div key={summary.currency}>
+                      <span>{summary.currency}</span>
+                      <strong>
+                        Overdue total:{" "}
+                        {summary.totalAmount}{" "}
+                        {summary.currency}
+                      </strong>
+                      <small>
+                        Invoice count:{" "}
+                        {summary.invoiceCount}
+                      </small>
+                    </div>
+                  )
+                )}
+              </div>
+            ) : (
+              <p className="pa-empty">
+                {overduePeriodMode === "custom" &&
+                (!overdueCustomStart ||
+                  !overdueCustomEnd)
+                  ? "Choose both dates to view overdue invoices."
+                  : "No overdue invoices for the selected period."}
+              </p>
+            )}
+          </section>
+
+          <Table
+            rows={rows}
+            columns={[
+              "invoiceNumber",
+              "merchant",
+              "totalAmount",
+              "currency",
+              "status",
+              "dueAt"
+            ]}
+          />
+        </>
       )}
       {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}
     </>}</main></div>;
