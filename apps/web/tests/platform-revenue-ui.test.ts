@@ -60,4 +60,14 @@ describe("platform revenue UI contract", () => {
       "revenueSummary.currencies.map("
     );
   });
+
+  it("uses the selected revenue range for the invoice table", () => {
+    expect(appSource).toContain(
+      "/billing/revenue/range?start="
+    );
+
+    expect(appSource).toContain(
+      "data = rangeRevenue.invoices;"
+    );
+  });
 });

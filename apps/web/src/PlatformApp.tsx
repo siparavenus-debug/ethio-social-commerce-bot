@@ -523,18 +523,35 @@ export default function PlatformApp() {
         data = revenue.invoices;
 
         if (range) {
-          const summary =
-            await platformRequest<RevenuePeriodSummary>(
-              `/billing/revenue/range-summary?start=${encodeURIComponent(
-                range.start
-              )}&end=${encodeURIComponent(
-                range.end
-              )}`,
-              token,
-              "GET",
-              undefined,
-              controller.signal
-            );
+          const [summary, rangeRevenue] =
+            await Promise.all([
+              platformRequest<RevenuePeriodSummary>(
+                `/billing/revenue/range-summary?start=${encodeURIComponent(
+                  range.start
+                )}&end=${encodeURIComponent(
+                  range.end
+                )}`,
+                token,
+                "GET",
+                undefined,
+                controller.signal
+              ),
+              platformRequest<{
+                invoices: Row[];
+              }>(
+                `/billing/revenue/range?start=${encodeURIComponent(
+                  range.start
+                )}&end=${encodeURIComponent(
+                  range.end
+                )}`,
+                token,
+                "GET",
+                undefined,
+                controller.signal
+              )
+            ]);
+
+          data = rangeRevenue.invoices;
 
           if (!controller.signal.aborted) {
             setRevenueSummary(summary);
