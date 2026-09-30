@@ -3481,6 +3481,210 @@ describe(
         );
 
         it(
+            "summarizes overdue invoices by due date for a custom UTC date range",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "overdue-range-summary"
+                    );
+
+                const etbMerchant =
+                    await createMerchant(
+                        "overdue-range-summary-etb"
+                    );
+
+                const usdMerchant =
+                    await createMerchant(
+                        "overdue-range-summary-usd",
+                        "USD"
+                    );
+
+                let periodOffset =
+                    0;
+
+                const createInvoice =
+                    (
+                        merchantId: string,
+                        invoiceNumber: string,
+                        totalAmount: string,
+                        currency: string,
+                        status:
+                            MerchantInvoiceStatus,
+                        dueAt: Date
+                    ) => {
+                        const periodStart =
+                            new Date(
+                                Date.UTC(
+                                    2037,
+                                    periodOffset,
+                                    1
+                                )
+                            );
+
+                        const periodEnd =
+                            new Date(
+                                Date.UTC(
+                                    2037,
+                                    periodOffset + 1,
+                                    1
+                                )
+                            );
+
+                        periodOffset +=
+                            1;
+
+                        return prisma.merchantInvoice.create({
+                            data: {
+                                merchantId,
+                                invoiceNumber,
+                                periodStart,
+                                periodEnd,
+                                subscriptionAmount:
+                                    totalAmount,
+                                commissionAmount:
+                                    "0.00",
+                                totalAmount,
+                                currency,
+                                status,
+                                openedAt:
+                                    new Date(
+                                        "2037-09-01T00:00:00.000Z"
+                                    ),
+                                dueAt
+                            }
+                        });
+                    };
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-overdue-range-before`,
+                    "100.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OVERDUE,
+                    new Date(
+                        "2037-09-09T23:59:59.999Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-overdue-range-start`,
+                    "200.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OVERDUE,
+                    new Date(
+                        "2037-09-10T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-overdue-range-middle`,
+                    "300.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OVERDUE,
+                    new Date(
+                        "2037-09-20T12:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-overdue-range-end`,
+                    "400.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OVERDUE,
+                    new Date(
+                        "2037-10-01T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    etbMerchant.id,
+                    `${testPrefix}-overdue-range-open`,
+                    "500.00",
+                    "ETB",
+                    MerchantInvoiceStatus.OPEN,
+                    new Date(
+                        "2037-09-15T00:00:00.000Z"
+                    )
+                );
+
+                await createInvoice(
+                    usdMerchant.id,
+                    `${testPrefix}-overdue-range-usd`,
+                    "25.00",
+                    "USD",
+                    MerchantInvoiceStatus.OVERDUE,
+                    new Date(
+                        "2037-09-25T00:00:00.000Z"
+                    )
+                );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/overdue/range-summary?start=2037-09-10&end=2037-10-01`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        periodStart: string;
+                        periodEnd: string;
+                        currencies: Array<{
+                            currency: string;
+                            invoiceCount: number;
+                            totalAmount: string;
+                        }>;
+                    };
+
+                expect(
+                    body.periodStart
+                ).toBe(
+                    "2037-09-10T00:00:00.000Z"
+                );
+
+                expect(
+                    body.periodEnd
+                ).toBe(
+                    "2037-10-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.currencies
+                ).toEqual([
+                    {
+                        currency:
+                            "ETB",
+                        invoiceCount:
+                            2,
+                        totalAmount:
+                            "500.00"
+                    },
+                    {
+                        currency:
+                            "USD",
+                        invoiceCount:
+                            1,
+                        totalAmount:
+                            "25.00"
+                    }
+                ]);
+            }
+        );
+
+        it(
             "summarizes collected platform revenue for a custom UTC date range",
             async () => {
                 const {
@@ -3627,6 +3831,40 @@ describe(
                 const response =
                     await fetch(
                         `${apiBaseUrl}/platform/billing/revenue/range-summary?start=2036-02-31&end=2036-03-10`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                expect(
+                    await response.json()
+                ).toEqual({
+                    error:
+                        "start and end must define a valid date range"
+                });
+            }
+        );
+
+        it(
+            "rejects invalid calendar dates for platform overdue ranges",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "overdue-range-invalid-date"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/overdue/range-summary?start=2036-02-31&end=2036-03-10`,
                         {
                             headers: {
                                 authorization:
