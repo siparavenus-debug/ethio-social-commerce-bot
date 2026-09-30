@@ -3853,6 +3853,327 @@ describe(
         );
 
         it(
+            "returns overdue invoices by due date for a custom UTC date range",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "overdue-range-list"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "overdue-range-list"
+                    );
+
+                const beforeInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-overdue-list-before`,
+                            periodStart:
+                                new Date(
+                                    "2038-01-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2038-02-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "100.00",
+                            commissionAmount:
+                                "10.00",
+                            totalAmount:
+                                "110.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OVERDUE,
+                            openedAt:
+                                new Date(
+                                    "2038-01-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2038-02-09T23:59:59.999Z"
+                                )
+                        }
+                    });
+
+                const startInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-overdue-list-start`,
+                            periodStart:
+                                new Date(
+                                    "2038-02-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2038-03-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "200.00",
+                            commissionAmount:
+                                "20.00",
+                            totalAmount:
+                                "220.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OVERDUE,
+                            openedAt:
+                                new Date(
+                                    "2038-02-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2038-02-10T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const middleInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-overdue-list-middle`,
+                            periodStart:
+                                new Date(
+                                    "2038-03-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2038-04-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "300.00",
+                            commissionAmount:
+                                "30.00",
+                            totalAmount:
+                                "330.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OVERDUE,
+                            openedAt:
+                                new Date(
+                                    "2038-03-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2038-02-20T12:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const endInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-overdue-list-end`,
+                            periodStart:
+                                new Date(
+                                    "2038-04-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2038-05-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "400.00",
+                            commissionAmount:
+                                "40.00",
+                            totalAmount:
+                                "440.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OVERDUE,
+                            openedAt:
+                                new Date(
+                                    "2038-04-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2038-03-01T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const openInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-overdue-list-open`,
+                            periodStart:
+                                new Date(
+                                    "2038-05-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2038-06-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                "500.00",
+                            commissionAmount:
+                                "50.00",
+                            totalAmount:
+                                "550.00",
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date(
+                                    "2038-05-01T00:00:00.000Z"
+                                ),
+                            dueAt:
+                                new Date(
+                                    "2038-02-15T00:00:00.000Z"
+                                )
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/overdue/range?start=2038-02-10&end=2038-03-01`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        periodStart: string;
+                        periodEnd: string;
+                        invoices: Array<{
+                            id: string;
+                            invoiceNumber: string;
+                            subscriptionAmount: string;
+                            commissionAmount: string;
+                            totalAmount: string;
+                            currency: string;
+                            status:
+                                MerchantInvoiceStatus;
+                            dueAt: string | null;
+                            merchant: {
+                                id: string;
+                                name: string;
+                                currency: string;
+                            };
+                        }>;
+                    };
+
+                expect(
+                    body.periodStart
+                ).toBe(
+                    "2038-02-10T00:00:00.000Z"
+                );
+
+                expect(
+                    body.periodEnd
+                ).toBe(
+                    "2038-03-01T00:00:00.000Z"
+                );
+
+                expect(
+                    body.invoices.map(
+                        (invoice) =>
+                            invoice.id
+                    )
+                ).toEqual([
+                    startInvoice.id,
+                    middleInvoice.id
+                ]);
+
+                expect(
+                    body.invoices
+                ).toEqual([
+                    expect.objectContaining({
+                        id:
+                            startInvoice.id,
+                        invoiceNumber:
+                            startInvoice.invoiceNumber,
+                        subscriptionAmount:
+                            "200.00",
+                        commissionAmount:
+                            "20.00",
+                        totalAmount:
+                            "220.00",
+                        currency:
+                            "ETB",
+                        status:
+                            MerchantInvoiceStatus.OVERDUE,
+                        dueAt:
+                            "2038-02-10T00:00:00.000Z",
+                        merchant: {
+                            id:
+                                merchant.id,
+                            name:
+                                merchant.name,
+                            currency:
+                                merchant.currency
+                        }
+                    }),
+                    expect.objectContaining({
+                        id:
+                            middleInvoice.id,
+                        invoiceNumber:
+                            middleInvoice.invoiceNumber,
+                        totalAmount:
+                            "330.00",
+                        dueAt:
+                            "2038-02-20T12:00:00.000Z"
+                    })
+                ]);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            beforeInvoice.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            endInvoice.id
+                    )
+                ).toBe(false);
+
+                expect(
+                    body.invoices.some(
+                        (invoice) =>
+                            invoice.id ===
+                            openInvoice.id
+                    )
+                ).toBe(false);
+            }
+        );
+
+        it(
             "rejects invalid calendar dates for platform overdue ranges",
             async () => {
                 const {

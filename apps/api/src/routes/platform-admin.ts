@@ -629,6 +629,128 @@ router.get(
 );
 
 router.get(
+  "/billing/overdue/range",
+  async (req, res) => {
+    try {
+      const start =
+        typeof req.query.start === "string"
+          ? req.query.start
+          : "";
+
+      const end =
+        typeof req.query.end === "string"
+          ? req.query.end
+          : "";
+
+      const datePattern =
+        /^\d{4}-\d{2}-\d{2}$/;
+
+      if (
+        !datePattern.test(start) ||
+        !datePattern.test(end)
+      ) {
+        res.status(400).json({
+          error:
+            "start and end must use YYYY-MM-DD format"
+        });
+        return;
+      }
+
+      const periodStart =
+        new Date(
+          `${start}T00:00:00.000Z`
+        );
+
+      const periodEnd =
+        new Date(
+          `${end}T00:00:00.000Z`
+        );
+
+      if (
+        Number.isNaN(
+          periodStart.getTime()
+        ) ||
+        Number.isNaN(
+          periodEnd.getTime()
+        ) ||
+        periodStart
+          .toISOString()
+          .slice(0, 10) !== start ||
+        periodEnd
+          .toISOString()
+          .slice(0, 10) !== end ||
+        periodStart >= periodEnd
+      ) {
+        res.status(400).json({
+          error:
+            "start and end must define a valid date range"
+        });
+        return;
+      }
+
+      const invoices =
+        await prisma.merchantInvoice.findMany({
+          where: {
+            status:
+              MerchantInvoiceStatus.OVERDUE,
+            dueAt: {
+              gte: periodStart,
+              lt: periodEnd
+            }
+          },
+          include: {
+            merchant: {
+              select: {
+                id: true,
+                name: true,
+                currency: true
+              }
+            }
+          },
+          orderBy: [
+            {
+              dueAt: "asc"
+            },
+            {
+              id: "asc"
+            }
+          ]
+        });
+
+      res.json({
+        periodStart:
+          periodStart.toISOString(),
+        periodEnd:
+          periodEnd.toISOString(),
+        invoices:
+          invoices.map(
+            (invoice) => ({
+              ...invoice,
+              subscriptionAmount:
+                invoice.subscriptionAmount.toFixed(
+                  2
+                ),
+              commissionAmount:
+                invoice.commissionAmount.toFixed(
+                  2
+                ),
+              totalAmount:
+                invoice.totalAmount.toFixed(
+                  2
+                )
+            })
+          )
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load platform overdue range"
+      });
+    }
+  }
+);
+
+router.get(
   "/billing/overdue/range-summary",
   async (req, res) => {
     try {
