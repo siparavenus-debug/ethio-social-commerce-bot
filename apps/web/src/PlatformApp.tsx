@@ -1347,6 +1347,29 @@ export default function PlatformApp() {
               "status",
               "dueAt"
             ]}
+            actions={r => {
+              const merchantId =
+                rowMerchantId(r);
+
+              if (!merchantId) {
+                return null;
+              }
+
+              return (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setView("Merchants");
+                    setSelected(merchantId);
+                    setLedger("invoices");
+                    setAction(null);
+                  }}
+                >
+                  Manage merchant
+                </button>
+              );
+            }}
           />
         </>
       )}
