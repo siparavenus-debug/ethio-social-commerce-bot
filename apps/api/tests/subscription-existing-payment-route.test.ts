@@ -343,6 +343,39 @@ function authHeaders(
   };
 }
 
+async function createStaffToken(
+  merchantId: string,
+  suffix: string
+): Promise<string> {
+  const staff =
+    await prisma.merchantUser.create({
+      data: {
+        merchantId,
+        email:
+          `${testPrefix}-staff-${suffix}@example.test`,
+        passwordHash:
+          "test-password-hash",
+        displayName:
+          "Day 16 Payment Review Staff",
+        role:
+          MerchantUserRole.STAFF,
+        tokenVersion:
+          0
+      }
+    });
+
+  return createAuthToken({
+    id:
+      staff.id,
+    merchantId:
+      staff.merchantId,
+    role:
+      staff.role,
+    tokenVersion:
+      staff.tokenVersion
+  });
+}
+
 beforeEach(async () => {
   await cleanup();
 });
@@ -845,6 +878,272 @@ describe(
         ).toBe(
           MerchantSubscriptionStatus.SUSPENDED
         );
+      }
+    );
+
+    it(
+      "forbids STAFF from verifying a customer payment",
+      async () => {
+        const fixture =
+          await createSuspendedFixture();
+
+        const submitResponse =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payments`,
+            {
+              method:
+                "POST",
+              headers:
+                authHeaders(
+                  fixture.token
+                ),
+              body:
+                JSON.stringify({
+                  orderId:
+                    fixture.order.id,
+                  provider:
+                    "TELEBIRR",
+                  amount:
+                    100,
+                  currency:
+                    "ETB",
+                  transactionReference:
+                    `D16-STAFF-VERIFY-${fixture.suffix}`,
+                  receiptUrl:
+                    `receipts/${fixture.merchant.id}/${fixture.order.id}/staff-verify.jpg`
+                })
+            }
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const submittedPayment =
+          await prisma.payment.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              orderId:
+                fixture.order.id
+            }
+          });
+
+        expect(
+          submittedPayment.status
+        ).toBe(
+          PaymentStatus.REVIEW_REQUIRED
+        );
+
+        const staffToken =
+          await createStaffToken(
+            fixture.merchant.id,
+            fixture.suffix
+          );
+
+        const verifyResponse =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payment-review/${submittedPayment.id}/verify`,
+            {
+              method:
+                "POST",
+              headers:
+                authHeaders(
+                  staffToken
+                ),
+              body:
+                JSON.stringify({
+                  reviewNote:
+                    "STAFF must not verify customer payments"
+                })
+            }
+          );
+
+        expect(
+          verifyResponse.status
+        ).toBe(403);
+
+        const paymentAfter =
+          await prisma.payment.findUniqueOrThrow({
+            where: {
+              id:
+                submittedPayment.id
+            }
+          });
+
+        expect(
+          paymentAfter.status
+        ).toBe(
+          PaymentStatus.REVIEW_REQUIRED
+        );
+
+        const orderAfter =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.order.id
+            }
+          });
+
+        expect(
+          orderAfter.status
+        ).toBe(
+          OrderStatus.PAYMENT_REVIEW
+        );
+
+        const productAfter =
+          await prisma.product.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.product.id
+            }
+          });
+
+        expect(
+          productAfter.stock
+        ).toBe(5);
+
+        expect(
+          await prisma.commission.count({
+            where: {
+              paymentId:
+                submittedPayment.id
+            }
+          })
+        ).toBe(0);
+      }
+    );
+
+    it(
+      "forbids STAFF from rejecting a customer payment",
+      async () => {
+        const fixture =
+          await createSuspendedFixture();
+
+        const submitResponse =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payments`,
+            {
+              method:
+                "POST",
+              headers:
+                authHeaders(
+                  fixture.token
+                ),
+              body:
+                JSON.stringify({
+                  orderId:
+                    fixture.order.id,
+                  provider:
+                    "TELEBIRR",
+                  amount:
+                    100,
+                  currency:
+                    "ETB",
+                  transactionReference:
+                    `D16-STAFF-REJECT-${fixture.suffix}`,
+                  receiptUrl:
+                    `receipts/${fixture.merchant.id}/${fixture.order.id}/staff-reject.jpg`
+                })
+            }
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const submittedPayment =
+          await prisma.payment.findFirstOrThrow({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              orderId:
+                fixture.order.id
+            }
+          });
+
+        expect(
+          submittedPayment.status
+        ).toBe(
+          PaymentStatus.REVIEW_REQUIRED
+        );
+
+        const staffToken =
+          await createStaffToken(
+            fixture.merchant.id,
+            fixture.suffix
+          );
+
+        const rejectResponse =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payment-review/${submittedPayment.id}/reject`,
+            {
+              method:
+                "POST",
+              headers:
+                authHeaders(
+                  staffToken
+                ),
+              body:
+                JSON.stringify({
+                  reviewNote:
+                    "STAFF must not reject customer payments"
+                })
+            }
+          );
+
+        expect(
+          rejectResponse.status
+        ).toBe(403);
+
+        const paymentAfter =
+          await prisma.payment.findUniqueOrThrow({
+            where: {
+              id:
+                submittedPayment.id
+            }
+          });
+
+        expect(
+          paymentAfter.status
+        ).toBe(
+          PaymentStatus.REVIEW_REQUIRED
+        );
+
+        const orderAfter =
+          await prisma.order.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.order.id
+            }
+          });
+
+        expect(
+          orderAfter.status
+        ).toBe(
+          OrderStatus.PAYMENT_REVIEW
+        );
+
+        const productAfter =
+          await prisma.product.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.product.id
+            }
+          });
+
+        expect(
+          productAfter.stock
+        ).toBe(5);
+
+        expect(
+          await prisma.commission.count({
+            where: {
+              paymentId:
+                submittedPayment.id
+            }
+          })
+        ).toBe(0);
       }
     );
   }
