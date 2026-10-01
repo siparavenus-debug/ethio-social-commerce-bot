@@ -5,6 +5,15 @@ import {
 } from "express-rate-limit";
 
 import {
+  prisma
+} from "@ethio-commerce/database";
+
+import {
+  hashPassword,
+  verifyPassword
+} from "../services/auth.js";
+
+import {
   authenticatePlatformUser,
   createPlatformAuthToken
 } from "../services/platform-auth.js";
@@ -95,6 +104,136 @@ router.post(
       res.status(500).json({
         error:
           "Platform authentication service failed"
+      });
+    }
+  }
+);
+
+/*
+ * PATCH /platform/auth/password
+ *
+ * A platform administrator may change only their own
+ * password. Successful rotation increments tokenVersion,
+ * invalidating every previously issued platform token.
+ */
+router.patch(
+  "/password",
+  requirePlatformAuth,
+  async (req, res) => {
+    try {
+      const platformUserId =
+        req.platformAuth?.id;
+
+      if (!platformUserId) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+
+        return;
+      }
+
+      const currentPassword =
+        typeof req.body?.currentPassword ===
+        "string"
+          ? req.body.currentPassword
+          : "";
+
+      const newPassword =
+        typeof req.body?.newPassword ===
+        "string"
+          ? req.body.newPassword
+          : "";
+
+      if (
+        !currentPassword ||
+        !newPassword
+      ) {
+        res.status(400).json({
+          error:
+            "Current password and new password are required"
+        });
+
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        res.status(400).json({
+          error:
+            "New password must be at least 8 characters"
+        });
+
+        return;
+      }
+
+      const user =
+        await prisma.platformUser.findUnique({
+          where: {
+            id:
+              platformUserId
+          },
+          select: {
+            passwordHash:
+              true
+          }
+        });
+
+      if (!user) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+
+        return;
+      }
+
+      const currentPasswordMatches =
+        await verifyPassword(
+          currentPassword,
+          user.passwordHash
+        );
+
+      if (!currentPasswordMatches) {
+        res.status(400).json({
+          error:
+            "Current password is incorrect"
+        });
+
+        return;
+      }
+
+      const passwordHash =
+        await hashPassword(
+          newPassword
+        );
+
+      await prisma.platformUser.update({
+        where: {
+          id:
+            platformUserId
+        },
+        data: {
+          passwordHash,
+          tokenVersion: {
+            increment:
+              1
+          }
+        }
+      });
+
+      res.json({
+        message:
+          "Password changed successfully"
+      });
+    } catch (error) {
+      console.error(
+        "Platform password change failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Platform password change failed"
       });
     }
   }

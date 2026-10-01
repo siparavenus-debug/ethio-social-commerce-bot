@@ -263,6 +263,10 @@ export default function PlatformApp() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [
+    changingPassword,
+    setChangingPassword
+  ] = useState(false);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<View>("Merchants");
   const [merchants, setMerchants] = useState<Merchant[]>([]);
@@ -697,6 +701,43 @@ export default function PlatformApp() {
       setToken(result.token);
     } catch (e) { fail(e); } finally { setBusy(false); }
   }
+  async function changePassword(
+    event: FormEvent<HTMLFormElement>
+  ) {
+    event.preventDefault();
+
+    const data =
+      new FormData(
+        event.currentTarget
+      );
+
+    setBusy(true);
+    setError("");
+
+    try {
+      await platformRequest(
+        "/auth/password",
+        token,
+        "PATCH",
+        {
+          currentPassword:
+            data.get(
+              "currentPassword"
+            ),
+          newPassword:
+            data.get(
+              "newPassword"
+            )
+        }
+      );
+
+      logout();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit(body: unknown) {
     if (!action || busy) return;
     const generation = session.current; setBusy(true); setError(""); setNotice("");
@@ -712,7 +753,120 @@ export default function PlatformApp() {
   }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
   if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button>{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
-  return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons"><a href="/">Merchant dashboard</a><button onClick={logout}>Sign out</button></div></div></header><nav aria-label="Platform sections">{([
+  return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons">
+  <button
+    type="button"
+    onClick={() =>
+      setChangingPassword(true)
+    }
+  >
+    Change password
+  </button>
+
+  <a href="/">
+    Merchant dashboard
+  </a>
+
+  <button
+    type="button"
+    onClick={logout}
+  >
+    Sign out
+  </button>
+  </div></div></header>
+
+{changingPassword && (
+  <div
+    className="pa-modal-backdrop"
+    onMouseDown={() =>
+      setChangingPassword(false)
+    }
+  >
+    <section
+      className="pa-modal pa-action-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Change password"
+      onMouseDown={event =>
+        event.stopPropagation()
+      }
+    >
+      <div className="pa-modal-head">
+        <div>
+          <p className="pa-eyebrow">
+            PLATFORM ACCOUNT
+          </p>
+
+          <h2>
+            Change password
+          </h2>
+        </div>
+
+        <button
+          type="button"
+          className="pa-icon-button"
+          onClick={() =>
+            setChangingPassword(false)
+          }
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </div>
+
+      <p>
+        Enter your current password and choose
+        a new password with at least 8 characters.
+        Changing it will sign out existing platform
+        sessions.
+      </p>
+
+      <form onSubmit={changePassword}>
+        <fieldset disabled={busy}>
+          <label>
+            Current password
+            <input
+              name="currentPassword"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
+          </label>
+
+          <label>
+            New password
+            <input
+              name="newPassword"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+          </label>
+
+          <div className="pa-buttons">
+            <button type="submit">
+              {busy
+                ? "Changing password…"
+                : "Change password"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                setChangingPassword(false)
+              }
+            >
+              Cancel
+            </button>
+          </div>
+        </fieldset>
+      </form>
+    </section>
+  </div>
+)}
+
+<nav aria-label="Platform sections">{([
     "Merchants",
     "Billing Work",
     "Revenue",
