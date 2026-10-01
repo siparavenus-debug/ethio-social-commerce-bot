@@ -473,6 +473,19 @@ async function createInvoiceFinancialFixture(
                 )
         );
 
+        await prisma.commission.update({
+            where: {
+                id:
+                    commission.id
+            },
+            data: {
+                createdAt:
+                    new Date(
+                        "2026-09-15T00:00:00.000Z"
+                    )
+            }
+        });
+
         return {
             merchant,
             plan,
@@ -4641,5 +4654,268 @@ describe(
             }
         );
 
+        it(
+            "returns current billing workload and today's resolved settlement counts",
+            async () => {
+                const {
+                    user,
+                    token
+                } =
+                    await createPlatformFixture(
+                        "billing-work-summary"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "billing-work-summary"
+                    );
+
+                const [
+                    baselineDraftInvoices,
+                    baselineAwaitingPayment,
+                    baselinePaymentReview
+                ] =
+                    await Promise.all([
+                        prisma.merchantInvoice.count({
+                            where: {
+                                status:
+                                    MerchantInvoiceStatus.DRAFT
+                            }
+                        }),
+                        prisma.merchantInvoice.count({
+                            where: {
+                                status:
+                                    MerchantInvoiceStatus.OPEN
+                            }
+                        }),
+                        prisma.merchantSettlement.count({
+                            where: {
+                                status:
+                                    MerchantSettlementStatus
+                                        .REVIEW_REQUIRED
+                            }
+                        })
+                    ]);
+
+                const now =
+                    new Date();
+
+                const todayStart =
+                    new Date(
+                        Date.UTC(
+                            now.getUTCFullYear(),
+                            now.getUTCMonth(),
+                            now.getUTCDate()
+                        )
+                    );
+
+                const tomorrowStart =
+                    new Date(
+                        Date.UTC(
+                            now.getUTCFullYear(),
+                            now.getUTCMonth(),
+                            now.getUTCDate() + 1
+                        )
+                    );
+
+                const [
+                    baselineVerifiedToday,
+                    baselineRejectedToday
+                ] =
+                    await Promise.all([
+                        prisma.platformAuditLog.count({
+                            where: {
+                                action:
+                                    "MERCHANT_SETTLEMENT_VERIFIED",
+                                createdAt: {
+                                    gte:
+                                        todayStart,
+                                    lt:
+                                        tomorrowStart
+                                }
+                            }
+                        }),
+                        prisma.platformAuditLog.count({
+                            where: {
+                                action:
+                                    "MERCHANT_SETTLEMENT_REJECTED",
+                                createdAt: {
+                                    gte:
+                                        todayStart,
+                                    lt:
+                                        tomorrowStart
+                                }
+                            }
+                        })
+                    ]);
+
+                const periodStart =
+                    new Date(
+                        "2026-09-01T00:00:00.000Z"
+                    );
+
+                const periodEnd =
+                    new Date(
+                        "2026-10-01T00:00:00.000Z"
+                    );
+
+                await prisma.merchantInvoice.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        invoiceNumber:
+                            `${testPrefix}-work-draft`,
+                        periodStart,
+                        periodEnd,
+                        subscriptionAmount:
+                            new Prisma.Decimal(
+                                "500.00"
+                            ),
+                        commissionAmount:
+                            new Prisma.Decimal(
+                                "50.00"
+                            ),
+                        totalAmount:
+                            new Prisma.Decimal(
+                                "550.00"
+                            ),
+                        currency:
+                            "ETB",
+                        status:
+                            MerchantInvoiceStatus.DRAFT
+                    }
+                });
+
+                const openInvoice =
+                    await prisma.merchantInvoice.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            invoiceNumber:
+                                `${testPrefix}-work-open`,
+                            periodStart:
+                                new Date(
+                                    "2026-10-01T00:00:00.000Z"
+                                ),
+                            periodEnd:
+                                new Date(
+                                    "2026-11-01T00:00:00.000Z"
+                                ),
+                            subscriptionAmount:
+                                new Prisma.Decimal(
+                                    "500.00"
+                                ),
+                            commissionAmount:
+                                new Prisma.Decimal(
+                                    "50.00"
+                                ),
+                            totalAmount:
+                                new Prisma.Decimal(
+                                    "550.00"
+                                ),
+                            currency:
+                                "ETB",
+                            status:
+                                MerchantInvoiceStatus.OPEN,
+                            openedAt:
+                                new Date()
+                        }
+                    });
+
+                await prisma.merchantSettlement.create({
+                    data: {
+                        merchantId:
+                            merchant.id,
+                        invoiceId:
+                            openInvoice.id,
+                        provider:
+                            MerchantSettlementProvider.TELEBIRR,
+                        status:
+                            MerchantSettlementStatus
+                                .REVIEW_REQUIRED,
+                        amount:
+                            new Prisma.Decimal(
+                                "550.00"
+                            ),
+                        currency:
+                            "ETB",
+                        idempotencyKey:
+                            `${testPrefix}-work-review`
+                    }
+                });
+
+                await prisma.platformAuditLog.createMany({
+                    data: [
+                        {
+                            actorPlatformUserId:
+                                user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_SETTLEMENT_VERIFIED",
+                            entityType:
+                                "MERCHANT_SETTLEMENT",
+                            entityId:
+                                `${testPrefix}-work-verified`
+                        },
+                        {
+                            actorPlatformUserId:
+                                user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_SETTLEMENT_REJECTED",
+                            entityType:
+                                "MERCHANT_SETTLEMENT",
+                            entityId:
+                                `${testPrefix}-work-rejected`
+                        }
+                    ]
+                });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/work/summary`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                expect(
+                    await response.json()
+                ).toEqual({
+                    pending: {
+                        draftInvoices:
+                            baselineDraftInvoices + 1,
+                        awaitingPayment:
+                            baselineAwaitingPayment + 1,
+                        paymentReview:
+                            baselinePaymentReview + 1,
+                        total:
+                            baselineDraftInvoices +
+                            baselineAwaitingPayment +
+                            baselinePaymentReview +
+                            3
+                    },
+                    resolvedToday: {
+                        verified:
+                            baselineVerifiedToday + 1,
+                        rejected:
+                            baselineRejectedToday + 1,
+                        total:
+                            baselineVerifiedToday +
+                            baselineRejectedToday +
+                            2
+                    }
+                });
+            }
+        );
     }
 );

@@ -102,6 +102,113 @@ router.get(
 );
 
 router.get(
+  "/billing/work/summary",
+  async (_req, res) => {
+    try {
+      const now =
+        new Date();
+
+      const todayStart =
+        new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate()
+          )
+        );
+
+      const tomorrowStart =
+        new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate() + 1
+          )
+        );
+
+      const [
+        draftInvoices,
+        awaitingPayment,
+        paymentReview,
+        verifiedToday,
+        rejectedToday
+      ] =
+        await Promise.all([
+          prisma.merchantInvoice.count({
+            where: {
+              status:
+                MerchantInvoiceStatus.DRAFT
+            }
+          }),
+          prisma.merchantInvoice.count({
+            where: {
+              status:
+                MerchantInvoiceStatus.OPEN
+            }
+          }),
+          prisma.merchantSettlement.count({
+            where: {
+              status:
+                MerchantSettlementStatus
+                  .REVIEW_REQUIRED
+            }
+          }),
+          prisma.platformAuditLog.count({
+            where: {
+              action:
+                "MERCHANT_SETTLEMENT_VERIFIED",
+              createdAt: {
+                gte:
+                  todayStart,
+                lt:
+                  tomorrowStart
+              }
+            }
+          }),
+          prisma.platformAuditLog.count({
+            where: {
+              action:
+                "MERCHANT_SETTLEMENT_REJECTED",
+              createdAt: {
+                gte:
+                  todayStart,
+                lt:
+                  tomorrowStart
+              }
+            }
+          })
+        ]);
+
+      res.json({
+        pending: {
+          draftInvoices,
+          awaitingPayment,
+          paymentReview,
+          total:
+            draftInvoices +
+            awaitingPayment +
+            paymentReview
+        },
+        resolvedToday: {
+          verified:
+            verifiedToday,
+          rejected:
+            rejectedToday,
+          total:
+            verifiedToday +
+            rejectedToday
+        }
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Failed to load billing work summary"
+      });
+    }
+  }
+);
+
+router.get(
   "/billing/settlements/review",
   async (_req, res) => {
     try {

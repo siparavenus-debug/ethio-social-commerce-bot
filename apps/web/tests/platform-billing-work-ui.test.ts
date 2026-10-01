@@ -40,6 +40,33 @@ describe("platform billing work UI contract", () => {
     );
   });
 
+  it("shows today's billing workload summary from the dedicated endpoint", () => {
+    expect(appSource).toContain(
+      '"/billing/work/summary"'
+    );
+    expect(appSource).toContain(
+      "Today's Billing Work"
+    );
+    expect(appSource).toContain(
+      "Draft invoices"
+    );
+    expect(appSource).toContain(
+      "Awaiting payment"
+    );
+    expect(appSource).toContain(
+      "Payment review"
+    );
+    expect(appSource).toContain(
+      "Resolved today"
+    );
+    expect(appSource).toContain(
+      "Verified"
+    );
+    expect(appSource).toContain(
+      "Rejected"
+    );
+  });
+
   it("opens draft invoices through the existing merchant-scoped lifecycle endpoint", () => {
     expect(appSource).toContain(
       'billingWorkTab !== "draft"'

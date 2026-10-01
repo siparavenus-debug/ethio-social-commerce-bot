@@ -364,6 +364,19 @@ async function createFixture(
         )
     );
 
+  await prisma.commission.update({
+    where: {
+      id:
+        commission.id
+    },
+    data: {
+      createdAt:
+        new Date(
+          "2026-09-15T00:00:00.000Z"
+        )
+    }
+  });
+
   return {
     merchant,
     plan,
@@ -405,26 +418,40 @@ describe(
           );
         }
 
-        await createCommissionAdjustment({
-          merchantId:
-            fixture.merchant.id,
-          commissionId:
-            fixture.commission.id,
-          type:
-            CommissionAdjustmentType.CORRECTION,
-          amount:
-            new Prisma.Decimal(
-              "-5.00"
-            ),
-          currency:
-            "ETB",
-          reason:
-            "Day 17 estimate correction",
-          idempotencyKey:
-            "d17-summary-estimate-adjustment",
-          actorUserId:
-            null
-        });
+        const adjustment =
+          await createCommissionAdjustment({
+            merchantId:
+              fixture.merchant.id,
+            commissionId:
+              fixture.commission.id,
+            type:
+              CommissionAdjustmentType.CORRECTION,
+            amount:
+              new Prisma.Decimal(
+                "-5.00"
+              ),
+            currency:
+              "ETB",
+            reason:
+              "Day 17 estimate correction",
+            idempotencyKey:
+              "d17-summary-estimate-adjustment",
+            actorUserId:
+              null
+          });
+
+          await prisma.commissionAdjustment.update({
+            where: {
+              id:
+                adjustment.id
+            },
+            data: {
+              createdAt:
+                new Date(
+                  "2026-09-15T00:00:00.000Z"
+                )
+            }
+          });
 
         const summary =
           await getMerchantBillingSummary(
@@ -607,7 +634,11 @@ describe(
             reason:
               "Day 17 defensive negative summary",
             idempotencyKey:
-              "d17-summary-negative"
+              "d17-summary-negative",
+            createdAt:
+              new Date(
+                "2026-09-15T00:00:00.000Z"
+              )
           }
         });
 

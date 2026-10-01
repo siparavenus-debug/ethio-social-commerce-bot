@@ -351,6 +351,19 @@ async function createFixture(
         )
     );
 
+  await prisma.commission.update({
+    where: {
+      id:
+        commission.id
+    },
+    data: {
+      createdAt:
+        new Date(
+          "2026-09-15T00:00:00.000Z"
+        )
+    }
+  });
+
   return {
     merchant,
     plan,
@@ -402,7 +415,11 @@ describe(
             reason:
               "Day 17 test correction",
             idempotencyKey:
-              "d17-basic-adjustment"
+              "d17-basic-adjustment",
+            createdAt:
+              new Date(
+                "2026-09-15T00:00:00.000Z"
+              ),
           }
         });
 
@@ -521,7 +538,11 @@ describe(
             reason:
               "Day 17 invoiced correction",
             idempotencyKey:
-              "d17-invoiced-adjustment"
+              "d17-invoiced-adjustment",
+            createdAt:
+              new Date(
+                "2026-09-15T00:00:00.000Z"
+              ),
           }
         });
 
@@ -605,7 +626,11 @@ describe(
             reason:
               "Day 17 negative estimate test",
             idempotencyKey:
-              "d17-negative-adjustment"
+              "d17-negative-adjustment",
+            createdAt:
+              new Date(
+                "2026-09-15T00:00:00.000Z"
+              ),
           }
         });
 

@@ -401,6 +401,19 @@ async function createFixture(
         )
     );
 
+  await prisma.commission.update({
+    where: {
+      id:
+        commission.id
+    },
+    data: {
+      createdAt:
+        new Date(
+          "2026-09-15T00:00:00.000Z"
+        )
+    }
+  });
+
   return {
     merchant,
     plan,
@@ -561,6 +574,19 @@ describe(
             actorUserId:
               null
           });
+
+        await prisma.commissionAdjustment.update({
+          where: {
+            id:
+              adjustment.id
+          },
+          data: {
+            createdAt:
+              new Date(
+                "2026-09-15T00:00:00.000Z"
+              )
+          }
+        });
 
         const invoice =
           await generateMerchantInvoice({
@@ -738,26 +764,40 @@ describe(
             "10.00"
           );
 
-        await createCommissionAdjustment({
-          merchantId:
-            fixture.merchant.id,
-          commissionId:
-            fixture.commission.id,
-          type:
-            CommissionAdjustmentType.CORRECTION,
-          amount:
-            new Prisma.Decimal(
-              "-0.35"
-            ),
-          currency:
-            "ETB",
-          reason:
-            "Reduce commission to zero",
-          idempotencyKey:
-            "reduce-to-zero",
-          actorUserId:
-            null
-        });
+        const adjustment =
+          await createCommissionAdjustment({
+            merchantId:
+              fixture.merchant.id,
+            commissionId:
+              fixture.commission.id,
+            type:
+              CommissionAdjustmentType.CORRECTION,
+            amount:
+              new Prisma.Decimal(
+                "-0.35"
+              ),
+            currency:
+              "ETB",
+            reason:
+              "Reduce commission to zero",
+            idempotencyKey:
+              "reduce-to-zero",
+            actorUserId:
+              null
+          });
+
+          await prisma.commissionAdjustment.update({
+            where: {
+              id:
+                adjustment.id
+            },
+            data: {
+              createdAt:
+                new Date(
+                  "2026-09-15T00:00:00.000Z"
+                )
+            }
+          });
 
         /*
          * There is no subscription charge in this

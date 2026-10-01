@@ -48,6 +48,20 @@ type BillingWorkTab =
   | "review"
   | "resolved";
 
+type BillingWorkSummary = {
+  pending: {
+    draftInvoices: number;
+    awaitingPayment: number;
+    paymentReview: number;
+    total: number;
+  };
+  resolvedToday: {
+    verified: number;
+    rejected: number;
+    total: number;
+  };
+};
+
 type RevenueCurrencySummary = {
   currency: string;
   subscriptionAmount: string;
@@ -258,6 +272,8 @@ export default function PlatformApp() {
   const [ledger, setLedger] = useState("invoices");
   const [billingWorkTab, setBillingWorkTab] =
     useState<BillingWorkTab>("review");
+  const [billingWorkSummary, setBillingWorkSummary] =
+    useState<BillingWorkSummary | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [revenueSummary, setRevenueSummary] =
     useState<RevenuePeriodSummary | null>(null);
@@ -466,18 +482,31 @@ export default function PlatformApp() {
         const route =
           billingWorkRoutes[billingWorkTab];
 
-        const result =
-          await platformRequest<
-            Record<string, Row[]>
-          >(
-            route.path,
-            token,
-            "GET",
-            undefined,
-            controller.signal
-          );
+        const [result, summary] =
+          await Promise.all([
+            platformRequest<
+              Record<string, Row[]>
+            >(
+              route.path,
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            ),
+            platformRequest<BillingWorkSummary>(
+              "/billing/work/summary",
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            )
+          ]);
 
         data = result[route.key];
+
+        if (!controller.signal.aborted) {
+          setBillingWorkSummary(summary);
+        }
       } else if (view === "Revenue") {
         let range: {
           start: string;
@@ -844,6 +873,56 @@ export default function PlatformApp() {
 )}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
       {view === "Billing Work" && (
   <>
+      <section className="pa-card">
+      <div className="pa-section-heading">
+        <div>
+          <h3>Today's Billing Work</h3>
+          <p>
+            Current pending workload and settlement
+            decisions completed today (UTC).
+          </p>
+        </div>
+      </div>
+
+      {billingWorkSummary && (
+        <div className="pa-metric-grid">
+          <div>
+            <span>Pending total</span>
+            <strong>
+              {billingWorkSummary.pending.total}
+            </strong>
+            <small>
+              Draft invoices:{" "}
+              {billingWorkSummary.pending.draftInvoices}
+            </small>
+            <small>
+              Awaiting payment:{" "}
+              {billingWorkSummary.pending.awaitingPayment}
+            </small>
+            <small>
+              Payment review:{" "}
+              {billingWorkSummary.pending.paymentReview}
+            </small>
+          </div>
+
+          <div>
+            <span>Resolved today</span>
+            <strong>
+              {billingWorkSummary.resolvedToday.total}
+            </strong>
+            <small>
+              Verified:{" "}
+              {billingWorkSummary.resolvedToday.verified}
+            </small>
+            <small>
+              Rejected:{" "}
+              {billingWorkSummary.resolvedToday.rejected}
+            </small>
+          </div>
+        </div>
+      )}
+    </section>
+
     <div className="pa-tabs">
       {(
         [
