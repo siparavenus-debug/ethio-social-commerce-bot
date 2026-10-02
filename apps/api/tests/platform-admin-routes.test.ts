@@ -29,6 +29,13 @@ import {
 import platformAdminRouter
     from "../src/routes/platform-admin.js";
 
+import authRouter
+    from "../src/routes/auth.js";
+
+import {
+    createAuthToken
+} from "../src/services/auth.js";
+
 import {
     createPlatformAuthToken
 } from "../src/services/platform-auth.js";
@@ -512,6 +519,11 @@ beforeAll(
         app.use(
             "/platform",
             platformAdminRouter
+        );
+
+        app.use(
+            "/auth",
+            authRouter
         );
 
         await new Promise<void>(
@@ -4917,5 +4929,960 @@ describe(
                 });
             }
         );
+
+        it(
+            "allows a platform user to create a merchant with its initial owner atomically",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding"
+                    );
+
+                const ownerEmail =
+                    `${testPrefix}-merchant-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    `${testPrefix} Merchant`,
+                                currency: "etb",
+                                phone: "+251911000001",
+                                address: "Addis Ababa",
+                                ownerEmail:
+                                    ownerEmail.toUpperCase(),
+                                ownerPassword:
+                                    "merchant-owner-password",
+                                ownerDisplayName:
+                                    "Merchant Owner"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(201);
+
+                const body =
+                    await response.json() as {
+                        merchant: {
+                            id: string;
+                            name: string;
+                            currency: string;
+                            accountStatus: string;
+                        };
+                        owner: {
+                            id: string;
+                            merchantId: string;
+                            email: string;
+                            displayName: string | null;
+                            role: string;
+                        };
+                    };
+
+                expect(body.merchant).toMatchObject({
+                    name:
+                        `${testPrefix} Merchant`,
+                    currency: "ETB",
+                    accountStatus: "ACTIVE"
+                });
+
+                expect(body.owner).toMatchObject({
+                    merchantId:
+                        body.merchant.id,
+                    email:
+                        ownerEmail,
+                    displayName:
+                        "Merchant Owner",
+                    role: "OWNER"
+                });
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: body.merchant.id
+                        },
+                        include: {
+                            users: true,
+                            subscription: true
+                        }
+                    });
+
+                expect(persistedMerchant).not.toBeNull();
+
+                expect(
+                    persistedMerchant?.users
+                ).toHaveLength(1);
+
+                expect(
+                    persistedMerchant?.users[0]
+                        ?.role
+                ).toBe("OWNER");
+
+                expect(
+                    persistedMerchant?.users[0]
+                        ?.passwordHash
+                ).not.toBe(
+                    "merchant-owner-password"
+                );
+
+                expect(
+                    persistedMerchant?.subscription
+                ).toBeNull();
+
+                expect(
+                    JSON.stringify(body)
+                ).not.toContain(
+                    "passwordHash"
+                );
+
+                const onboardingAudit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                body.merchant.id,
+                            action:
+                                "MERCHANT_CREATED",
+                            entityType:
+                                "MERCHANT",
+                            entityId:
+                                body.merchant.id
+                        }
+                    });
+
+                expect(
+                    onboardingAudit
+                ).not.toBeNull();
+            }
+        );
+
+        it(
+            "rejects a duplicate owner email without leaving a merchant behind",
+            async () => {
+                const fixture =
+                await createPlatformFixture(
+                    "merchant-onboarding-duplicate"
+                );
+
+            const existingMerchant =
+                await createMerchant(
+                    "merchant-onboarding-duplicate-existing"
+                );
+
+            const ownerEmail =
+                `${testPrefix}-duplicate-owner@example.com`;
+
+            await prisma.merchantUser.create({
+                data: {
+                    merchantId:
+                        existingMerchant.id,
+                        email:
+                            ownerEmail,
+                        passwordHash:
+                            "existing-password-hash",
+                        role:
+                            "OWNER"
+                    }
+                });
+
+                const merchantName =
+                    `${testPrefix} Duplicate Email Merchant`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail:
+                                    ownerEmail.toUpperCase(),
+                                ownerPassword:
+                                    "merchant-owner-password",
+                                ownerDisplayName:
+                                    "Duplicate Owner"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(409);
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(body.error).toBe(
+                    "An account with that email already exists"
+                );
+
+                const orphanMerchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    orphanMerchant
+                ).toBeNull();
+
+                const ownersWithEmail =
+                    await prisma.merchantUser.count({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    ownersWithEmail
+                ).toBe(1);
+
+                const onboardingAudit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            action:
+                                "MERCHANT_CREATED",
+                            entityType:
+                                "MERCHANT",
+                            metadata: {
+                                path: [
+                                    "ownerEmail"
+                                ],
+                                equals:
+                                    ownerEmail
+                            }
+                        }
+                    });
+
+                expect(
+                    onboardingAudit
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "rejects merchant credentials when creating a merchant",
+            async () => {
+                const merchantToken =
+                    createAuthToken({
+                        id:
+                            "merchant-user-test",
+                        merchantId:
+                            "merchant-test",
+                        role:
+                            "OWNER",
+                        tokenVersion:
+                            0
+                    });
+
+                const merchantName =
+                    `${testPrefix} Unauthorized Merchant`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail:
+                                    `${testPrefix}-unauthorized-owner@example.com`,
+                                ownerPassword:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(403);
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                `${testPrefix}-unauthorized-owner@example.com`
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+
+                const onboardingAudit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            action:
+                                "MERCHANT_CREATED",
+                            entityType:
+                                "MERCHANT",
+                            metadata: {
+                                path: [
+                                    "ownerEmail"
+                                ],
+                                equals:
+                                    `${testPrefix}-unauthorized-owner@example.com`
+                            }
+                        }
+                    });
+
+                expect(
+                    onboardingAudit
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "rejects unauthenticated merchant creation",
+            async () => {
+                const merchantName =
+                    `${testPrefix} Unauthenticated Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-unauthenticated-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail,
+                                ownerPassword:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(401);
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "rejects an invalid initial owner email without creating a merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding-invalid-email"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Invalid Email Merchant`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail:
+                                    "owner@invalid",
+                                ownerPassword:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "A valid owner email is required"
+                );
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                "owner@invalid"
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "rejects a short initial owner password without creating a merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding-short-password"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Short Password Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-short-password-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail,
+                                ownerPassword:
+                                    "short"
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Owner password must be at least 8 characters"
+                );
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "rejects an invalid merchant currency without creating a merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding-invalid-currency"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Invalid Currency Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-invalid-currency-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                currency:
+                                    "INVALID",
+                                ownerEmail,
+                                ownerPassword:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant currency must be exactly 3 characters"
+                );
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+            }
+        );
+
+        it.each([
+            {
+                field:
+                    "phone",
+                value:
+                    "1".repeat(51),
+                expectedError:
+                    "phone must be at most 50 characters"
+            },
+            {
+                field:
+                    "alternatePhone",
+                value:
+                    "1".repeat(51),
+                expectedError:
+                    "alternatePhone must be at most 50 characters"
+            },
+            {
+                field:
+                    "address",
+                value:
+                    "A".repeat(1001),
+                expectedError:
+                    "address must be at most 1000 characters"
+            }
+        ])(
+            "rejects an oversized merchant $field during onboarding",
+            async ({
+                field,
+                value,
+                expectedError
+            }) => {
+                const fixture =
+                    await createPlatformFixture(
+                        `merchant-onboarding-${field}-limit`
+                    );
+
+                const merchantName =
+                    `${testPrefix} ${field} Limit Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-${field}-limit-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                ownerEmail,
+                                ownerPassword:
+                                    "merchant-owner-password",
+                                [field]:
+                                    value
+                            })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                const body =
+                    await response.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    expectedError
+                );
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name:
+                                merchantName
+                        }
+                    });
+
+                expect(
+                    merchant
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+            }
+        );
+
+        it(
+            "ignores privileged onboarding fields and enforces safe merchant and owner defaults",
+            async () => {
+              const fixture =
+                await createPlatformFixture(
+                  "merchant-onboarding-safe-defaults"
+                );
+
+              const merchantName =
+                `${testPrefix} Safe Defaults Merchant`;
+
+              const ownerEmail =
+                `${testPrefix}-safe-defaults-owner@example.com`;
+
+              const response =
+                await fetch(
+                  `${apiBaseUrl}/platform/merchants`,
+                  {
+                    method: "POST",
+                    headers: {
+                      authorization:
+                        `Bearer ${fixture.token}`,
+                      "content-type":
+                        "application/json"
+                    },
+                    body: JSON.stringify({
+                      name:
+                        merchantName,
+                      ownerEmail,
+                      ownerPassword:
+                        "merchant-owner-password",
+
+                      // These must never control
+                      // onboarding security state.
+                      role:
+                        "STAFF",
+                      ownerRole:
+                        "ADMIN",
+                      accountStatus:
+                        "SUSPENDED",
+                      accountSuspensionReason:
+                        "caller-controlled",
+                      accountSuspendedAt:
+                        new Date().toISOString()
+                    })
+                  }
+                );
+
+              expect(
+                response.status
+              ).toBe(201);
+
+              const body =
+                await response.json() as {
+                  merchant: {
+                    id: string;
+                  };
+                  owner: {
+                    id: string;
+                    role: string;
+                  };
+                };
+
+              expect(
+                body.owner.role
+              ).toBe("OWNER");
+
+              const merchant =
+                await prisma.merchant.findUniqueOrThrow({
+                  where: {
+                    id:
+                      body.merchant.id
+                  }
+                });
+
+              expect(
+                merchant.accountStatus
+              ).toBe("ACTIVE");
+
+              expect(
+                merchant.accountSuspensionReason
+              ).toBeNull();
+
+              expect(
+                merchant.accountSuspendedAt
+              ).toBeNull();
+
+              const owner =
+                await prisma.merchantUser.findUniqueOrThrow({
+                  where: {
+                    id:
+                      body.owner.id
+                  }
+                });
+
+              expect(
+                owner.role
+              ).toBe("OWNER");
+            }
+          );
+
+          it(
+            "creates an initial merchant owner that can authenticate through the merchant login flow",
+            async () => {
+              const fixture =
+                await createPlatformFixture(
+                  "merchant-onboarding-owner-login"
+                );
+
+              const merchantName =
+                `${testPrefix} Owner Login Merchant`;
+
+              const ownerEmail =
+                `${testPrefix}-owner-login@example.com`;
+
+              const ownerPassword =
+                "merchant-owner-password";
+
+              const createResponse =
+                await fetch(
+                  `${apiBaseUrl}/platform/merchants`,
+                  {
+                    method: "POST",
+                    headers: {
+                      authorization:
+                        `Bearer ${fixture.token}`,
+                      "content-type":
+                        "application/json"
+                    },
+                    body: JSON.stringify({
+                      name:
+                        merchantName,
+                      ownerEmail:
+                        ownerEmail.toUpperCase(),
+                      ownerPassword,
+                      ownerDisplayName:
+                        "Initial Owner"
+                    })
+                  }
+                );
+
+              expect(
+                createResponse.status
+              ).toBe(201);
+
+              const createBody =
+                await createResponse.json() as {
+                  merchant: {
+                    id: string;
+                  };
+                  owner: {
+                    id: string;
+                    merchantId: string;
+                    email: string;
+                    displayName: string | null;
+                    role: string;
+                  };
+                };
+
+              const loginResponse =
+                await fetch(
+                  `${apiBaseUrl}/auth/login`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "content-type":
+                        "application/json"
+                    },
+                    body: JSON.stringify({
+                      email:
+                        ownerEmail,
+                      password:
+                        ownerPassword
+                    })
+                  }
+                );
+
+              expect(
+                loginResponse.status
+              ).toBe(200);
+
+              const loginBody =
+                await loginResponse.json() as {
+                  token: string;
+                  user: {
+                    id: string;
+                    merchantId: string;
+                    email: string;
+                    displayName: string | null;
+                    role: string;
+                  };
+                };
+
+              expect(
+                loginBody.token
+              ).toEqual(
+                expect.any(String)
+              );
+
+              expect(
+                loginBody.token.length
+              ).toBeGreaterThan(0);
+
+              expect(
+                loginBody.user
+              ).toEqual({
+                id:
+                  createBody.owner.id,
+                merchantId:
+                  createBody.merchant.id,
+                email:
+                  ownerEmail,
+                displayName:
+                  "Initial Owner",
+                role:
+                  "OWNER"
+              });
+            }
+          );
     }
 );

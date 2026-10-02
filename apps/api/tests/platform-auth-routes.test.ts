@@ -529,6 +529,7 @@ describe(
               user.id,
             tokenVersion:
               user.tokenVersion
+          });
 
         const response =
           await fetch(

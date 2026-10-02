@@ -1,4 +1,4 @@
-﻿import {
+import {
   MerchantAccountStatus,
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
@@ -55,7 +55,14 @@ import {
   SettlementReceiptNotFoundError
 } from "../services/storage.js";
 
+import {
+  hashPassword
+} from "../services/auth.js";
+
 const router = Router();
+
+const MAX_PHONE_LENGTH = 50;
+const MAX_ADDRESS_LENGTH = 1000;
 
 router.use(requirePlatformAuth);
 
@@ -821,7 +828,6 @@ router.get(
   }
 );
 
-
 router.get(
   "/billing/revenue",
   async (_req, res) => {
@@ -1161,6 +1167,237 @@ router.get(
       res.status(500).json({
         error:
           "Failed to load overdue invoices"
+      });
+    }
+  }
+);
+
+router.post(
+  "/merchants",
+  async (req, res) => {
+    const name =
+      typeof req.body?.name === "string"
+        ? req.body.name.trim()
+        : "";
+
+    const currency =
+      typeof req.body?.currency === "string"
+        ? req.body.currency
+            .trim()
+            .toUpperCase()
+        : "ETB";
+
+    const phone =
+      typeof req.body?.phone === "string" &&
+      req.body.phone.trim()
+        ? req.body.phone.trim()
+        : null;
+
+    const alternatePhone =
+      typeof req.body?.alternatePhone === "string" &&
+      req.body.alternatePhone.trim()
+        ? req.body.alternatePhone.trim()
+        : null;
+
+    const address =
+      typeof req.body?.address === "string" &&
+      req.body.address.trim()
+        ? req.body.address.trim()
+        : null;
+
+    const ownerEmail =
+      typeof req.body?.ownerEmail === "string"
+        ? req.body.ownerEmail
+            .trim()
+            .toLowerCase()
+        : "";
+
+    const ownerPassword =
+      typeof req.body?.ownerPassword === "string"
+        ? req.body.ownerPassword
+        : "";
+
+    const ownerDisplayName =
+      typeof req.body?.ownerDisplayName === "string" &&
+      req.body.ownerDisplayName.trim()
+        ? req.body.ownerDisplayName.trim()
+        : null;
+
+    if (!name) {
+      res.status(400).json({
+        error:
+          "Merchant name is required"
+      });
+      return;
+    }
+
+    if (currency.length !== 3) {
+      res.status(400).json({
+        error:
+          "Merchant currency must be exactly 3 characters"
+      });
+      return;
+    }
+
+    if (
+      phone &&
+      phone.length > MAX_PHONE_LENGTH
+    ) {
+      res.status(400).json({
+        error:
+          `phone must be at most ${MAX_PHONE_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (
+      alternatePhone &&
+      alternatePhone.length >
+        MAX_PHONE_LENGTH
+    ) {
+      res.status(400).json({
+        error:
+          `alternatePhone must be at most ${MAX_PHONE_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (
+      address &&
+      address.length >
+        MAX_ADDRESS_LENGTH
+    ) {
+      res.status(400).json({
+        error:
+          `address must be at most ${MAX_ADDRESS_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (
+      !ownerEmail ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        ownerEmail
+      )
+    ) {
+      res.status(400).json({
+        error:
+          "A valid owner email is required"
+      });
+      return;
+    }
+
+    if (ownerPassword.length < 8) {
+      res.status(400).json({
+        error:
+          "Owner password must be at least 8 characters"
+      });
+      return;
+    }
+
+    const actorPlatformUserId =
+      req.platformAuth?.id;
+
+    if (!actorPlatformUserId) {
+      res.status(401).json({
+        error:
+          "Platform authentication required"
+      });
+      return;
+    }
+
+    try {
+      const passwordHash =
+        await hashPassword(
+          ownerPassword
+        );
+
+      const result =
+        await prisma.$transaction(
+          async (tx) => {
+            const merchant =
+              await tx.merchant.create({
+                data: {
+                  name,
+                  currency:
+                    currency || "ETB",
+                  phone,
+                  alternatePhone,
+                  address
+                }
+              });
+
+            const owner =
+              await tx.merchantUser.create({
+                data: {
+                  merchantId:
+                    merchant.id,
+                  email:
+                    ownerEmail,
+                  passwordHash,
+                  displayName:
+                    ownerDisplayName,
+                  role:
+                    "OWNER"
+                },
+                select: {
+                  id: true,
+                  merchantId: true,
+                  email: true,
+                  displayName: true,
+                  role: true
+                }
+              });
+
+            await tx.platformAuditLog.create({
+              data: {
+                actorPlatformUserId,
+                merchantId:
+                  merchant.id,
+                action:
+                  "MERCHANT_CREATED",
+                entityType:
+                  "MERCHANT",
+                entityId:
+                  merchant.id,
+                metadata: {
+                  ownerUserId:
+                    owner.id,
+                  ownerEmail:
+                    owner.email
+                }
+              }
+            });
+
+            return {
+              merchant,
+              owner
+            };
+          }
+        );
+
+      res.status(201).json(result);
+    } catch (error) {
+      if (
+        error instanceof
+          Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        res.status(409).json({
+          error:
+            "An account with that email already exists"
+        });
+        return;
+      }
+
+      console.error(
+        "Failed to create merchant:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to create merchant"
       });
     }
   }
