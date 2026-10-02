@@ -297,6 +297,104 @@
       );
 
       it(
+        "allows OWNER to get a merchant user without exposing security fields",
+        async () => {
+          const fixture =
+            await createFixture(
+              "owner-get-user"
+            );
+
+          const response =
+            await fetch(
+              `${API_BASE_URL}/merchants/${fixture.merchant.id}/users/${fixture.user.id}`,
+              {
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`
+                }
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(200);
+
+          const body =
+            await response.json() as {
+              user: {
+                id: string;
+                merchantId: string;
+                email: string;
+                role: string;
+                passwordHash?: string;
+                tokenVersion?: number;
+              };
+            };
+
+          expect(
+            body.user.id
+          ).toBe(fixture.user.id);
+
+          expect(
+            body.user.merchantId
+          ).toBe(
+            fixture.merchant.id
+          );
+
+          expect(
+            body.user.email
+          ).toBe(fixture.user.email);
+
+          expect(
+            body.user.role
+          ).toBe("OWNER");
+
+          expect(
+            body.user
+          ).not.toHaveProperty(
+            "passwordHash"
+          );
+
+          expect(
+            body.user
+          ).not.toHaveProperty(
+            "tokenVersion"
+          );
+        }
+      );
+
+      it(
+        "does not expose a user belonging to another merchant",
+        async () => {
+          const owner =
+            await createFixture(
+              "cross-get-owner"
+            );
+
+          const other =
+            await createFixture(
+              "cross-get-target"
+            );
+
+          const response =
+            await fetch(
+              `${API_BASE_URL}/merchants/${owner.merchant.id}/users/${other.user.id}`,
+              {
+                headers: {
+                  authorization:
+                    `Bearer ${owner.token}`
+                }
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(404);
+        }
+      );
+
+
+      it(
         "allows OWNER to create a merchant user and records an audit log",
         async () => {
           const fixture =
@@ -447,6 +545,62 @@
           );
         }
       );
+
+      it(
+        "prevents OWNER from creating a user for another merchant",
+        async () => {
+          const owner =
+            await createFixture(
+              "cross-create-owner"
+            );
+
+          const other =
+            await createFixture(
+              "cross-create-target"
+            );
+
+          const email =
+            "cross-create-forbidden@example.test";
+
+          const response =
+            await fetch(
+              `${API_BASE_URL}/merchants/${other.merchant.id}/users`,
+              {
+                method: "POST",
+                headers: {
+                  authorization:
+                    `Bearer ${owner.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body: JSON.stringify({
+                  email,
+                  displayName:
+                    "Cross Merchant User",
+                  password:
+                    "StrongPassword123!",
+                  role: "STAFF"
+                })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(403);
+
+          const createdUser =
+            await prisma.merchantUser.findUnique({
+              where: {
+                email
+              }
+            });
+
+          expect(
+            createdUser
+          ).toBeNull();
+        }
+      );
+
 
       it(
         "forbids ADMIN from creating merchant users",
@@ -1265,6 +1419,87 @@
           ).not.toContain(
             employee.passwordHash
           );
+        }
+      );
+
+      it(
+        "prevents OWNER from deleting a user belonging to another merchant",
+        async () => {
+          const owner =
+            await createFixture(
+              "cross-delete-owner"
+            );
+
+          const other =
+            await createFixture(
+              "cross-delete-target"
+            );
+
+          const employee =
+            await prisma.merchantUser.create({
+              data: {
+                merchantId:
+                  other.merchant.id,
+                email:
+                  "cross-delete-employee@example.test",
+                passwordHash:
+                  "test-password-hash",
+                displayName:
+                  "Cross Delete Employee",
+                role:
+                  MerchantUserRole.STAFF,
+                tokenVersion: 0
+              }
+            });
+
+          const response =
+            await fetch(
+              `${API_BASE_URL}/merchants/${owner.merchant.id}/users/${employee.id}`,
+              {
+                method: "DELETE",
+                headers: {
+                  authorization:
+                    `Bearer ${owner.token}`
+                }
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(404);
+
+          const employeeAfter =
+            await prisma.merchantUser.findUnique({
+              where: {
+                id: employee.id
+              }
+            });
+
+          expect(
+            employeeAfter
+          ).not.toBeNull();
+
+          expect(
+            employeeAfter?.merchantId
+          ).toBe(
+            other.merchant.id
+          );
+
+          const auditCount =
+            await prisma.auditLog.count({
+              where: {
+                merchantId:
+                  owner.merchant.id,
+                action:
+                  "MERCHANT_USER_DELETED",
+                entityId:
+                  employee.id
+              }
+            });
+
+          expect(
+            auditCount
+          ).toBe(0);
         }
       );
 
