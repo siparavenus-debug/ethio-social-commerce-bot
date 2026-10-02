@@ -1548,6 +1548,160 @@ router.get(
   }
 );
 
+router.patch(
+  "/merchants/:merchantId/owner/password",
+  async (req, res) => {
+    try {
+      const actorPlatformUserId =
+        req.platformAuth?.id;
+
+      if (!actorPlatformUserId) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+        return;
+      }
+
+      const merchantId =
+        req.params.merchantId?.trim();
+
+      const newPassword =
+        typeof req.body?.newPassword ===
+        "string"
+          ? req.body.newPassword
+          : "";
+
+      if (!merchantId) {
+        res.status(400).json({
+          error:
+            "Merchant ID is required"
+        });
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        res.status(400).json({
+          error:
+            "New password must be at least 8 characters"
+        });
+        return;
+      }
+
+      const merchant =
+        await prisma.merchant.findUnique({
+          where: {
+            id:
+              merchantId
+          },
+          select: {
+            id: true
+          }
+        });
+
+      if (!merchant) {
+        res.status(404).json({
+          error:
+            "Merchant not found"
+        });
+        return;
+      }
+
+      const owners =
+        await prisma.merchantUser.findMany({
+          where: {
+            merchantId,
+            role:
+              "OWNER"
+          },
+          select: {
+            id: true,
+            merchantId: true,
+            email: true,
+            displayName: true,
+            role: true,
+            tokenVersion: true
+          },
+          take: 2
+        });
+
+      if (owners.length !== 1) {
+        res.status(409).json({
+          error:
+            "Merchant must have exactly one owner"
+        });
+        return;
+      }
+
+      const owner =
+        owners[0]!;
+
+      const passwordHash =
+        await hashPassword(
+          newPassword
+        );
+
+      const updatedOwner =
+        await prisma.$transaction(
+          async (tx) => {
+            const updated =
+              await tx.merchantUser.update({
+                where: {
+                  id:
+                    owner.id
+                },
+                data: {
+                  passwordHash,
+                  tokenVersion: {
+                    increment: 1
+                  }
+                },
+                select: {
+                  id: true,
+                  merchantId: true,
+                  email: true,
+                  displayName: true,
+                  role: true
+                }
+              });
+
+            await tx.platformAuditLog.create({
+              data: {
+                actorPlatformUserId,
+                merchantId,
+                action:
+                  "MERCHANT_OWNER_PASSWORD_RESET",
+                entityType:
+                  "MERCHANT_USER",
+                entityId:
+                  owner.id
+              }
+            });
+
+            return updated;
+          }
+        );
+
+      res.json({
+        message:
+          "Merchant owner password reset successfully",
+        owner:
+          updatedOwner
+      });
+    } catch (error) {
+      console.error(
+        "Failed to reset merchant owner password:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to reset merchant owner password"
+      });
+    }
+  }
+);
+
 router.post(
   "/merchants/:merchantId/subscription",
   async (req, res) => {

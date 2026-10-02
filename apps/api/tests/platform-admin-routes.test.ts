@@ -33,7 +33,10 @@ import authRouter
     from "../src/routes/auth.js";
 
 import {
-    createAuthToken
+    authenticateUser,
+    createAuthToken,
+    hashPassword,
+    verifyPassword
 } from "../src/services/auth.js";
 
 import {
@@ -589,6 +592,944 @@ afterAll(
 describe(
     "platform administration routes",
     () => {
+        it(
+            "allows a platform user to reset the sole merchant OWNER password and invalidates existing sessions",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "owner-password-recovery"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "owner-password-recovery"
+                    );
+
+                const currentPassword =
+                    "CurrentOwnerPassword123!";
+
+                const newPassword =
+                    "RecoveredOwnerPassword456!";
+
+                const passwordHash =
+                    await hashPassword(
+                        currentPassword
+                    );
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-recovery@example.test`,
+                            passwordHash,
+                            displayName:
+                                "Recovery Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const oldToken =
+                    createAuthToken({
+                        id:
+                            owner.id,
+                        merchantId:
+                            merchant.id,
+                        role:
+                            owner.role,
+                        tokenVersion:
+                            owner.tokenVersion
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        message?: string;
+                        owner?: {
+                            id?: string;
+                            merchantId?: string;
+                            email?: string;
+                            role?: string;
+                            passwordHash?: string;
+                            tokenVersion?: number;
+                        };
+                        passwordHash?: string;
+                        tokenVersion?: number;
+                    };
+
+                expect(
+                    body.message
+                ).toBe(
+                    "Merchant owner password reset successfully"
+                );
+
+                expect(
+                    body.owner?.id
+                ).toBe(
+                    owner.id
+                );
+
+                expect(
+                    body.owner?.merchantId
+                ).toBe(
+                    merchant.id
+                );
+
+                expect(
+                    body.owner?.email
+                ).toBe(
+                    owner.email
+                );
+
+                expect(
+                    body.owner?.role
+                ).toBe(
+                    "OWNER"
+                );
+
+                expect(
+                    body
+                ).not.toHaveProperty(
+                    "passwordHash"
+                );
+
+                expect(
+                    body
+                ).not.toHaveProperty(
+                    "tokenVersion"
+                );
+
+                expect(
+                    body.owner
+                ).not.toHaveProperty(
+                    "passwordHash"
+                );
+
+                expect(
+                    body.owner
+                ).not.toHaveProperty(
+                    "tokenVersion"
+                );
+
+                const updatedOwner =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                owner.id
+                        }
+                    });
+
+                expect(
+                    updatedOwner.passwordHash
+                ).not.toBe(
+                    passwordHash
+                );
+
+                expect(
+                    updatedOwner.passwordHash
+                ).not.toBe(
+                    newPassword
+                );
+
+                expect(
+                    await verifyPassword(
+                        newPassword,
+                        updatedOwner.passwordHash
+                    )
+                ).toBe(true);
+
+                expect(
+                    updatedOwner.tokenVersion
+                ).toBe(
+                    owner.tokenVersion +
+                        1
+                );
+
+                expect(
+                    await authenticateUser(
+                        owner.email,
+                        currentPassword
+                    )
+                ).toBeNull();
+
+                const recoveredOwner =
+                    await authenticateUser(
+                        owner.email,
+                        newPassword
+                    );
+
+                expect(
+                    recoveredOwner
+                ).not.toBeNull();
+
+                expect(
+                    recoveredOwner?.id
+                ).toBe(
+                    owner.id
+                );
+
+                expect(
+                    recoveredOwner?.merchantId
+                ).toBe(
+                    merchant.id
+                );
+
+                expect(
+                    recoveredOwner?.role
+                ).toBe(
+                    "OWNER"
+                );
+
+                const oldTokenResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/me`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${oldToken}`
+                            }
+                        }
+                    );
+
+                expect(
+                    oldTokenResponse.status
+                ).toBe(401);
+
+                const audit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET",
+                            entityType:
+                                "MERCHANT_USER",
+                            entityId:
+                                owner.id
+                        }
+                    });
+
+                expect(
+                    audit
+                ).not.toBeNull();
+
+                expect(
+                    JSON.stringify(
+                        audit?.metadata ?? null
+                    )
+                ).not.toContain(
+                    newPassword
+                );
+
+                expect(
+                    JSON.stringify(
+                        audit?.metadata ?? null
+                    )
+                ).not.toContain(
+                    passwordHash
+                );
+            }
+        );
+
+        it(
+            "refuses merchant owner password recovery when multiple OWNER accounts exist",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "owner-password-multiple"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "owner-password-multiple"
+                    );
+
+                const firstPassword =
+                    "FirstOwnerPassword123!";
+
+                const secondPassword =
+                    "SecondOwnerPassword123!";
+
+                const firstOwner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-multiple-first@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    firstPassword
+                                ),
+                            displayName:
+                                "First Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const secondOwner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-multiple-second@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    secondPassword
+                                ),
+                            displayName:
+                                "Second Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "RecoveredPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(409);
+
+                const body =
+                    await response.json() as {
+                        error?: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant must have exactly one owner"
+                );
+
+                const unchangedOwners =
+                    await prisma.merchantUser.findMany({
+                        where: {
+                            id: {
+                                in: [
+                                    firstOwner.id,
+                                    secondOwner.id
+                                ]
+                            }
+                        },
+                        orderBy: {
+                            email:
+                                "asc"
+                        }
+                    });
+
+                expect(
+                    unchangedOwners
+                ).toHaveLength(2);
+
+                const unchangedFirstOwner =
+                    unchangedOwners.find(
+                        (user) =>
+                            user.id ===
+                            firstOwner.id
+                    );
+
+                const unchangedSecondOwner =
+                    unchangedOwners.find(
+                        (user) =>
+                            user.id ===
+                            secondOwner.id
+                    );
+
+                expect(
+                    unchangedFirstOwner?.passwordHash
+                ).toBe(
+                    firstOwner.passwordHash
+                );
+
+                expect(
+                    unchangedFirstOwner?.tokenVersion
+                ).toBe(
+                    firstOwner.tokenVersion
+                );
+
+                expect(
+                    unchangedSecondOwner?.passwordHash
+                ).toBe(
+                    secondOwner.passwordHash
+                );
+
+                expect(
+                    unchangedSecondOwner?.tokenVersion
+                ).toBe(
+                    secondOwner.tokenVersion
+                );
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
+        it(
+            "refuses merchant owner password recovery when no OWNER account exists",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "owner-password-missing"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "owner-password-missing"
+                    );
+
+                const staffPassword =
+                    "StaffPassword123!";
+
+                const staff =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-missing-staff@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    staffPassword
+                                ),
+                            displayName:
+                                "Recovery Staff",
+                            role:
+                                "STAFF",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "RecoveredPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(409);
+
+                const body =
+                    await response.json() as {
+                        error?: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant must have exactly one owner"
+                );
+
+                const unchangedStaff =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                staff.id
+                        }
+                    });
+
+                expect(
+                    unchangedStaff.passwordHash
+                ).toBe(
+                    staff.passwordHash
+                );
+
+                expect(
+                    unchangedStaff.tokenVersion
+                ).toBe(
+                    staff.tokenVersion
+                );
+
+                expect(
+                    await verifyPassword(
+                        staffPassword,
+                        unchangedStaff.passwordHash
+                    )
+                ).toBe(true);
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
+        it(
+            "rejects a short merchant owner recovery password without changing credentials",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "owner-password-short"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "owner-password-short"
+                    );
+
+                const currentPassword =
+                    "CurrentOwnerPassword123!";
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-short@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    currentPassword
+                                ),
+                            displayName:
+                                "Recovery Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "short"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(400);
+
+                const body =
+                    await response.json() as {
+                        error?: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "New password must be at least 8 characters"
+                );
+
+                const unchangedOwner =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                owner.id
+                        }
+                    });
+
+                expect(
+                    unchangedOwner.passwordHash
+                ).toBe(
+                    owner.passwordHash
+                );
+
+                expect(
+                    unchangedOwner.tokenVersion
+                ).toBe(
+                    owner.tokenVersion
+                );
+
+                expect(
+                    await authenticateUser(
+                        owner.email,
+                        currentPassword
+                    )
+                ).not.toBeNull();
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
+        it(
+            "rejects a merchant OWNER token from the platform owner password recovery endpoint",
+            async () => {
+                const merchant =
+                    await createMerchant(
+                        "owner-password-boundary"
+                    );
+
+                const currentPassword =
+                    "CurrentOwnerPassword123!";
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-boundary@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    currentPassword
+                                ),
+                            displayName:
+                                "Boundary Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const merchantToken =
+                    createAuthToken({
+                        id:
+                            owner.id,
+                        merchantId:
+                            merchant.id,
+                        role:
+                            owner.role,
+                        tokenVersion:
+                            owner.tokenVersion
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "UnauthorizedPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(403);
+
+                const unchangedOwner =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                owner.id
+                        }
+                    });
+
+                expect(
+                    unchangedOwner.passwordHash
+                ).toBe(
+                    owner.passwordHash
+                );
+
+                expect(
+                    unchangedOwner.tokenVersion
+                ).toBe(
+                    owner.tokenVersion
+                );
+
+                expect(
+                    await authenticateUser(
+                        owner.email,
+                        currentPassword
+                    )
+                ).not.toBeNull();
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
+        it(
+            "rejects unauthenticated merchant owner password recovery",
+            async () => {
+                const merchant =
+                    await createMerchant(
+                        "owner-password-unauthenticated"
+                    );
+
+                const currentPassword =
+                    "CurrentOwnerPassword123!";
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-owner-password-unauthenticated@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    currentPassword
+                                ),
+                            displayName:
+                                "Recovery Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "UnauthorizedPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(401);
+
+                const unchangedOwner =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                owner.id
+                        }
+                    });
+
+                expect(
+                    unchangedOwner.passwordHash
+                ).toBe(
+                    owner.passwordHash
+                );
+
+                expect(
+                    unchangedOwner.tokenVersion
+                ).toBe(
+                    owner.tokenVersion
+                );
+
+                expect(
+                    await authenticateUser(
+                        owner.email,
+                        currentPassword
+                    )
+                ).not.toBeNull();
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
+        it(
+            "returns 404 when recovering the owner password for a nonexistent merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "owner-password-missing-merchant"
+                    );
+
+                const merchantId =
+                    "nonexistent-merchant";
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchantId}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "RecoveredPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(404);
+
+                const body =
+                    await response.json() as {
+                        error?: string;
+                    };
+
+                expect(
+                    body.error
+                ).toBe(
+                    "Merchant not found"
+                );
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId,
+                            action:
+                                "MERCHANT_OWNER_PASSWORD_RESET"
+                        }
+                    });
+
+                expect(
+                    audits
+                ).toHaveLength(0);
+            }
+        );
+
         it(
             "allows a platform user to initialize and transition a merchant subscription",
             async () => {
