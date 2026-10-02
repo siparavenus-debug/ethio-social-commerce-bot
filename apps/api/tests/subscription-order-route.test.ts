@@ -338,6 +338,73 @@ describe(
   "subscription enforcement on merchant order routes",
   () => {
     it(
+      "blocks a merchant with no subscription from creating new commerce without mutating inventory",
+      async () => {
+        const fixture =
+          await createFixture(
+            "no-subscription",
+            MerchantSubscriptionStatus.ACTIVE
+          );
+
+        await prisma.merchantSubscription.delete({
+          where: {
+            merchantId:
+              fixture.merchant.id
+          }
+        });
+
+        const response =
+          await postOrder(
+            fixture.merchant.id,
+            fixture.token,
+            fixture.product.id,
+            "D16-NO-SUBSCRIPTION-ORDER"
+          );
+
+        expect(
+          response.status
+        ).toBe(403);
+
+        expect(
+          await response.json()
+        ).toEqual({
+          error:
+            "Merchant subscription does not allow this action"
+        });
+
+        expect(
+          await prisma.order.count({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          })
+        ).toBe(0);
+
+        const product =
+          await prisma.product.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.product.id
+            }
+          });
+
+        expect(
+          product.stock
+        ).toBe(5);
+
+        expect(
+          await prisma.auditLog.count({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          })
+        ).toBe(0);
+      }
+    );
+
+    it(
       "allows an ACTIVE merchant to create new commerce",
       async () => {
         const fixture =
