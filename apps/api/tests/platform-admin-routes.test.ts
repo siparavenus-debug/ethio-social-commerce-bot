@@ -1772,6 +1772,202 @@ describe(
         );
 
         it(
+            "immediately blocks and restores an existing merchant session when the account is suspended and reinstated",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-account-session-enforcement"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "merchant-account-session-enforcement"
+                    );
+
+                const user =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId:
+                                merchant.id,
+                            email:
+                                `${testPrefix}-merchant-account-session-enforcement@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    "MerchantPassword123!"
+                                ),
+                            displayName:
+                                "Merchant Account Session Owner",
+                            role:
+                                "OWNER",
+                            tokenVersion:
+                                0
+                        }
+                    });
+
+                const merchantToken =
+                    createAuthToken({
+                        id:
+                            user.id,
+                        merchantId:
+                            merchant.id,
+                        role:
+                            user.role,
+                        tokenVersion:
+                            user.tokenVersion
+                    });
+
+                const activeResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/me`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`
+                            }
+                        }
+                    );
+
+                expect(
+                    activeResponse.status
+                ).toBe(
+                    200
+                );
+
+                const suspendResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "SUSPENDED",
+                                    reason:
+                                        "Session enforcement test"
+                                })
+                        }
+                    );
+
+                expect(
+                    suspendResponse.status
+                ).toBe(
+                    200
+                );
+
+                const suspendedResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/me`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`
+                            }
+                        }
+                    );
+
+                expect(
+                    suspendedResponse.status
+                ).toBe(
+                    403
+                );
+
+                const suspendedBody =
+                    await suspendedResponse.json() as {
+                        error: string;
+                    };
+
+                expect(
+                    suspendedBody.error
+                ).toBe(
+                    "Merchant account is suspended"
+                );
+
+                const reinstateResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/account/status`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    nextStatus:
+                                        "ACTIVE",
+                                    reason:
+                                        "Session enforcement test completed"
+                                })
+                        }
+                    );
+
+                expect(
+                    reinstateResponse.status
+                ).toBe(
+                    200
+                );
+
+                const restoredResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/me`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`
+                            }
+                        }
+                    );
+
+                expect(
+                    restoredResponse.status
+                ).toBe(
+                    200
+                );
+
+                const restoredBody =
+                    await restoredResponse.json() as {
+                        user: {
+                            id: string;
+                            merchantId: string;
+                        };
+                    };
+
+                expect(
+                    restoredBody.user
+                ).toMatchObject({
+                    id:
+                        user.id,
+                    merchantId:
+                        merchant.id
+                });
+
+                const unchangedUser =
+                    await prisma.merchantUser.findUniqueOrThrow({
+                        where: {
+                            id:
+                                user.id
+                        }
+                    });
+
+                expect(
+                    unchangedUser.tokenVersion
+                ).toBe(
+                    user.tokenVersion
+                );
+            }
+        );
+
+        it(
             "allows a platform user to suspend and reinstate a merchant account with reasons",
             async () => {
                 const fixture =
