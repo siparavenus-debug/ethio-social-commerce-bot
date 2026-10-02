@@ -755,6 +755,16 @@ export default function App() {
   ] = useState("");
 
   const [
+    changingPassword,
+    setChangingPassword
+  ] = useState(false);
+
+  const [
+    changingPasswordLoading,
+    setChangingPasswordLoading
+  ] = useState(false);
+
+  const [
     rejectingPaymentId,
     setRejectingPaymentId
   ] = useState<string | null>(
@@ -829,6 +839,8 @@ export default function App() {
 
     setError("");
     setSuccess("");
+    setChangingPassword(false);
+    setChangingPasswordLoading(false);
     setActionId(null);
     setConfirmingDeliveryOrderId(
       null
@@ -917,6 +929,78 @@ export default function App() {
       );
     } finally {
       setLoginLoading(false);
+    }
+  }
+
+  async function changePassword(
+    currentPassword: string,
+    newPassword: string,
+    confirmPassword: string
+  ) {
+    if (!currentPassword) {
+      setError(
+        "Please enter your current password."
+      );
+      return;
+    }
+
+    if (!newPassword) {
+      setError(
+        "Please enter your new password."
+      );
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setError(
+        "New password must be at least 8 characters."
+      );
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setError(
+        "New password and confirmation do not match."
+      );
+      return;
+    }
+
+    try {
+      setChangingPasswordLoading(true);
+      setError("");
+      setSuccess("");
+
+      const response =
+        await apiFetch(
+          "/auth/password",
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              currentPassword,
+              newPassword
+            })
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to change password"
+        );
+      }
+
+      logout();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to change password"
+      );
+    } finally {
+      setChangingPasswordLoading(false);
     }
   }
 
@@ -3388,6 +3472,24 @@ export default function App() {
                 loadingProducts
                 ? "Refreshing..."
                 : "Refresh"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setSuccess("");
+                setChangingPassword(true);
+              }}
+              disabled={
+                changingPasswordLoading ||
+                actionId !== null
+              }
+              style={
+                styles.refreshButton
+              }
+            >
+              Change password
             </button>
 
             <button
@@ -8382,6 +8484,177 @@ export default function App() {
           </section>
         )}
       </main>
+
+      {changingPassword && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Change password"
+          onClick={() => {
+            if (
+              !changingPasswordLoading
+            ) {
+              setChangingPassword(false);
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1001,
+            background:
+              "rgba(15, 23, 42, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "24px"
+          }}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+
+              const formData =
+                new FormData(
+                  event.currentTarget
+                );
+
+              void changePassword(
+                String(
+                  formData.get(
+                    "currentPassword"
+                  ) || ""
+                ),
+                String(
+                  formData.get(
+                    "newPassword"
+                  ) || ""
+                ),
+                String(
+                  formData.get(
+                    "confirmPassword"
+                  ) || ""
+                )
+              );
+            }}
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+            style={{
+              width: "min(100%, 440px)",
+              borderRadius: "12px",
+              background: "#ffffff",
+              padding: "24px",
+              boxShadow:
+                "0 20px 50px rgba(15, 23, 42, 0.3)"
+            }}
+          >
+            <h3
+              style={{
+                margin: "0 0 8px"
+              }}
+            >
+              Change password
+            </h3>
+
+            <p
+              style={{
+                margin: "0 0 18px",
+                color: "#667085",
+                fontSize: "14px"
+              }}
+            >
+              Changing your password
+              will sign you out of your
+              current session.
+            </p>
+
+            <label
+              style={styles.formLabel}
+            >
+              Current password
+            </label>
+            <input
+              name="currentPassword"
+              type="password"
+              autoComplete="current-password"
+              required
+              disabled={
+                changingPasswordLoading
+              }
+              style={styles.formInput}
+            />
+
+            <label
+              style={styles.formLabel}
+            >
+              New password
+            </label>
+            <input
+              name="newPassword"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              disabled={
+                changingPasswordLoading
+              }
+              style={styles.formInput}
+            />
+
+            <label
+              style={styles.formLabel}
+            >
+              Confirm new password
+            </label>
+            <input
+              name="confirmPassword"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              disabled={
+                changingPasswordLoading
+              }
+              style={styles.formInput}
+            />
+
+            <div
+              style={styles.rejectActions}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setChangingPassword(
+                    false
+                  )
+                }
+                disabled={
+                  changingPasswordLoading
+                }
+                style={
+                  styles.cancelButton
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={
+                  changingPasswordLoading
+                }
+                style={
+                  styles.verifyButton
+                }
+              >
+                {changingPasswordLoading
+                  ? "Changing..."
+                  : "Change password"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {categoryImagePreview && (
         <div
