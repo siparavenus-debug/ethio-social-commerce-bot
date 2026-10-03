@@ -464,6 +464,122 @@ describe(
     );
 
     it(
+      "allows only one concurrent order to consume limited stock",
+      async () => {
+        const fixture =
+          await createFixture(
+            "concurrent-stock",
+            MerchantSubscriptionStatus.ACTIVE
+          );
+
+        /*
+         * Both orders independently request 4 units
+         * from the same product whose starting stock
+         * is 5.
+         *
+         * Only one transaction may commit.
+         */
+        const responses =
+          await Promise.all([
+            postOrder(
+              fixture.merchant.id,
+              fixture.token,
+              fixture.product.id,
+              "D16-CONCURRENT-STOCK-A",
+              4
+            ),
+            postOrder(
+              fixture.merchant.id,
+              fixture.token,
+              fixture.product.id,
+              "D16-CONCURRENT-STOCK-B",
+              4
+            )
+          ]);
+
+        const successfulResponses =
+          responses.filter(
+            (response) =>
+              response.status === 201
+          );
+
+        const rejectedResponses =
+          responses.filter(
+            (response) =>
+              response.status === 400
+          );
+
+        expect(
+          successfulResponses
+        ).toHaveLength(1);
+
+        expect(
+          rejectedResponses
+        ).toHaveLength(1);
+
+        /*
+         * Exactly one order must survive.
+         *
+         * The losing transaction creates its order
+         * before attempting the conditional stock
+         * decrement, so this assertion also proves
+         * that the losing order creation rolled back.
+         */
+        const storedOrders =
+          await prisma.order.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              orderNumber: {
+                in: [
+                  "D16-CONCURRENT-STOCK-A",
+                  "D16-CONCURRENT-STOCK-B"
+                ]
+              }
+            }
+          });
+
+        expect(
+          storedOrders
+        ).toHaveLength(1);
+
+        /*
+         * Starting stock is 5 and the winning order
+         * consumes 4. A second decrement must never
+         * commit.
+         */
+        const product =
+          await prisma.product.findUniqueOrThrow({
+            where: {
+              id:
+                fixture.product.id
+            }
+          });
+
+        expect(
+          product.stock
+        ).toBe(1);
+
+        /*
+         * Only the committed transaction may leave
+         * an inventory audit record behind.
+         */
+        expect(
+          await prisma.auditLog.count({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              action:
+                "PRODUCT_STOCK_DEDUCTED",
+              entityId:
+                fixture.product.id
+            }
+          })
+        ).toBe(1);
+      }
+    );
+
+    it(
       "rejects order creation when delivery details are missing without mutating inventory",
       async () => {
         const fixture =
