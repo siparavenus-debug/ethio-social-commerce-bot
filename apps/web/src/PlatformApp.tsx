@@ -243,7 +243,15 @@ function ActionForm({ action, busy, submit, close }: { action: Action; busy: boo
     try {
       const values: Record<string, unknown> = {};
       for (const f of action.fields) {
-        const raw = String(data.get(f.name) ?? "").trim();
+        const input =
+          String(
+            data.get(f.name) ?? ""
+          );
+
+        const raw =
+          f.type === "password"
+            ? input
+            : input.trim();
         if (!raw && f.optional) continue;
         values[f.name] = f.type === "datetime-local" ? new Date(raw).toISOString() : f.type === "json" ? JSON.parse(raw) : raw;
       }
@@ -751,6 +759,59 @@ export default function PlatformApp() {
     const fields = [...(plan ? [] : [field("code", "Plan code")]), field("name", "Name"), field("monthlyPrice", "Monthly price", "number"), field("annualPrice", "Annual price", "number"), field("currency", "Currency (3-letter code)"), field("commissionRate", "Commission rate (decimal, e.g. 0.05 = 5%)", "number"), field("features", "Features (JSON)", "json", true)].map(f => ({ ...f, value: plan?.[f.name] }));
     setAction({ title: plan ? `Edit ${plan.name}` : "Create plan", path: plan ? `/plans/${encodeURIComponent(plan.id)}` : "/plans", method: plan ? "PATCH" : "POST", fields, note: "Existing subscription price and commission snapshots remain governed by the backend." });
   }
+  function merchantAction() {
+    setAction({
+      title: "Create merchant",
+      path: "/merchants",
+      method: "POST",
+      fields: [
+        field("name", "Merchant name"),
+        {
+          ...field(
+            "currency",
+            "Currency (3-letter code)"
+          ),
+          value: "ETB"
+        },
+        field(
+          "phone",
+          "Phone",
+          "text",
+          true
+        ),
+        field(
+          "alternatePhone",
+          "Alternate phone",
+          "text",
+          true
+        ),
+        field(
+          "address",
+          "Address",
+          "text",
+          true
+        ),
+        field(
+          "ownerEmail",
+          "Owner email",
+          "email"
+        ),
+        field(
+          "ownerPassword",
+          "Owner password",
+          "password"
+        ),
+        field(
+          "ownerDisplayName",
+          "Owner display name",
+          "text",
+          true
+        )
+      ],
+      note:
+        "Subscription is initialized separately after the merchant account is created."
+    });
+  }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
   if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button>{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
   return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons">
@@ -878,6 +939,15 @@ export default function PlatformApp() {
     {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
     {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
       {view === "Merchants" && !selected && <>
+        <div className="pa-buttons">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={merchantAction}
+          >
+            Create merchant
+          </button>
+        </div>
         <div className="pa-merchant-toolbar">
           <label className="pa-search">Find a merchant<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, phone, address, status or plan" /></label>
           <label>Status<select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="ALL">All statuses</option><option value="NO_SUBSCRIPTION">No subscription</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label>
