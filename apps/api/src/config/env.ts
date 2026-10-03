@@ -38,6 +38,22 @@ if (
   );
 }
 
+export function validateAuthSecretSeparation(
+  merchantSecret: string,
+  platformSecret: string
+): void {
+  if (merchantSecret === platformSecret) {
+    throw new Error(
+      "AUTH_SECRET and PLATFORM_AUTH_SECRET must be different."
+    );
+  }
+}
+
+validateAuthSecretSeparation(
+  authSecret,
+  platformAuthSecret
+);
+
 const deliveryConfirmationSecret =
   process.env.DELIVERY_CONFIRMATION_SECRET?.trim();
 

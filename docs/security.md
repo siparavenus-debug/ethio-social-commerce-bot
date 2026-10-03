@@ -101,7 +101,9 @@ Examples include:
 - TIKTOK_CLIENT_SECRET
 - ANTHROPIC_API_KEY
 - GEMINI_API_KEY
-- SESSION_SECRET
+- AUTH_SECRET
+- PLATFORM_AUTH_SECRET
+- DELIVERY_CONFIRMATION_SECRET
 
 Local secrets must be stored in environment variables.
 
@@ -118,6 +120,14 @@ but never real credentials.
 Protected merchant functionality must require authentication.
 
 Authentication must be handled by the backend.
+
+Merchant authentication and platform administrator authentication are separate security domains.
+
+Merchant authentication tokens must be signed with `AUTH_SECRET`.
+
+Platform administrator authentication tokens must be signed with `PLATFORM_AUTH_SECRET`.
+
+`AUTH_SECRET` and `PLATFORM_AUTH_SECRET` must be different.
 
 Sessions or authentication tokens must be:
 

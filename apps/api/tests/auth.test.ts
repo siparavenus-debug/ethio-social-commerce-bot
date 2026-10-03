@@ -1,13 +1,45 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  validateAuthSecretSeparation
+} from "../src/config/env.js";
+
+import {
   createAuthToken,
   hashPassword,
   verifyAuthToken,
   verifyPassword
 } from "../src/services/auth.js";
 
+import {
+  createPlatformAuthToken,
+  verifyPlatformAuthToken
+} from "../src/services/platform-auth.js";
+
 describe("authentication security", () => {
+  it("accepts different merchant and platform authentication secrets", () => {
+    expect(() =>
+      validateAuthSecretSeparation(
+        "merchant-secret-that-is-at-least-32-characters",
+        "platform-secret-that-is-at-least-32-characters"
+      )
+    ).not.toThrow();
+  });
+
+  it("rejects identical merchant and platform authentication secrets", () => {
+    const sharedSecret =
+      "shared-secret-that-is-at-least-32-characters";
+
+    expect(() =>
+      validateAuthSecretSeparation(
+        sharedSecret,
+        sharedSecret
+      )
+    ).toThrow(
+      "AUTH_SECRET and PLATFORM_AUTH_SECRET must be different."
+    );
+  });
+
   it("hashes a password and verifies the correct password", async () => {
     const password = "CorrectPassword123!";
 
@@ -53,6 +85,49 @@ describe("authentication security", () => {
     expect(payload?.userId).toBe("user-123");
     expect(payload?.merchantId).toBe("merchant-123");
     expect(payload?.role).toBe("OWNER");
+  });
+
+  it("creates and verifies a platform authentication token", () => {
+    const token = createPlatformAuthToken({
+      id: "platform-user-123",
+      tokenVersion: 1
+    });
+
+    const payload =
+      verifyPlatformAuthToken(token);
+
+    expect(payload).not.toBeNull();
+    expect(
+      payload?.platformUserId
+    ).toBe("platform-user-123");
+    expect(
+      payload?.tokenVersion
+    ).toBe(1);
+  });
+
+  it("rejects a merchant token as a platform authentication token", () => {
+    const token = createAuthToken({
+      id: "user-123",
+      merchantId: "merchant-123",
+      role: "OWNER",
+      tokenVersion: 1
+    });
+
+    expect(
+      verifyPlatformAuthToken(token)
+    ).toBeNull();
+  });
+
+  it("rejects a platform token as a merchant authentication token", () => {
+    const token =
+      createPlatformAuthToken({
+        id: "platform-user-123",
+        tokenVersion: 1
+      });
+
+    expect(
+      verifyAuthToken(token)
+    ).toBeNull();
   });
 
   it("rejects a tampered authentication token", () => {
