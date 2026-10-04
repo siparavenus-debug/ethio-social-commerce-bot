@@ -7,7 +7,6 @@
         "build": "tsc",
         "start": "node dist/index.js",
         "test": "vitest run",
-        "auth:create-user": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/create-merchant-user.ts",
         "platform-auth:create-user": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/create-platform-user.ts",
         "billing:process-overdue": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/process-overdue-invoices.ts",
         "ai:evaluate-multilingual": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/evaluate-multilingual-ai.ts"

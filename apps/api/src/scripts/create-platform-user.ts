@@ -9,7 +9,8 @@ import {
 } from "../services/auth.js";
 
 function ask(
-  question: string
+  question: string,
+  trim = true
 ): Promise<string> {
   const rl =
     readline.createInterface({
@@ -25,7 +26,9 @@ function ask(
           rl.close();
 
           resolve(
-            answer.trim()
+            trim
+              ? answer.trim()
+              : answer
           );
         }
       );
@@ -55,7 +58,8 @@ async function main() {
 
   const password =
     await ask(
-      "Password: "
+      "Password: ",
+      false
     );
 
   if (!email) {

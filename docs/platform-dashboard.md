@@ -10,7 +10,7 @@ The platform token is held in tab session storage under `ethio-commerce-platform
 
 ## Available operations
 
-- Merchants: search, inspect full records, initialize subscriptions, and request allowed status transitions.
+- Merchants: create new merchants with their initial OWNER account, search and inspect existing merchants, initialize subscriptions, and request allowed status transitions.
 - Plans: create, edit, activate and deactivate plans. Price and commission values are passed as decimal strings; historical subscription snapshots remain controlled by the existing services.
 - Invoices: view persisted history, generate DRAFT invoices with explicit periods and optional subscription charges, and open DRAFT invoices.
 - Commissions: inspect the existing ledger, net amounts and adjustment details. The existing platform API exposes no commission mutation route.
@@ -18,7 +18,7 @@ The platform token is held in tab session storage under `ethio-commerce-platform
 - Overdue and revenue: display the server's OVERDUE and PAID invoice records respectively, retaining each record's currency and persisted totals.
 - Audit: inspect the latest 100 entries and full metadata.
 
-Dates entered in forms use the browser's local timezone and are sent as ISO timestamps. Mutation forms provide a review step; the backend remains authoritative. The UI adds no plan reassignment, ledger mutation, recalculation, automatic overdue policy, or merchant creation endpoint.
+Dates entered in forms use the browser's local timezone and are sent as ISO timestamps. Mutation forms provide a review step; the backend remains authoritative. The UI adds no plan reassignment, ledger mutation, recalculation, or automatic overdue policy.
 
 ## Files and verification
 
