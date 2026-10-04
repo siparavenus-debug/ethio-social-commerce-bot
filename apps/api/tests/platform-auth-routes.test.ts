@@ -41,6 +41,36 @@ let apiBaseUrl =
 
 async function cleanup():
   Promise<void> {
+  const testUsers =
+    await prisma.platformUser.findMany({
+      where: {
+        email: {
+          startsWith:
+            `${testPrefix}-`
+        }
+      },
+      select: {
+        id: true
+      }
+    });
+
+  const testUserIds =
+    testUsers.map(
+      (user) =>
+        user.id
+    );
+
+  if (testUserIds.length > 0) {
+    await prisma.platformAuditLog.deleteMany({
+      where: {
+        actorPlatformUserId: {
+          in:
+            testUserIds
+        }
+      }
+    });
+  }
+
   await prisma.platformUser.deleteMany({
     where: {
       email: {
@@ -212,6 +242,26 @@ describe(
         ).toBe(
           user.tokenVersion + 1
         );
+
+        const passwordChangeAudits =
+          await prisma.platformAuditLog.findMany({
+            where: {
+              actorPlatformUserId:
+                user.id,
+              merchantId:
+                null,
+              action:
+                "PLATFORM_PASSWORD_CHANGED",
+              entityType:
+                "PLATFORM_USER",
+              entityId:
+                user.id
+            }
+          });
+
+        expect(
+          passwordChangeAudits
+        ).toHaveLength(1);
 
         expect(
           await authenticatePlatformUser(

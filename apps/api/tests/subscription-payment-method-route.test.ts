@@ -209,6 +209,116 @@ async function createSuspendedFixture() {
   };
 }
 
+async function createActiveFixture() {
+  const merchant =
+    await prisma.merchant.create({
+      data: {
+        name:
+          `${testPrefix}-active-merchant`,
+        currency:
+          "ETB"
+      }
+    });
+
+  const user =
+    await prisma.merchantUser.create({
+      data: {
+        merchantId:
+          merchant.id,
+        email:
+          `${testPrefix}-active@example.test`,
+        passwordHash:
+          "test-password-hash",
+        role:
+          "OWNER",
+        tokenVersion:
+          0
+      }
+    });
+
+  const plan =
+    await prisma.subscriptionPlan.create({
+      data: {
+        code:
+          `${testPrefix}-active-plan`,
+        name:
+          "Day 16 Active Payment Method Plan",
+        monthlyPrice:
+          "500.00",
+        annualPrice:
+          "5000.00",
+        currency:
+          "ETB",
+        commissionRate:
+          "0.035000",
+        isActive:
+          true
+      }
+    });
+
+  await prisma.merchantSubscription.create({
+    data: {
+      merchantId:
+        merchant.id,
+      planId:
+        plan.id,
+      status:
+        MerchantSubscriptionStatus.ACTIVE,
+      billingInterval:
+        SubscriptionBillingInterval.MONTHLY,
+      priceSnapshot:
+        "500.00",
+      commissionRateSnapshot:
+        "0.035000",
+      currency:
+        "ETB",
+      currentPeriodStart:
+        new Date(
+          "2026-09-01T00:00:00.000Z"
+        ),
+      currentPeriodEnd:
+        new Date(
+          "2026-10-01T00:00:00.000Z"
+        )
+    }
+  });
+
+  const paymentMethod =
+    await prisma.paymentMethod.create({
+      data: {
+        merchantId:
+          merchant.id,
+        provider:
+          PaymentProvider.TELEBIRR,
+        accountName:
+          "Existing Account",
+        accountNumber:
+          "0911000000",
+        status:
+          PaymentMethodStatus.ACTIVE
+      }
+    });
+
+  const token =
+    createAuthToken({
+      id:
+        user.id,
+      merchantId:
+        merchant.id,
+      role:
+        user.role,
+      tokenVersion:
+        user.tokenVersion
+    });
+
+  return {
+    merchant,
+    user,
+    paymentMethod,
+    token
+  };
+}
+
 function authHeaders(
   token: string
 ) {
@@ -232,6 +342,133 @@ afterAll(async () => {
 describe(
   "subscription enforcement on payment-method routes",
   () => {
+    it(
+      "audits successful payment-method creation",
+      async () => {
+        const fixture =
+          await createActiveFixture();
+
+        const response =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payment-methods`,
+            {
+              method:
+                "POST",
+              headers:
+                authHeaders(
+                  fixture.token
+                ),
+              body:
+                JSON.stringify({
+                  provider:
+                    PaymentProvider.CBE_BIRR,
+                  accountName:
+                    "New CBE Account",
+                  accountNumber:
+                    "1000123456789",
+                  status:
+                    PaymentMethodStatus.ACTIVE
+                })
+            }
+          );
+
+        expect(
+          response.status
+        ).toBe(201);
+
+        const created =
+          await response.json();
+
+        const audits =
+          await prisma.auditLog.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              actorUserId:
+                fixture.user.id,
+              action:
+                "PAYMENT_METHOD_CREATED",
+              entityType:
+                "PAYMENT_METHOD",
+              entityId:
+                created.id
+            }
+          });
+
+        expect(
+          audits
+        ).toHaveLength(1);
+
+        expect(
+          audits[0]?.metadata
+        ).toBeNull();
+      }
+    );
+
+    it(
+      "audits successful payment-method updates without exposing account values",
+      async () => {
+        const fixture =
+          await createActiveFixture();
+
+        const response =
+          await fetch(
+            `${API_BASE_URL}/merchants/${fixture.merchant.id}/payment-methods/${fixture.paymentMethod.id}`,
+            {
+              method:
+                "PATCH",
+              headers:
+                authHeaders(
+                  fixture.token
+                ),
+              body:
+                JSON.stringify({
+                  accountName:
+                    "Updated Account",
+                  accountNumber:
+                    "0911222333",
+                  status:
+                    PaymentMethodStatus.INACTIVE
+                })
+            }
+          );
+
+        expect(
+          response.status
+        ).toBe(200);
+
+        const audits =
+          await prisma.auditLog.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              actorUserId:
+                fixture.user.id,
+              action:
+                "PAYMENT_METHOD_UPDATED",
+              entityType:
+                "PAYMENT_METHOD",
+              entityId:
+                fixture.paymentMethod.id
+            }
+          });
+
+        expect(
+          audits
+        ).toHaveLength(1);
+
+        expect(
+          audits[0]?.metadata
+        ).toEqual({
+          changedFields: [
+            "accountName",
+            "accountNumber",
+            "status"
+          ]
+        });
+      }
+    );
+
     it(
       "preserves payment-method reads for a SUSPENDED merchant",
       async () => {

@@ -364,6 +364,26 @@
                 1
             );
 
+            const passwordChangeAudits =
+              await prisma.auditLog.findMany({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  actorUserId:
+                    fixture.user.id,
+                  action:
+                    "MERCHANT_PASSWORD_CHANGED",
+                  entityType:
+                    "MERCHANT_USER",
+                  entityId:
+                    fixture.user.id
+                }
+              });
+
+            expect(
+              passwordChangeAudits
+            ).toHaveLength(1);
+
             expect(
               await authenticateUser(
                 fixture.user.email,

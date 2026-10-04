@@ -940,25 +940,117 @@ router.patch(
       }
 
       const updatedProduct =
-        await prisma.product.update({
-          where: {
-            id: existingProduct.id
-          },
-          data,
-          include: {
-            category: true,
-            images: {
-              orderBy: [
-                {
-                  isPrimary: "desc"
+        await prisma.$transaction(
+          async (tx) => {
+            const result =
+              await tx.product.update({
+                where: {
+                  id:
+                    existingProduct.id
                 },
-                {
-                  sortOrder: "asc"
+                data,
+                include: {
+                  category: true,
+                  images: {
+                    orderBy: [
+                      {
+                        isPrimary:
+                          "desc"
+                      },
+                      {
+                        sortOrder:
+                          "asc"
+                      }
+                    ]
+                  }
                 }
-              ]
+              });
+
+            if (stock !== undefined) {
+              await tx.auditLog.create({
+                data: {
+                  merchantId,
+                  actorUserId:
+                    req.auth!.id,
+                  action:
+                    "PRODUCT_STOCK_SET",
+                  entityType:
+                    "PRODUCT",
+                  entityId:
+                    existingProduct.id,
+                  metadata: {
+                    productName:
+                      existingProduct.name,
+                    previousStock:
+                      existingProduct.stock,
+                    newStock:
+                      result.stock
+                  }
+                }
+              });
             }
+
+            if (
+              price !== undefined ||
+              currency !== undefined ||
+              status !== undefined
+            ) {
+              const changedFields: string[] =
+                [];
+
+              if (price !== undefined) {
+                changedFields.push(
+                  "price"
+                );
+              }
+
+              if (currency !== undefined) {
+                changedFields.push(
+                  "currency"
+                );
+              }
+
+              if (status !== undefined) {
+                changedFields.push(
+                  "status"
+                );
+              }
+
+              await tx.auditLog.create({
+                data: {
+                  merchantId,
+                  actorUserId:
+                    req.auth!.id,
+                  action:
+                    "PRODUCT_COMMERCE_UPDATED",
+                  entityType:
+                    "PRODUCT",
+                  entityId:
+                    existingProduct.id,
+                  metadata: {
+                    productName:
+                      existingProduct.name,
+                    changedFields,
+                    previousPrice:
+                      existingProduct.price.toString(),
+                    newPrice:
+                      result.price.toString(),
+                    previousCurrency:
+                      existingProduct.currency,
+                    newCurrency:
+                      result.currency,
+                    previousStatus:
+                      existingProduct.status,
+                    newStatus:
+                      result.status
+                  }
+                }
+              });
+            }
+
+            return result;
           }
-        });
+        );
 
       res.json(updatedProduct);
     } catch (error) {
@@ -1087,14 +1179,44 @@ router.patch(
       }
 
       const updatedProduct =
-        await prisma.product.update({
-          where: {
-            id: product.id
-          },
-          data: {
-            stock: numericStock
+        await prisma.$transaction(
+          async (tx) => {
+            const result =
+              await tx.product.update({
+                where: {
+                  id: product.id
+                },
+                data: {
+                  stock:
+                    numericStock
+                }
+              });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId:
+                  req.auth!.id,
+                action:
+                  "PRODUCT_STOCK_SET",
+                entityType:
+                  "PRODUCT",
+                entityId:
+                  product.id,
+                metadata: {
+                  productName:
+                    product.name,
+                  previousStock:
+                    product.stock,
+                  newStock:
+                    result.stock
+                }
+              }
+            });
+
+            return result;
           }
-        });
+        );
 
       res.json(updatedProduct);
     } catch (error) {

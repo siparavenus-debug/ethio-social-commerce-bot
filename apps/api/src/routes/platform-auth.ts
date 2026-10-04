@@ -207,19 +207,42 @@ router.patch(
           newPassword
         );
 
-      await prisma.platformUser.update({
-        where: {
-          id:
-            platformUserId
-        },
-        data: {
-          passwordHash,
-          tokenVersion: {
-            increment:
-              1
-          }
+      await prisma.$transaction(
+        async (tx) => {
+          const updatedUser =
+            await tx.platformUser.update({
+              where: {
+                id:
+                  platformUserId
+              },
+              data: {
+                passwordHash,
+                tokenVersion: {
+                  increment:
+                    1
+                }
+              },
+              select: {
+                id: true
+              }
+            });
+
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId:
+                updatedUser.id,
+              merchantId:
+                null,
+              action:
+                "PLATFORM_PASSWORD_CHANGED",
+              entityType:
+                "PLATFORM_USER",
+              entityId:
+                updatedUser.id
+            }
+          });
         }
-      });
+      );
 
       res.json({
         message:

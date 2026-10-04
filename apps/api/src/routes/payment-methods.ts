@@ -131,18 +131,43 @@ router.post(
         return;
       }
 
-      const paymentMethod = await prisma.paymentMethod.create({
-        data: {
-          merchantId,
-          provider: provider as PaymentProvider,
-          accountName: accountName.trim(),
-          accountNumber: accountNumber.trim(),
-          status:
-            status === undefined
-              ? PaymentMethodStatus.ACTIVE
-              : (status as PaymentMethodStatus)
-        }
-      });
+      const paymentMethod =
+        await prisma.$transaction(
+          async (tx) => {
+            const createdPaymentMethod =
+              await tx.paymentMethod.create({
+                data: {
+                  merchantId,
+                  provider:
+                    provider as PaymentProvider,
+                  accountName:
+                    accountName.trim(),
+                  accountNumber:
+                    accountNumber.trim(),
+                  status:
+                    status === undefined
+                      ? PaymentMethodStatus.ACTIVE
+                      : (status as PaymentMethodStatus)
+                }
+              });
+
+            await tx.auditLog.create({
+              data: {
+                merchantId,
+                actorUserId:
+                  req.auth!.id,
+                action:
+                  "PAYMENT_METHOD_CREATED",
+                entityType:
+                  "PAYMENT_METHOD",
+                entityId:
+                  createdPaymentMethod.id
+              }
+            });
+
+            return createdPaymentMethod;
+          }
+        );
 
       res.status(201).json(paymentMethod);
     } catch (error) {
@@ -231,29 +256,79 @@ router.patch(
         return;
       }
 
+      const changedFields: string[] = [];
+
+      if (accountName !== undefined) {
+        changedFields.push(
+          "accountName"
+        );
+      }
+
+      if (accountNumber !== undefined) {
+        changedFields.push(
+          "accountNumber"
+        );
+      }
+
+      if (status !== undefined) {
+        changedFields.push(
+          "status"
+        );
+      }
+
       const paymentMethod =
-        await prisma.paymentMethod.update({
-          where: {
-            id: paymentMethodId
-          },
-          data: {
-            ...(accountName !== undefined
-              ? {
-                accountName: accountName.trim()
-              }
-              : {}),
-            ...(accountNumber !== undefined
-              ? {
-                accountNumber: accountNumber.trim()
-              }
-              : {}),
-            ...(status !== undefined
-              ? {
-                status: status as PaymentMethodStatus
-              }
-              : {})
+        await prisma.$transaction(
+          async (tx) => {
+            const updatedPaymentMethod =
+              await tx.paymentMethod.update({
+                where: {
+                  id:
+                    paymentMethodId
+                },
+                data: {
+                  ...(accountName !== undefined
+                    ? {
+                      accountName:
+                        accountName.trim()
+                    }
+                    : {}),
+                  ...(accountNumber !== undefined
+                    ? {
+                      accountNumber:
+                        accountNumber.trim()
+                    }
+                    : {}),
+                  ...(status !== undefined
+                    ? {
+                      status:
+                        status as PaymentMethodStatus
+                    }
+                    : {})
+                }
+              });
+
+            if (changedFields.length > 0) {
+              await tx.auditLog.create({
+                data: {
+                  merchantId,
+                  actorUserId:
+                    req.auth!.id,
+                  action:
+                    "PAYMENT_METHOD_UPDATED",
+                  entityType:
+                    "PAYMENT_METHOD",
+                  entityId:
+                    updatedPaymentMethod.id,
+                  metadata: {
+                    changedFields
+                  }
+                }
+              });
+            }
+
+            return updatedPaymentMethod;
           }
-        });
+        );
 
       res.json(paymentMethod);
     } catch (error) {
