@@ -13,6 +13,7 @@ import customersRouter from "./routes/customers.js";
 import ordersRouter from "./routes/orders.js";
 import conversationsRouter from "./routes/conversations.js";
 import telegramRouter from "./routes/telegram.js";
+import merchantTelegramIntegrationRouter from "./routes/merchant-telegram-integration.js";
 import paymentMethodsRouter from "./routes/payment-methods.js";
 import paymentsRouter from "./routes/payments.js";
 import merchantSettlementsRouter from "./routes/merchant-settlements.js";
@@ -302,6 +303,11 @@ async function start() {
   app.use(
     "/merchants",
     paymentMethodsRouter
+  );
+
+  app.use(
+    "/merchants",
+    merchantTelegramIntegrationRouter
   );
 
   app.use(

@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { prisma } from "@ethio-commerce/database";
 import { sendTelegramMessage } from "../services/telegram.js";
+
+import {
+  getActiveMerchantTelegramBotToken
+} from "../services/merchant-telegram-integration.js";
+
 import { sanitizeOrderForResponse } from "../services/order-response.js";
 import {
   createDeliveryConfirmation,
@@ -614,7 +619,13 @@ router.post(
             );
           }
 
+          const botToken =
+            await getActiveMerchantTelegramBotToken(
+              merchantId
+            );
+
           await sendTelegramMessage(
+            botToken,
             result.customer.telegramChatId,
             `Order ${result.orderNumber} is now being prepared.\n\n` +
             `Your delivery confirmation code is: ${deliveryConfirmationCode}\n\n` +
@@ -979,7 +990,13 @@ router.post(
           ?.telegramChatId
       ) {
         try {
+          const botToken =
+            await getActiveMerchantTelegramBotToken(
+              merchantId
+            );
+
           await sendTelegramMessage(
+            botToken,
             result.order.customer
               .telegramChatId,
             `Order ${result.order.orderNumber} has been delivered and confirmed.\n\n` +
@@ -1296,7 +1313,13 @@ router.post(
       }
 
       try {
+        const botToken =
+          await getActiveMerchantTelegramBotToken(
+            merchantId
+          );
+
         await sendTelegramMessage(
+          botToken,
           result.order.customer!
             .telegramChatId!,
           `Order ${result.order.orderNumber} delivery confirmation code is: ${deliveryConfirmationCode}\n\n` +

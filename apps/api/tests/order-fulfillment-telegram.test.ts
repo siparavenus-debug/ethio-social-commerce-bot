@@ -47,8 +47,35 @@ import type {
     verifyDeliveryConfirmationCode
   } from "../src/services/delivery-security.js";
 
+  import {
+    encryptTelegramCredential
+  } from "../src/services/telegram-credential-encryption.js";
+
   const testPrefix =
     "fulfillment-telegram";
+
+  const testBotToken =
+    "fulfillment-telegram-test-bot-token";
+
+  async function createTelegramIntegration(
+    merchantId: string
+  ): Promise<void> {
+    await prisma.merchantTelegramIntegration.create({
+      data: {
+        merchantId,
+        webhookKey:
+          `${testPrefix}-${merchantId}`,
+        botTokenEncrypted:
+          encryptTelegramCredential(
+            testBotToken
+          ),
+        webhookSecretEncrypted:
+          encryptTelegramCredential(
+            "fulfillment-telegram-test-webhook-secret"
+          )
+      }
+    });
+  }
 
   let server:
     Server | null = null;
@@ -225,6 +252,10 @@ import type {
               }
             });
 
+          await createTelegramIntegration(
+            merchant.id
+          );
+
           const user =
             await prisma.merchantUser.create({
               data: {
@@ -327,6 +358,7 @@ import type {
           expect(
             sendTelegramMessageMock
           ).toHaveBeenCalledWith(
+            testBotToken,
             customer.telegramChatId,
             expect.stringContaining(
               order.orderNumber
@@ -335,7 +367,7 @@ import type {
 
           const telegramText =
             sendTelegramMessageMock
-              .mock.calls[0]?.[1];
+              .mock.calls[0]?.[2];
 
           expect(
             typeof telegramText
@@ -501,6 +533,10 @@ import type {
                   "ETB"
               }
             });
+
+          await createTelegramIntegration(
+            merchant.id
+          );
 
           const user =
             await prisma.merchantUser.create({
@@ -695,7 +731,7 @@ import type {
 
           const recoveryTelegramText =
             sendTelegramMessageMock
-              .mock.calls[1]?.[1];
+              .mock.calls[1]?.[2];
 
           expect(
             typeof recoveryTelegramText
@@ -789,6 +825,10 @@ import type {
                   "ETB"
               }
             });
+
+          await createTelegramIntegration(
+            merchant.id
+          );
 
           const user =
             await prisma.merchantUser.create({
@@ -991,7 +1031,7 @@ import type {
           const finalTelegramText =
             String(
               sendTelegramMessageMock
-                .mock.calls[2]?.[1]
+                .mock.calls[2]?.[2]
             );
 
           const finalCodeMatch =
@@ -1079,6 +1119,10 @@ import type {
                   "ETB"
               }
             });
+
+          await createTelegramIntegration(
+            merchant.id
+          );
 
           const user =
             await prisma.merchantUser.create({
@@ -1200,6 +1244,7 @@ import type {
           expect(
             sendTelegramMessageMock
           ).toHaveBeenCalledWith(
+            testBotToken,
             customer.telegramChatId,
             expect.stringContaining(
               order.orderNumber
@@ -1209,7 +1254,7 @@ import type {
           const telegramText =
             String(
               sendTelegramMessageMock
-                .mock.calls[0]?.[1]
+                .mock.calls[0]?.[2]
             );
 
           expect(
@@ -1278,6 +1323,10 @@ import type {
                   "ETB"
               }
             });
+
+          await createTelegramIntegration(
+            merchant.id
+          );
 
           const user =
             await prisma.merchantUser.create({
@@ -1399,6 +1448,7 @@ import type {
           expect(
             sendTelegramMessageMock
           ).toHaveBeenCalledWith(
+            testBotToken,
             customer.telegramChatId,
             expect.stringContaining(
               order.orderNumber
@@ -1408,7 +1458,7 @@ import type {
           const telegramText =
             String(
               sendTelegramMessageMock
-                .mock.calls[0]?.[1]
+                .mock.calls[0]?.[2]
             );
 
           const codeMatch =
@@ -2185,6 +2235,10 @@ import type {
               }
             });
 
+          await createTelegramIntegration(
+            merchant.id
+          );
+
           const user =
             await prisma.merchantUser.create({
               data: {
@@ -2328,7 +2382,7 @@ import type {
           const telegramText =
             String(
               sendTelegramMessageMock
-                .mock.calls[0]?.[1]
+                .mock.calls[0]?.[2]
             );
 
           const codeMatch =

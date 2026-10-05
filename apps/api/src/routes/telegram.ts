@@ -7,14 +7,16 @@ import {
   PaymentStatus
 } from "@ethio-commerce/database";
 
-import { env } from "../config/env.js";
-
 import {
   sendTelegramMessage,
   sendTelegramPhoto,
   getTelegramFilePath,
   downloadTelegramFile
 } from "../services/telegram.js";
+
+import {
+  getActiveMerchantTelegramWebhookIntegration
+} from "../services/merchant-telegram-integration.js";
 
 import {
   handleConversation
@@ -89,15 +91,8 @@ function customerName(
   );
 }
 
-function requireTelegramConfiguration() {
-  return Boolean(
-    env.telegramBotToken &&
-    env.telegramWebhookSecret &&
-    env.telegramMerchantId
-  );
-}
-
 async function sendAndSaveMessage(
+  botToken: string,
   chatId: string,
   conversationId: string,
   text: string,
@@ -105,11 +100,13 @@ async function sendAndSaveMessage(
 ) {
   const externalId = imageUrl
     ? await sendTelegramPhoto(
+      botToken,
       chatId,
       imageUrl,
       text
     )
     : await sendTelegramMessage(
+      botToken,
       chatId,
       text
     );
@@ -160,98 +157,121 @@ function receiptProviderToEnum(
 }
 
 router.post(
-  "/",
+  "/:webhookKey",
   async (req, res) => {
     /*
      * ---------------------------------------------
-     * TELEGRAM CONFIGURATION
+     * TELEGRAM INTEGRATION
      * ---------------------------------------------
      */
-    if (
-      !requireTelegramConfiguration()
-    ) {
-      res.status(503).json({
+    const webhookKey =
+      String(
+        req.params.webhookKey
+      ).trim();
+
+    if (!webhookKey) {
+      res.status(404).json({
         error:
-          "Telegram integration is not configured"
-      });
-
-      return;
-    }
-
-    /*
-     * ---------------------------------------------
-     * TELEGRAM WEBHOOK SECURITY
-     * ---------------------------------------------
-     */
-    if (
-      req.get(
-        "x-telegram-bot-api-secret-token"
-      ) !==
-      env.telegramWebhookSecret
-    ) {
-      res.status(401).json({
-        error:
-          "Invalid Telegram webhook secret"
-      });
-
-      return;
-    }
-
-    const update =
-      req.body as TelegramUpdate;
-
-    const eventId =
-      typeof update.update_id ===
-        "number"
-        ? String(
-          update.update_id
-        )
-        : null;
-
-    const message =
-      update.message;
-
-    const text =
-      message?.text?.trim();
-
-    const photo =
-      message?.photo;
-
-    const hasPhoto =
-      Array.isArray(photo) &&
-      photo.length > 0;
-
-    const hasText =
-      typeof text ===
-      "string" &&
-      text.length > 0;
-
-    const chatId =
-      message?.chat?.id;
-
-    const userId =
-      message?.from?.id;
-
-    /*
-     * Accept normal text messages
-     * OR Telegram photo messages.
-     */
-    if (
-      !eventId ||
-      (!hasText && !hasPhoto) ||
-      chatId === undefined ||
-      userId === undefined ||
-      !message?.message_id
-    ) {
-      res.status(200).json({
-        ok: true,
-        ignored: true
+          "Telegram integration was not found"
       });
 
       return;
     }
 
     try {
+      const integration =
+        await getActiveMerchantTelegramWebhookIntegration(
+          webhookKey
+        );
+
+      if (!integration) {
+        res.status(404).json({
+          error:
+            "Telegram integration was not found"
+        });
+
+        return;
+      }
+
+      const {
+        merchantId,
+        botToken,
+        webhookSecret
+      } = integration;
+
+      /*
+       * ---------------------------------------------
+       * TELEGRAM WEBHOOK SECURITY
+       * ---------------------------------------------
+       */
+      if (
+        req.get(
+          "x-telegram-bot-api-secret-token"
+        ) !==
+        webhookSecret
+      ) {
+        res.status(401).json({
+          error:
+            "Invalid Telegram webhook secret"
+        });
+
+        return;
+      }
+
+      const update =
+        req.body as TelegramUpdate;
+
+      const eventId =
+        typeof update.update_id ===
+          "number"
+          ? String(
+            update.update_id
+          )
+          : null;
+
+      const message =
+        update.message;
+
+      const text =
+        message?.text?.trim();
+
+      const photo =
+        message?.photo;
+
+      const hasPhoto =
+        Array.isArray(photo) &&
+        photo.length > 0;
+
+      const hasText =
+        typeof text ===
+        "string" &&
+        text.length > 0;
+
+      const chatId =
+        message?.chat?.id;
+
+      const userId =
+        message?.from?.id;
+
+      /*
+       * Accept normal text messages
+       * OR Telegram photo messages.
+       */
+      if (
+        !eventId ||
+        (!hasText && !hasPhoto) ||
+        chatId === undefined ||
+        userId === undefined ||
+        !message?.message_id
+      ) {
+        res.status(200).json({
+          ok: true,
+          ignored: true
+        });
+
+        return;
+      }
+
       /*
        * ---------------------------------------------
        * DUPLICATE TELEGRAM UPDATE PROTECTION
@@ -261,7 +281,8 @@ router.post(
         await prisma.webhookEvent.findUnique(
           {
             where: {
-              provider_eventId: {
+              merchantId_provider_eventId: {
+                merchantId,
                 provider:
                   "TELEGRAM",
                 eventId
@@ -276,18 +297,6 @@ router.post(
         res.status(200).json({
           ok: true,
           duplicate: true
-        });
-
-        return;
-      }
-
-      const merchantId =
-        env.telegramMerchantId;
-
-      if (!merchantId) {
-        res.status(503).json({
-          error:
-            "Telegram merchant is not configured"
         });
 
         return;
@@ -347,7 +356,9 @@ router.post(
         } else {
           await prisma.webhookEvent.update({
             where: {
-              provider_eventId: {
+              merchantId_provider_eventId: {
+                merchantId,
+
                 provider:
                   "TELEGRAM",
 
@@ -587,13 +598,15 @@ router.post(
            */
           const filePath =
             await getTelegramFilePath(
+              botToken,
               largestPhoto.file_id
             );
           /*
-* Download image.
-*/
+          * Download image.
+          */
           const image =
             await downloadTelegramFile(
+              botToken,
               filePath
             );
 
@@ -1096,6 +1109,7 @@ router.post(
           );
 
           await sendAndSaveMessage(
+            botToken,
             chatIdString,
             conversation.id,
             receiptMessageParts.join(
@@ -1110,7 +1124,9 @@ router.post(
           await prisma.webhookEvent.update(
             {
               where: {
-                provider_eventId: {
+                merchantId_provider_eventId: {
+                  merchantId,
+
                   provider:
                     "TELEGRAM",
 
@@ -1146,6 +1162,7 @@ router.post(
 
           try {
             await sendAndSaveMessage(
+              botToken,
               chatIdString,
               conversation.id,
               [
@@ -1212,6 +1229,7 @@ router.post(
        * Send and persist response.
        */
       await sendAndSaveMessage(
+        botToken,
         chatIdString,
         conversation.id,
         result.reply,
@@ -1225,7 +1243,9 @@ router.post(
       await prisma.webhookEvent.update(
         {
           where: {
-            provider_eventId: {
+            merchantId_provider_eventId: {
+              merchantId,
+
               provider:
                 "TELEGRAM",
 

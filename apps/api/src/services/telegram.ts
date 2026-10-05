@@ -1,5 +1,3 @@
-import { env } from "../config/env.js";
-
 type TelegramApiResponse<T> = {
   ok: boolean;
   result?: T;
@@ -14,17 +12,18 @@ type TelegramFile = {
 };
 
 async function telegramApi<T>(
+  botToken: string,
   method: string,
   body?: Record<string, unknown>
 ): Promise<T> {
-  if (!env.telegramBotToken) {
+  if (!botToken) {
     throw new Error(
-      "TELEGRAM_BOT_TOKEN is not configured"
+      "Telegram bot token is required"
     );
   }
 
   const response = await fetch(
-    `https://api.telegram.org/bot${env.telegramBotToken}/${method}`,
+    `https://api.telegram.org/bot${botToken}/${method}`,
     {
       method: "POST",
       headers: {
@@ -39,7 +38,9 @@ async function telegramApi<T>(
 
   if (!response.ok || !data.ok || !data.result) {
     throw new Error(
-      `Telegram API ${method} failed: ${data.description ?? response.statusText
+      `Telegram API ${method} failed: ${
+        data.description ??
+        response.statusText
       }`
     );
   }
@@ -48,16 +49,21 @@ async function telegramApi<T>(
 }
 
 export async function sendTelegramMessage(
+  botToken: string,
   chatId: string,
   text: string
 ) {
   const result =
     await telegramApi<{
       message_id?: number;
-    }>("sendMessage", {
-      chat_id: chatId,
-      text
-    });
+    }>(
+      botToken,
+      "sendMessage",
+      {
+        chat_id: chatId,
+        text
+      }
+    );
 
   if (!result.message_id) {
     throw new Error(
@@ -69,6 +75,7 @@ export async function sendTelegramMessage(
 }
 
 export async function sendTelegramPhoto(
+  botToken: string,
   chatId: string,
   photo: string,
   caption?: string
@@ -76,15 +83,19 @@ export async function sendTelegramPhoto(
   const result =
     await telegramApi<{
       message_id?: number;
-    }>("sendPhoto", {
-      chat_id: chatId,
-      photo,
-      ...(caption
-        ? {
-          caption
-        }
-        : {})
-    });
+    }>(
+      botToken,
+      "sendPhoto",
+      {
+        chat_id: chatId,
+        photo,
+        ...(caption
+          ? {
+            caption
+          }
+          : {})
+      }
+    );
 
   if (!result.message_id) {
     throw new Error(
@@ -100,10 +111,12 @@ export async function sendTelegramPhoto(
  * Telegram file path.
  */
 export async function getTelegramFilePath(
+  botToken: string,
   fileId: string
 ): Promise<string> {
   const file =
     await telegramApi<TelegramFile>(
+      botToken,
       "getFile",
       {
         file_id: fileId
@@ -126,16 +139,17 @@ export async function getTelegramFilePath(
  * small customer-uploaded evidence.
  */
 export async function downloadTelegramFile(
+  botToken: string,
   filePath: string
 ): Promise<Buffer> {
-  if (!env.telegramBotToken) {
+  if (!botToken) {
     throw new Error(
-      "TELEGRAM_BOT_TOKEN is not configured"
+      "Telegram bot token is required"
     );
   }
 
   const response = await fetch(
-    `https://api.telegram.org/file/bot${env.telegramBotToken}/${filePath}`
+    `https://api.telegram.org/file/bot${botToken}/${filePath}`
   );
 
   if (!response.ok) {

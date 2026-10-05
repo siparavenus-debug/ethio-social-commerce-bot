@@ -329,6 +329,13 @@ export default function App() {
     }
   );
 
+  const [
+    authValidated,
+    setAuthValidated
+  ] = useState(
+    () => !auth?.token
+  );
+
   const role = auth?.user.role;
   const merchantId = auth?.user.merchantId;
   const canManageProducts = role === "OWNER" || role === "ADMIN";
@@ -810,6 +817,7 @@ export default function App() {
     );
 
     setAuth(null);
+    setAuthValidated(true);
 
     setReviews([]);
     setOrders([]);
@@ -850,6 +858,48 @@ export default function App() {
     );
     setRejectingPaymentId(null);
     setRestockingProductId(null);
+  }
+
+  async function validateStoredAuth() {
+    if (!auth?.token) {
+      setAuthValidated(true);
+      return;
+    }
+
+    try {
+      const response =
+        await fetch(
+          `${API_BASE_URL}/auth/me`,
+          {
+            headers: {
+              Authorization:
+                `Bearer ${auth.token}`
+            }
+          }
+        );
+
+      const data =
+        await response
+          .json()
+          .catch(() => null);
+
+      if (
+        !response.ok ||
+        !data?.user
+      ) {
+        logout();
+        return;
+      }
+
+      saveAuth({
+        token: auth.token,
+        user: data.user
+      });
+
+      setAuthValidated(true);
+    } catch {
+      logout();
+    }
   }
 
   async function login() {
@@ -3229,10 +3279,30 @@ export default function App() {
 
   useEffect(() => {
     if (!auth?.token) {
+      setAuthValidated(true);
+      return;
+    }
+
+    if (authValidated) {
+      return;
+    }
+
+    void validateStoredAuth();
+  }, [
+    auth?.token,
+    authValidated
+  ]);
+
+  useEffect(() => {
+    if (!auth?.token) {
       setLoadingReviews(false);
       setLoadingOrders(false);
       setLoadingProducts(false);
       setLoadingCategories(false);
+      return;
+    }
+
+    if (!authValidated) {
       return;
     }
 
@@ -3260,6 +3330,7 @@ export default function App() {
     void refreshDashboard();
   }, [
     auth?.token,
+    authValidated,
     canReviewPayments,
     canViewBilling,
     canManageUsers
@@ -3409,7 +3480,33 @@ export default function App() {
     );
   }
 
+  if (!authValidated) {
+    return (
+      <main
+        style={styles.loginPage}
+      >
+        <section
+          style={styles.loginCard}
+        >
+          <div
+            style={styles.loginHeader}
+          >
+            <h1
+              style={styles.loginTitle}
+            >
+              Ethio Social Commerce
+            </h1>
 
+            <p
+              style={styles.loginSubtitle}
+            >
+              Validating your session...
+            </p>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <>

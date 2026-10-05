@@ -52,6 +52,11 @@ enum ConversationChannel {
   TELEGRAM
 }
 
+enum MerchantTelegramIntegrationStatus {
+  ACTIVE
+  INACTIVE
+}
+
 enum MessageDirection {
   INBOUND
   OUTBOUND
@@ -140,6 +145,7 @@ model Merchant {
   orders         Order[]
   payments       Payment[]
   paymentMethods PaymentMethod[]
+  telegramIntegration MerchantTelegramIntegration?
   conversations  Conversation[]
   webhookEvents  WebhookEvent[]
   auditLogs      AuditLog[]
@@ -331,6 +337,21 @@ model PaymentMethod {
 
   @@unique([merchantId, provider])
   @@index([merchantId, status])
+}
+
+model MerchantTelegramIntegration {
+  id                     String                            @id @default(cuid())
+  merchantId             String                            @unique
+  webhookKey             String                            @unique
+  botTokenEncrypted      String
+  webhookSecretEncrypted String
+  status                 MerchantTelegramIntegrationStatus @default(ACTIVE)
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([status])
 }
 
 model SubscriptionPlan {
@@ -593,7 +614,7 @@ model WebhookEvent {
 
   merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
 
-  @@unique([provider, eventId])
+  @@unique([merchantId, provider, eventId])
   @@index([merchantId, receivedAt])
 }
 

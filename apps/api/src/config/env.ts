@@ -66,6 +66,18 @@ if (
   );
 }
 
+const telegramCredentialEncryptionKey =
+  process.env.TELEGRAM_CREDENTIAL_ENCRYPTION_KEY?.trim();
+
+if (
+  !telegramCredentialEncryptionKey ||
+  telegramCredentialEncryptionKey.length < 32
+) {
+  throw new Error(
+    "TELEGRAM_CREDENTIAL_ENCRYPTION_KEY must be configured and contain at least 32 characters."
+  );
+}
+
 const authTokenTtlSeconds =
   Number(
     process.env.AUTH_TOKEN_TTL_SECONDS ??
@@ -119,20 +131,13 @@ export const env = {
   geminiApiKey:
     process.env.GEMINI_API_KEY,
 
-  telegramBotToken:
-    process.env.TELEGRAM_BOT_TOKEN,
-
-  telegramWebhookSecret:
-    process.env.TELEGRAM_WEBHOOK_SECRET,
-
-  telegramMerchantId:
-    process.env.TELEGRAM_MERCHANT_ID,
-
   authSecret,
 
   platformAuthSecret,
 
   deliveryConfirmationSecret,
+
+  telegramCredentialEncryptionKey,
 
   authTokenTtlSeconds,
 

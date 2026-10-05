@@ -10,6 +10,10 @@ import {
 
 import { sendTelegramMessage } from "../services/telegram.js";
 
+import {
+  getActiveMerchantTelegramBotToken
+} from "../services/merchant-telegram-integration.js";
+
 import { accrueCommission } from "../services/commission.js";
 
 import { sanitizeOrderForBillingResponse } from "../services/order-response.js";
@@ -897,8 +901,14 @@ router.post(
             }
           );
 
+          const botToken =
+            await getActiveMerchantTelegramBotToken(
+              merchantId
+            );
+
           const externalId =
             await sendTelegramMessage(
+              botToken,
               chatId,
               message
             );
@@ -1313,8 +1323,14 @@ router.post(
             }
           );
 
+          const botToken =
+            await getActiveMerchantTelegramBotToken(
+              merchantId
+            );
+
           const externalId =
             await sendTelegramMessage(
+              botToken,
               chatId,
               message
             );
