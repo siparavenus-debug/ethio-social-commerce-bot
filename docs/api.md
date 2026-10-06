@@ -420,11 +420,20 @@ The endpoint should:
 
 Webhook processing must be idempotent.
 
-Current local route: `POST /webhooks/telegram`. Configure `TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_WEBHOOK_SECRET`, and `TELEGRAM_MERCHANT_ID`; Telegram must send the
-secret in the `X-Telegram-Bot-Api-Secret-Token` header. Text messages create or
-update the Telegram customer and conversation, persist inbound/outbound messages,
-and receive a default acknowledgement. Non-text updates are acknowledged and ignored.
+Current route: `POST /webhooks/telegram/:webhookKey`. Each merchant configures
+its own Telegram integration through the authenticated merchant API. The server
+stores the merchant bot token and webhook secret encrypted using
+`TELEGRAM_CREDENTIAL_ENCRYPTION_KEY` and generates an opaque, unique webhook key.
+The webhook key resolves the active merchant integration; merchant identity is
+never supplied by the incoming Telegram payload or a global merchant environment
+variable.
+
+Telegram must send the configured merchant webhook secret in the
+`X-Telegram-Bot-Api-Secret-Token` header. Webhook events are deduplicated within
+the resolved merchant scope. Customer, conversation, order, payment-evidence,
+receipt-storage, and response processing remain scoped to that merchant. Receipt
+evidence may place a payment into review, but evidence alone never verifies a
+payment or marks an order paid.
 
 ---
 

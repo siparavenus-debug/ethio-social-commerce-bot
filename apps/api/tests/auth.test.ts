@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseCorsAllowedOrigins,
   validateAuthSecretSeparation
 } from "../src/config/env.js";
 
@@ -17,6 +18,26 @@ import {
 } from "../src/services/platform-auth.js";
 
 describe("authentication security", () => {
+  it("parses configured CORS origins into an exact allowlist", () => {
+    expect(
+      parseCorsAllowedOrigins(
+        "https://merchant.example.com, https://platform.example.com"
+      )
+    ).toEqual([
+      "https://merchant.example.com",
+      "https://platform.example.com"
+    ]);
+  });
+
+  it("uses local dashboard origins when CORS origins are not configured", () => {
+    expect(
+      parseCorsAllowedOrigins(undefined)
+    ).toEqual([
+      "http://localhost:5173",
+      "http://localhost:5174"
+    ]);
+  });
+
   it("accepts different merchant and platform authentication secrets", () => {
     expect(() =>
       validateAuthSecretSeparation(

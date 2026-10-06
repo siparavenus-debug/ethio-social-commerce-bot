@@ -40,17 +40,12 @@ async function start() {
    * because the merchant dashboard uses Bearer tokens.
    */
   app.use((req, res, next) => {
-    const allowedOrigins = [
-      "http://localhost:5173",
-      "http://localhost:5174"
-    ];
-
     const origin =
       req.headers.origin;
 
     if (
       origin &&
-      allowedOrigins.includes(origin)
+      env.corsAllowedOrigins.includes(origin)
     ) {
       res.header(
         "Access-Control-Allow-Origin",

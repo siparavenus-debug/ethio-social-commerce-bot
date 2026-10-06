@@ -97,19 +97,33 @@ Secrets must never be committed to GitHub.
 Examples include:
 
 - DATABASE_URL
-- TELEGRAM_BOT_TOKEN
-- TIKTOK_CLIENT_SECRET
 - ANTHROPIC_API_KEY
 - GEMINI_API_KEY
 - AUTH_SECRET
 - PLATFORM_AUTH_SECRET
 - DELIVERY_CONFIRMATION_SECRET
+- TELEGRAM_CREDENTIAL_ENCRYPTION_KEY
+- R2_ACCESS_KEY_ID
+- R2_SECRET_ACCESS_KEY
+- TIKTOK_CLIENT_SECRET
+- TIKTOK_WEBHOOK_SECRET
 
 Local secrets must be stored in environment variables.
 
 The repository may contain `.env.example` with placeholder variable names,
 
 but never real credentials.
+
+Merchant Telegram bot tokens and webhook secrets are not global environment
+variables. They are stored per merchant in encrypted form. The encryption key is
+provided through `TELEGRAM_CREDENTIAL_ENCRYPTION_KEY` and must remain separate
+from authentication and delivery-confirmation secrets.
+
+`TELEGRAM_CREDENTIAL_ENCRYPTION_KEY` must remain stable across deployments and
+must be backed up securely. Changing or losing this key makes existing encrypted
+merchant Telegram credentials undecryptable. Key rotation requires an explicit
+credential re-encryption process; replacing the environment value alone is not a
+safe rotation procedure.
 
 ---
 

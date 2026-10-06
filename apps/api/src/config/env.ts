@@ -17,6 +17,29 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error("API_PORT must be a valid TCP port.");
 }
 
+const localCorsAllowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174"
+] as const;
+
+export function parseCorsAllowedOrigins(
+  value: string | undefined
+): string[] {
+  if (!value?.trim()) {
+    return [...localCorsAllowedOrigins];
+  }
+
+  return value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+const corsAllowedOrigins =
+  parseCorsAllowedOrigins(
+    process.env.CORS_ALLOWED_ORIGINS
+  );
+
 const authSecret =
   process.env.AUTH_SECRET?.trim();
 
@@ -124,6 +147,8 @@ export const env = {
     "development",
 
   apiPort: port,
+
+  corsAllowedOrigins,
 
   anthropicApiKey:
     process.env.ANTHROPIC_API_KEY,
