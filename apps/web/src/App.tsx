@@ -276,6 +276,7 @@ type Tab =
   | "orders"
   | "inventory"
   | "profile"
+  | "telegram"
   | "billing"
   | "users";
 
@@ -296,6 +297,18 @@ type MerchantProfile = {
   phone: string | null;
   alternatePhone: string | null;
   address: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type TelegramIntegration = {
+  id: string;
+  merchantId: string;
+  telegramBotUsername: string | null;
+  status:
+    | "PROVISIONING"
+    | "ACTIVE"
+    | "INACTIVE";
   createdAt: string;
   updatedAt: string;
 };
@@ -346,6 +359,8 @@ export default function App() {
   const canManageUsers =
     role === "OWNER";
   const canManageProfile =
+    role === "OWNER" || role === "ADMIN";
+  const canManageTelegram =
     role === "OWNER" || role === "ADMIN";
 
   const [
@@ -467,6 +482,28 @@ export default function App() {
   const [
     savingProfile,
     setSavingProfile
+  ] = useState(false);
+
+  const [
+    telegramIntegration,
+    setTelegramIntegration
+  ] = useState<TelegramIntegration | null>(
+    null
+  );
+
+  const [
+    telegramBotToken,
+    setTelegramBotToken
+  ] = useState("");
+
+  const [
+    loadingTelegram,
+    setLoadingTelegram
+  ] = useState(false);
+
+  const [
+    savingTelegram,
+    setSavingTelegram
   ] = useState(false);
 
   const [
@@ -833,6 +870,10 @@ export default function App() {
     setProfileAddress("");
     setLoadingProfile(false);
     setSavingProfile(false);
+    setTelegramIntegration(null);
+    setTelegramBotToken("");
+    setLoadingTelegram(false);
+    setSavingTelegram(false);
     setLoadingBilling(false);
     setSettlementInvoiceId("");
     setSettlementProvider("TELEBIRR");
@@ -1945,6 +1986,312 @@ export default function App() {
       );
     } finally {
       setActionId(null);
+    }
+  }
+
+  async function loadTelegramIntegration() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageTelegram
+    ) {
+      setTelegramIntegration(null);
+      setLoadingTelegram(false);
+      return;
+    }
+
+    try {
+      setLoadingTelegram(true);
+      setError("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/telegram-integration`
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (response.status === 404) {
+        setTelegramIntegration(null);
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to load Telegram integration"
+        );
+      }
+
+      setTelegramIntegration(
+        data as TelegramIntegration
+      );
+    } catch (loadError) {
+      setTelegramIntegration(null);
+
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Failed to load Telegram integration"
+      );
+    } finally {
+      setLoadingTelegram(false);
+    }
+  }
+
+  async function connectTelegram() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageTelegram
+    ) {
+      return;
+    }
+
+    const botToken =
+      telegramBotToken.trim();
+
+    if (!botToken) {
+      setError(
+        "Telegram bot token is required."
+      );
+      return;
+    }
+
+    try {
+      setSavingTelegram(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/telegram-integration`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            botToken
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to connect Telegram bot"
+        );
+      }
+
+      setTelegramIntegration(
+        data as TelegramIntegration
+      );
+
+      setTelegramBotToken("");
+
+      setSuccess(
+        "Telegram bot connected successfully."
+      );
+    } catch (connectError) {
+      setError(
+        connectError instanceof Error
+          ? connectError.message
+          : "Failed to connect Telegram bot"
+      );
+    } finally {
+      setSavingTelegram(false);
+    }
+  }
+
+  async function disableTelegram() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageTelegram ||
+      !telegramIntegration
+    ) {
+      return;
+    }
+
+    try {
+      setSavingTelegram(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/telegram-integration`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            status: "INACTIVE"
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to disable Telegram bot"
+        );
+      }
+
+      setTelegramIntegration(
+        data as TelegramIntegration
+      );
+
+      setSuccess(
+        "Telegram bot disabled."
+      );
+    } catch (disableError) {
+      setError(
+        disableError instanceof Error
+          ? disableError.message
+          : "Failed to disable Telegram bot"
+      );
+    } finally {
+      setSavingTelegram(false);
+    }
+  }
+
+  async function enableTelegram() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageTelegram ||
+      !telegramIntegration
+    ) {
+      return;
+    }
+
+    try {
+      setSavingTelegram(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/telegram-integration`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            status: "ACTIVE"
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to enable Telegram bot"
+        );
+      }
+
+      setTelegramIntegration(
+        data as TelegramIntegration
+      );
+
+      setSuccess(
+        "Telegram bot enabled."
+      );
+    } catch (enableError) {
+      setError(
+        enableError instanceof Error
+          ? enableError.message
+          : "Failed to enable Telegram bot"
+      );
+    } finally {
+      setSavingTelegram(false);
+    }
+  }
+
+  async function replaceTelegramBotToken() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canManageTelegram ||
+      !telegramIntegration
+    ) {
+      return;
+    }
+
+    const botToken =
+      telegramBotToken.trim();
+
+    if (!botToken) {
+      setError(
+        "Telegram bot token is required."
+      );
+      return;
+    }
+
+    try {
+      setSavingTelegram(true);
+      setError("");
+      setSuccess("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/telegram-integration`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type":
+              "application/json"
+          },
+          body: JSON.stringify({
+            botToken
+          })
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.error ||
+          "Failed to replace Telegram bot token"
+        );
+      }
+
+      setTelegramIntegration(
+        data as TelegramIntegration
+      );
+
+      setTelegramBotToken("");
+
+      setSuccess(
+        "Telegram bot token replaced successfully."
+      );
+    } catch (replaceError) {
+      setError(
+        replaceError instanceof Error
+          ? replaceError.message
+          : "Failed to replace Telegram bot token"
+      );
+    } finally {
+      setSavingTelegram(false);
     }
   }
 
@@ -3821,6 +4168,28 @@ export default function App() {
           >
             Profile
           </button>
+
+          {canManageTelegram && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab(
+                  "telegram"
+                );
+                setError("");
+                setSuccess("");
+                void loadTelegramIntegration();
+              }}
+              style={{
+                ...styles.tab,
+                ...(activeTab === "telegram"
+                  ? styles.activeTab
+                  : styles.inactiveTab)
+              }}
+            >
+              Telegram
+            </button>
+          )}
 
           {canViewBilling && (
             <button
@@ -8140,6 +8509,222 @@ export default function App() {
               </>
             )}
           </section>
+        ) : activeTab === "telegram" ? (
+          <section
+            style={styles.section}
+          >
+            <div
+              style={styles.sectionHeader}
+            >
+              <div>
+                <h2
+                  style={styles.sectionTitle}
+                >
+                  Telegram Bot
+                </h2>
+
+                <p
+                  style={
+                    styles.sectionDescription
+                  }
+                >
+                  Connect the Telegram bot that
+                  customers will use to shop from
+                  this merchant.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadTelegramIntegration()
+                }
+                disabled={loadingTelegram}
+                style={
+                  styles.inventoryRefreshButton
+                }
+              >
+                {loadingTelegram
+                  ? "Loading..."
+                  : "Refresh"}
+              </button>
+            </div>
+
+            {loadingTelegram &&
+            !telegramIntegration ? (
+              <p>
+                Loading Telegram connection...
+              </p>
+            ) : telegramIntegration ? (
+              <div
+                style={{
+                  marginTop: "24px"
+                }}
+              >
+                <div style={styles.summary}>
+                  <Detail
+                    label="Bot"
+                    value={
+                      telegramIntegration
+                        .telegramBotUsername
+                        ? `@${telegramIntegration.telegramBotUsername}`
+                        : "Connected bot"
+                    }
+                  />
+
+                  <Detail
+                    label="Status"
+                    value={
+                      telegramIntegration.status
+                    }
+                  />
+                </div>
+
+                {telegramIntegration.status ===
+                  "PROVISIONING" && (
+                  <p
+                    style={{
+                      marginTop: "16px"
+                    }}
+                  >
+                    Telegram setup needs to be
+                    completed. Replace the bot token
+                    below to retry the connection.
+                  </p>
+                )}
+
+                <div
+                  style={{
+                    marginTop: "24px"
+                  }}
+                >
+                  <label
+                    style={styles.formLabel}
+                  >
+                    Replace bot token
+                  </label>
+
+                  <input
+                    type="password"
+                    value={telegramBotToken}
+                    onChange={(event) =>
+                      setTelegramBotToken(
+                        event.target.value
+                      )
+                    }
+                    autoComplete="off"
+                    placeholder="Paste a new BotFather token"
+                    style={styles.formInput}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void replaceTelegramBotToken()
+                    }
+                    disabled={
+                      savingTelegram ||
+                      telegramBotToken.trim()
+                        .length === 0
+                    }
+                  >
+                    {savingTelegram
+                      ? "Saving..."
+                      : "Replace Bot Token"}
+                  </button>
+
+                  {telegramIntegration.status !==
+                    "PROVISIONING" && (
+                    <div
+                      style={{
+                        marginTop: "16px"
+                      }}
+                    >
+                      {telegramIntegration.status ===
+                      "ACTIVE" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void disableTelegram()
+                          }
+                          disabled={
+                            savingTelegram
+                          }
+                        >
+                          {savingTelegram
+                            ? "Saving..."
+                            : "Disable Telegram"}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void enableTelegram()
+                          }
+                          disabled={
+                            savingTelegram
+                          }
+                        >
+                          {savingTelegram
+                            ? "Saving..."
+                            : "Enable Telegram"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  marginTop: "24px"
+                }}
+              >
+                <p>
+                  Create a bot with BotFather in
+                  Telegram, copy the bot token,
+                  and paste it below. Webhook
+                  configuration is handled
+                  automatically.
+                </p>
+
+                <label
+                  style={styles.formLabel}
+                >
+                  Bot token
+                </label>
+
+                <input
+                  type="password"
+                  value={telegramBotToken}
+                  onChange={(event) =>
+                    setTelegramBotToken(
+                      event.target.value
+                    )
+                  }
+                  autoComplete="off"
+                  placeholder="Paste the BotFather token"
+                  style={styles.formInput}
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    void connectTelegram()
+                  }
+                  disabled={
+                    savingTelegram ||
+                    telegramBotToken.trim()
+                      .length === 0
+                  }
+                >
+                  {savingTelegram
+                    ? "Connecting..."
+                    : "Connect Telegram"}
+                </button>
+              </div>
+            )}
+          </section>
         ) : (
           <section
             style={styles.section}
@@ -9200,13 +9785,13 @@ const styles: Record<
     alignItems: "center",
     gap: "8px"
   },
-  
+
   inactiveTab: {
     color: "#667085",
     borderBottomColor:
       "transparent"
   },
-  
+
   activeTab: {
     color: "#172033",
     borderBottomColor:

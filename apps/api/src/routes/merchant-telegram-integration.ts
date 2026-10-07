@@ -52,7 +52,7 @@ import {
   type TelegramIntegrationResponse = {
     id: string;
     merchantId: string;
-    webhookKey: string;
+    telegramBotUsername: string | null;
     status:
       typeof MerchantTelegramIntegrationStatus[
         keyof typeof MerchantTelegramIntegrationStatus
@@ -67,7 +67,8 @@ import {
     return {
       id: integration.id,
       merchantId: integration.merchantId,
-      webhookKey: integration.webhookKey,
+      telegramBotUsername:
+        integration.telegramBotUsername,
       status: integration.status,
       createdAt: integration.createdAt,
       updatedAt: integration.updatedAt
@@ -89,7 +90,7 @@ import {
           select: {
             id: true,
             merchantId: true,
-            webhookKey: true,
+            telegramBotUsername: true,
             status: true,
             createdAt: true,
             updatedAt: true

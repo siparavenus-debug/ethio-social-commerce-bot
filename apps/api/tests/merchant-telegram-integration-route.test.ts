@@ -443,8 +443,8 @@ import type {
               fixture.integration.id,
             merchantId:
               fixture.merchant.id,
-            webhookKey:
-              fixture.integration.webhookKey,
+            telegramBotUsername:
+              fixture.integration.telegramBotUsername,
             status:
               MerchantTelegramIntegrationStatus.ACTIVE,
             createdAt:
@@ -728,17 +728,15 @@ import type {
           expect(body).toMatchObject({
             merchantId:
               fixture.merchant.id,
+            telegramBotUsername:
+              "test_shop_bot",
             status:
               MerchantTelegramIntegrationStatus.ACTIVE
           });
 
-          expect(
-            typeof body.webhookKey
-          ).toBe("string");
-
-          expect(
-            body.webhookKey.length
-          ).toBeGreaterThan(0);
+          expect(body).not.toHaveProperty(
+            "webhookKey"
+          );
 
           expect(body).not.toHaveProperty(
             "botTokenEncrypted"
@@ -822,7 +820,7 @@ import type {
             telegramMocks.setTelegramWebhook
           ).toHaveBeenCalledWith(
             botToken,
-            `http://127.0.0.1:3000/webhooks/telegram/${body.webhookKey}`,
+            `http://127.0.0.1:3000/webhooks/telegram/${storedIntegration.webhookKey}`,
             generatedWebhookSecret
           );
 
@@ -2038,8 +2036,8 @@ import type {
               fixture.integration.id,
             merchantId:
               fixture.merchant.id,
-            webhookKey:
-              fixture.integration.webhookKey,
+            telegramBotUsername:
+              "replacement_shop_bot",
             status:
               MerchantTelegramIntegrationStatus.ACTIVE
           });
@@ -3421,8 +3419,8 @@ import type {
               fixture.integration.id,
             merchantId:
               fixture.merchant.id,
-            webhookKey:
-              fixture.integration.webhookKey,
+            telegramBotUsername:
+              fixture.integration.telegramBotUsername,
             status:
               MerchantTelegramIntegrationStatus.INACTIVE
           });
@@ -3534,8 +3532,8 @@ import type {
               fixture.integration.id,
             merchantId:
               fixture.merchant.id,
-            webhookKey:
-              fixture.integration.webhookKey,
+            telegramBotUsername:
+              fixture.integration.telegramBotUsername,
             status:
               fixture.integration.status
           });

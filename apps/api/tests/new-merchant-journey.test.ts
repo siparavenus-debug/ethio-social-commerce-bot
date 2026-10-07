@@ -1192,7 +1192,7 @@ describe(
           await telegramIntegrationResponse.json() as {
             id: string;
             merchantId: string;
-            webhookKey: string;
+            telegramBotUsername: string | null;
             status: string;
           };
 
@@ -1201,14 +1201,17 @@ describe(
         ).toMatchObject({
           merchantId:
             merchantBody.merchant.id,
+          telegramBotUsername:
+            "gate13_merchant_bot",
           status:
             "ACTIVE"
         });
 
         expect(
           telegramIntegrationBody
-            .webhookKey.length
-        ).toBeGreaterThan(0);
+        ).not.toHaveProperty(
+          "webhookKey"
+        );
 
         expect(
           telegramIntegrationBody
