@@ -23,9 +23,15 @@ import {
 } from "vitest";
 
 const {
-  sendTelegramMessageMock
+  sendTelegramMessageMock,
+  getTelegramBotIdentityMock,
+  setTelegramWebhookMock
 } = vi.hoisted(() => ({
   sendTelegramMessageMock:
+    vi.fn(),
+  getTelegramBotIdentityMock:
+    vi.fn(),
+  setTelegramWebhookMock:
     vi.fn()
 }));
 
@@ -33,7 +39,11 @@ vi.mock(
   "../src/services/telegram.js",
   () => ({
     sendTelegramMessage:
-      sendTelegramMessageMock
+      sendTelegramMessageMock,
+    getTelegramBotIdentity:
+      getTelegramBotIdentityMock,
+    setTelegramWebhook:
+      setTelegramWebhookMock
   })
 );
 
@@ -319,6 +329,24 @@ beforeEach(
         "gate13-telegram-message-id"
       );
 
+    getTelegramBotIdentityMock
+      .mockReset();
+
+    getTelegramBotIdentityMock
+      .mockResolvedValue({
+        id: 123456789,
+        username:
+          "gate13_merchant_bot"
+      });
+
+    setTelegramWebhookMock
+      .mockReset();
+
+    setTelegramWebhookMock
+      .mockResolvedValue(
+        undefined
+      );
+
     await cleanup();
   }
 );
@@ -526,9 +554,6 @@ describe(
 
         const telegramBotToken =
           "gate-13-merchant-bot-token";
-
-        const telegramWebhookSecret =
-          "gate-13-merchant-webhook-secret";
 
         const merchantResponse =
           await fetch(
@@ -1152,12 +1177,10 @@ describe(
                   "application/json"
               },
               body:
-                JSON.stringify({
-                  botToken:
-                    telegramBotToken,
-                  webhookSecret:
-                    telegramWebhookSecret
-                })
+              JSON.stringify({
+                botToken:
+                  telegramBotToken
+              })
             }
           );
 

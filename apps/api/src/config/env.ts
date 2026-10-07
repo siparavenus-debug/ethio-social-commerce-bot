@@ -40,6 +40,42 @@ const corsAllowedOrigins =
     process.env.CORS_ALLOWED_ORIGINS
   );
 
+const publicApiBaseUrl =
+  process.env.PUBLIC_API_BASE_URL?.trim();
+
+export function getPublicApiBaseUrl(): string {
+  if (!publicApiBaseUrl) {
+    throw new Error(
+      "PUBLIC_API_BASE_URL must be configured before managing Telegram webhooks."
+    );
+  }
+
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(
+      publicApiBaseUrl
+    );
+  } catch {
+    throw new Error(
+      "PUBLIC_API_BASE_URL must be a valid absolute URL."
+    );
+  }
+
+  if (
+    parsedUrl.protocol !== "http:" &&
+    parsedUrl.protocol !== "https:"
+  ) {
+    throw new Error(
+      "PUBLIC_API_BASE_URL must use http or https."
+    );
+  }
+
+  return parsedUrl
+    .toString()
+    .replace(/\/$/, "");
+}
+
 const authSecret =
   process.env.AUTH_SECRET?.trim();
 
@@ -149,6 +185,8 @@ export const env = {
   apiPort: port,
 
   corsAllowedOrigins,
+
+  publicApiBaseUrl,
 
   anthropicApiKey:
     process.env.ANTHROPIC_API_KEY,

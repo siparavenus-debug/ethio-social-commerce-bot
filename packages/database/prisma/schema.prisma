@@ -53,8 +53,14 @@ enum ConversationChannel {
 }
 
 enum MerchantTelegramIntegrationStatus {
+  PROVISIONING
   ACTIVE
   INACTIVE
+}
+
+enum MerchantTelegramBotClaimStatus {
+  ACTIVE
+  PENDING
 }
 
 enum MessageDirection {
@@ -146,6 +152,7 @@ model Merchant {
   payments       Payment[]
   paymentMethods PaymentMethod[]
   telegramIntegration MerchantTelegramIntegration?
+  telegramBotClaims MerchantTelegramBotClaim[]
   conversations  Conversation[]
   webhookEvents  WebhookEvent[]
   auditLogs      AuditLog[]
@@ -343,6 +350,8 @@ model MerchantTelegramIntegration {
   id                     String                            @id @default(cuid())
   merchantId             String                            @unique
   webhookKey             String                            @unique
+  telegramBotId          String?                           @unique
+  telegramBotUsername    String?
   botTokenEncrypted      String
   webhookSecretEncrypted String
   status                 MerchantTelegramIntegrationStatus @default(ACTIVE)
@@ -350,8 +359,26 @@ model MerchantTelegramIntegration {
   updatedAt              DateTime                          @updatedAt
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  botClaims MerchantTelegramBotClaim[]
 
+  @@unique([id, merchantId])
   @@index([status])
+}
+
+model MerchantTelegramBotClaim {
+  id            String                         @id @default(cuid())
+  merchantId    String
+  integrationId String
+  telegramBotId String                         @unique
+  status        MerchantTelegramBotClaimStatus
+  createdAt     DateTime                       @default(now())
+  updatedAt     DateTime                       @updatedAt
+
+  merchant    Merchant                    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  integration MerchantTelegramIntegration @relation(fields: [integrationId, merchantId], references: [id, merchantId], onDelete: Cascade)
+
+  @@index([merchantId, status])
+  @@unique([integrationId, status])
 }
 
 model SubscriptionPlan {

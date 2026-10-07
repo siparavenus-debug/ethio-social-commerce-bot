@@ -1,4 +1,4 @@
-﻿import {
+import {
     randomBytes
   } from "node:crypto";
 
@@ -6,8 +6,13 @@
 
   import {
     MerchantTelegramIntegrationStatus,
+    Prisma,
     prisma
   } from "@ethio-commerce/database";
+
+  import {
+    getPublicApiBaseUrl
+  } from "../config/env.js";
 
   import {
     requireAuth,
@@ -20,14 +25,26 @@
   } from "../middleware/subscription-entitlement.js";
 
   import {
+    decryptTelegramCredential,
     encryptTelegramCredential
   } from "../services/telegram-credential-encryption.js";
+
+  import {
+    deleteTelegramWebhook,
+    getTelegramBotIdentity,
+    setTelegramWebhook
+  } from "../services/telegram.js";
 
   const router = Router();
 
   router.use(requireAuth);
 
   function createWebhookKey(): string {
+    return randomBytes(32)
+      .toString("base64url");
+  }
+
+  function createWebhookSecret(): string {
     return randomBytes(32)
       .toString("base64url");
   }
@@ -109,9 +126,7 @@
           String(req.params.merchantId);
 
         const {
-          botToken,
-          webhookSecret,
-          status
+          botToken
         } = req.body;
 
         if (
@@ -126,44 +141,19 @@
           return;
         }
 
-        if (
-          typeof webhookSecret !== "string" ||
-          webhookSecret.trim().length === 0
-        ) {
-          res.status(400).json({
-            error:
-              "webhookSecret is required"
-          });
-
-          return;
-        }
-
-        if (
-          status !== undefined &&
-          (
-            typeof status !== "string" ||
-            !Object.values(
-              MerchantTelegramIntegrationStatus
-            ).includes(
-              status as MerchantTelegramIntegrationStatus
-            )
-          )
-        ) {
-          res.status(400).json({
-            error:
-              "status must be ACTIVE or INACTIVE"
-          });
-
-          return;
-        }
-
         const existingIntegration =
           await prisma.merchantTelegramIntegration.findUnique({
             where: {
               merchantId
             },
             select: {
-              id: true
+              id: true,
+              webhookKey: true,
+              telegramBotId: true,
+              telegramBotUsername: true,
+              botTokenEncrypted: true,
+              webhookSecretEncrypted: true,
+              status: true
             }
           });
 
@@ -176,49 +166,178 @@
           return;
         }
 
-        const integration =
-          await prisma.$transaction(
-            async (tx) => {
-              const createdIntegration =
-                await tx.merchantTelegramIntegration.create({
+        const webhookKey =
+          createWebhookKey();
+
+        const webhookSecret =
+          createWebhookSecret();
+
+        const webhookUrl =
+          `${getPublicApiBaseUrl()}/webhooks/telegram/${webhookKey}`;
+
+        const botIdentity =
+          await getTelegramBotIdentity(
+            botToken.trim()
+          );
+
+        const telegramBotId =
+          String(botIdentity.id);
+
+          let provisioningIntegration;
+
+          try {
+            provisioningIntegration =
+              await prisma.$transaction(
+                async (tx) => {
+                  const createdIntegration =
+                    await tx.merchantTelegramIntegration.create({
+                      data: {
+                        merchantId,
+                        webhookKey,
+                        telegramBotId,
+                        telegramBotUsername:
+                          botIdentity.username ?? null,
+                        botTokenEncrypted:
+                          encryptTelegramCredential(
+                            botToken.trim()
+                          ),
+                        webhookSecretEncrypted:
+                          encryptTelegramCredential(
+                            webhookSecret
+                          ),
+                        status:
+                          MerchantTelegramIntegrationStatus.PROVISIONING
+                      }
+                    });
+
+                  await tx.merchantTelegramBotClaim.create({
+                    data: {
+                      merchantId,
+                      integrationId:
+                        createdIntegration.id,
+                      telegramBotId,
+                      status:
+                        "PENDING"
+                    }
+                  });
+
+                  return createdIntegration;
+                }
+              );
+          } catch (error) {
+            if (
+              error instanceof
+                Prisma.PrismaClientKnownRequestError &&
+              error.code === "P2002"
+            ) {
+              res.status(409).json({
+                error:
+                  "Telegram integration already exists"
+              });
+
+              return;
+            }
+
+            throw error;
+          }
+
+          try {
+            await setTelegramWebhook(
+              botToken.trim(),
+              webhookUrl,
+              webhookSecret
+            );
+          } catch (webhookError) {
+            await prisma.merchantTelegramIntegration.delete({
+              where: {
+                id:
+                  provisioningIntegration.id
+              }
+            });
+
+            throw webhookError;
+          }
+
+        let integration;
+
+        try {
+          integration =
+            await prisma.$transaction(
+              async (tx) => {
+                const activatedIntegration =
+                  await tx.merchantTelegramIntegration.update({
+                    where: {
+                      id:
+                        provisioningIntegration.id
+                    },
+                    data: {
+                      status:
+                        MerchantTelegramIntegrationStatus.ACTIVE
+                    }
+                  });
+
+                const promotedClaim =
+                  await tx.merchantTelegramBotClaim.updateMany({
+                    where: {
+                      merchantId,
+                      integrationId:
+                        provisioningIntegration.id,
+                      telegramBotId,
+                      status:
+                        "PENDING"
+                    },
+                    data: {
+                      status:
+                        "ACTIVE"
+                    }
+                  });
+
+                if (
+                  promotedClaim.count !== 1
+                ) {
+                  throw new Error(
+                    "Telegram pending bot claim changed concurrently"
+                  );
+                }
+
+                await tx.auditLog.create({
                   data: {
                     merchantId,
-                    webhookKey:
-                      createWebhookKey(),
-                    botTokenEncrypted:
-                      encryptTelegramCredential(
-                        botToken.trim()
-                      ),
-                    webhookSecretEncrypted:
-                      encryptTelegramCredential(
-                        webhookSecret.trim()
-                      ),
-                    status:
-                      status === undefined
-                        ? MerchantTelegramIntegrationStatus.ACTIVE
-                        : (
-                          status as MerchantTelegramIntegrationStatus
-                        )
+                    actorUserId:
+                      req.auth!.id,
+                    action:
+                      "TELEGRAM_INTEGRATION_CREATED",
+                    entityType:
+                      "TELEGRAM_INTEGRATION",
+                    entityId:
+                      activatedIntegration.id
                   }
                 });
 
-              await tx.auditLog.create({
-                data: {
-                  merchantId,
-                  actorUserId:
-                    req.auth!.id,
-                  action:
-                    "TELEGRAM_INTEGRATION_CREATED",
-                  entityType:
-                    "TELEGRAM_INTEGRATION",
-                  entityId:
-                    createdIntegration.id
+                return activatedIntegration;
+              }
+            );
+          } catch (persistenceError) {
+            try {
+              await deleteTelegramWebhook(
+                botToken.trim()
+              );
+
+              await prisma.merchantTelegramIntegration.delete({
+                where: {
+                  id:
+                    provisioningIntegration.id
                 }
               });
-
-              return createdIntegration;
+            } catch (cleanupError) {
+              console.error(
+                "Failed to clean up Telegram integration after activation failure:",
+                cleanupError
+              );
             }
-          );
+
+            throw persistenceError;
+          }
 
         res.status(201).json(
           toTelegramIntegrationResponse(
@@ -277,7 +396,13 @@
               merchantId
             },
             select: {
-              id: true
+              id: true,
+              webhookKey: true,
+              telegramBotId: true,
+              telegramBotUsername: true,
+              botTokenEncrypted: true,
+              webhookSecretEncrypted: true,
+              status: true
             }
           });
 
@@ -305,16 +430,10 @@
           return;
         }
 
-        if (
-          webhookSecret !== undefined &&
-          (
-            typeof webhookSecret !== "string" ||
-            webhookSecret.trim().length === 0
-          )
-        ) {
+        if (webhookSecret !== undefined) {
           res.status(400).json({
             error:
-              "webhookSecret must be a non-empty string"
+              "webhookSecret is managed by the server"
           });
 
           return;
@@ -323,12 +442,10 @@
         if (
           status !== undefined &&
           (
-            typeof status !== "string" ||
-            !Object.values(
-              MerchantTelegramIntegrationStatus
-            ).includes(
-              status as MerchantTelegramIntegrationStatus
-            )
+            status !==
+              MerchantTelegramIntegrationStatus.ACTIVE &&
+            status !==
+              MerchantTelegramIntegrationStatus.INACTIVE
           )
         ) {
           res.status(400).json({
@@ -339,6 +456,102 @@
           return;
         }
 
+        let replacementBotIdentity:
+          Awaited<
+            ReturnType<
+              typeof getTelegramBotIdentity
+            >
+          > | null = null;
+
+        if (botToken !== undefined) {
+          replacementBotIdentity =
+            await getTelegramBotIdentity(
+              botToken.trim()
+            );
+        }
+
+        const replacementWebhookSecret =
+          replacementBotIdentity
+            ? createWebhookSecret()
+            : null;
+
+        const replacementWebhookUrl =
+          replacementBotIdentity
+            ? `${getPublicApiBaseUrl()}/webhooks/telegram/${existing.webhookKey}`
+            : null;
+
+        const isDifferentTelegramBot =
+          replacementBotIdentity !== null &&
+          String(
+            replacementBotIdentity.id
+        ) !== existing.telegramBotId;
+
+        if (
+          replacementBotIdentity &&
+          isDifferentTelegramBot
+        ) {
+          try {
+            await prisma.merchantTelegramBotClaim.create({
+              data: {
+                merchantId,
+                integrationId:
+                  existing.id,
+                telegramBotId:
+                  String(
+                    replacementBotIdentity.id
+                  ),
+                status:
+                  "PENDING"
+              }
+            });
+          } catch (error) {
+            if (
+              error instanceof
+                Prisma.PrismaClientKnownRequestError &&
+              error.code === "P2002"
+            ) {
+              res.status(409).json({
+                error:
+                  "Telegram bot is already connected"
+              });
+
+              return;
+            }
+
+            throw error;
+          }
+        }
+
+        if (
+          replacementBotIdentity &&
+          replacementWebhookSecret &&
+          replacementWebhookUrl
+        ) {
+          try {
+            await setTelegramWebhook(
+              botToken.trim(),
+              replacementWebhookUrl,
+              replacementWebhookSecret
+            );
+          } catch (webhookError) {
+            await prisma.merchantTelegramBotClaim.deleteMany({
+              where: {
+                merchantId,
+                integrationId:
+                  existing.id,
+                telegramBotId:
+                  String(
+                    replacementBotIdentity.id
+                  ),
+                status:
+                  "PENDING"
+              }
+            });
+
+            throw webhookError;
+          }
+        }
+
         const changedFields: string[] = [];
 
         if (botToken !== undefined) {
@@ -347,9 +560,16 @@
           );
         }
 
-        if (webhookSecret !== undefined) {
+        if (replacementWebhookSecret) {
           changedFields.push(
             "webhookSecret"
+          );
+        }
+
+        if (replacementBotIdentity) {
+          changedFields.push(
+            "telegramBotId",
+            "telegramBotUsername"
           );
         }
 
@@ -359,8 +579,11 @@
           );
         }
 
-        const integration =
-          await prisma.$transaction(
+        let integration;
+
+        try {
+          integration =
+            await prisma.$transaction(
             async (tx) => {
               const updatedIntegration =
                 await tx.merchantTelegramIntegration.update({
@@ -368,6 +591,17 @@
                     merchantId
                   },
                   data: {
+                    ...(replacementBotIdentity
+                      ? {
+                        telegramBotId:
+                          String(
+                            replacementBotIdentity.id
+                          ),
+                        telegramBotUsername:
+                          replacementBotIdentity.username ??
+                          null
+                      }
+                      : {}),
                     ...(botToken !== undefined
                       ? {
                         botTokenEncrypted:
@@ -376,22 +610,70 @@
                           )
                       }
                       : {}),
-                    ...(webhookSecret !== undefined
+                    ...(replacementWebhookSecret
                       ? {
                         webhookSecretEncrypted:
                           encryptTelegramCredential(
-                            webhookSecret.trim()
+                            replacementWebhookSecret
                           )
                       }
                       : {}),
-                    ...(status !== undefined
+                    ...(replacementBotIdentity
                       ? {
                         status:
-                          status as MerchantTelegramIntegrationStatus
+                          status ??
+                          MerchantTelegramIntegrationStatus.ACTIVE
                       }
-                      : {})
+                      : status !== undefined
+                        ? {
+                          status:
+                            status as MerchantTelegramIntegrationStatus
+                        }
+                        : {})
                   }
                 });
+
+                if (
+                  replacementBotIdentity &&
+                  isDifferentTelegramBot
+                ) {
+                await tx.merchantTelegramBotClaim.deleteMany({
+                  where: {
+                    merchantId,
+                    integrationId:
+                      existing.id,
+                    status:
+                      "ACTIVE"
+                  }
+                });
+
+                const promotedClaim =
+                  await tx.merchantTelegramBotClaim.updateMany({
+                    where: {
+                      merchantId,
+                      integrationId:
+                        existing.id,
+                      telegramBotId:
+                        String(
+                          replacementBotIdentity.id
+                        ),
+                      status:
+                        "PENDING"
+                    },
+                    data: {
+                      status:
+                        "ACTIVE"
+                    }
+                  });
+
+                if (
+                  promotedClaim.count !== 1
+                ) {
+                  throw new Error(
+                    "Telegram pending bot claim changed concurrently"
+                  );
+                }
+              }
 
               if (
                 changedFields.length > 0
@@ -417,6 +699,62 @@
               return updatedIntegration;
             }
           );
+
+        } catch (persistenceError) {
+          if (
+            replacementBotIdentity &&
+            replacementWebhookSecret &&
+            botToken !== undefined
+          ) {
+            const replacementBotToken =
+              botToken.trim();
+
+            const existingBotToken =
+              decryptTelegramCredential(
+                existing.botTokenEncrypted
+              );
+
+            const existingWebhookSecret =
+              decryptTelegramCredential(
+                existing.webhookSecretEncrypted
+              );
+
+            const webhookUrl =
+              `${getPublicApiBaseUrl()}/webhooks/telegram/${existing.webhookKey}`;
+
+            if (
+              replacementBotToken !==
+              existingBotToken
+            ) {
+              await deleteTelegramWebhook(
+                replacementBotToken
+              );
+            }
+
+            await setTelegramWebhook(
+              existingBotToken,
+              webhookUrl,
+              existingWebhookSecret
+            );
+
+            await prisma.merchantTelegramBotClaim.deleteMany({
+              where: {
+                merchantId,
+                integrationId:
+                  existing.id,
+                telegramBotId:
+                  String(
+                    replacementBotIdentity.id
+                  ),
+                status:
+                  "PENDING"
+              }
+            });
+
+          }
+
+          throw persistenceError;
+        }
 
         res.json(
           toTelegramIntegrationResponse(

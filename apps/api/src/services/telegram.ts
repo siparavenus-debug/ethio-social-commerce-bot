@@ -22,16 +22,24 @@ async function telegramApi<T>(
     );
   }
 
-  const response = await fetch(
-    `https://api.telegram.org/bot${botToken}/${method}`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body ?? {})
-    }
-  );
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `https://api.telegram.org/bot${botToken}/${method}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body ?? {})
+      }
+    );
+  } catch {
+    throw new Error(
+      `Telegram API ${method} request failed`
+    );
+  }
 
   const data =
     (await response.json()) as TelegramApiResponse<T>;
@@ -46,6 +54,140 @@ async function telegramApi<T>(
   }
 
   return data.result;
+}
+
+export type TelegramBotIdentity = {
+  id: number;
+  username?: string;
+  firstName: string;
+};
+
+export type TelegramWebhookInfo = {
+  url: string;
+  pendingUpdateCount: number;
+  lastErrorDate?: number;
+  lastErrorMessage?: string;
+};
+
+type TelegramGetMeResult = {
+  id: number;
+  is_bot: boolean;
+  first_name: string;
+  username?: string;
+};
+
+type TelegramGetWebhookInfoResult = {
+  url: string;
+  pending_update_count: number;
+  last_error_date?: number;
+  last_error_message?: string;
+};
+
+export async function getTelegramBotIdentity(
+  botToken: string
+): Promise<TelegramBotIdentity> {
+  const result =
+    await telegramApi<TelegramGetMeResult>(
+      botToken,
+      "getMe"
+    );
+
+  if (
+    !Number.isInteger(result.id) ||
+    result.is_bot !== true ||
+    !result.first_name
+  ) {
+    throw new Error(
+      "Telegram getMe returned an invalid bot response"
+    );
+  }
+
+  return {
+    id: result.id,
+    username: result.username,
+    firstName: result.first_name
+  };
+}
+
+export async function setTelegramWebhook(
+  botToken: string,
+  webhookUrl: string,
+  webhookSecret: string
+): Promise<void> {
+  if (!webhookUrl) {
+    throw new Error(
+      "Telegram webhook URL is required"
+    );
+  }
+
+  if (!webhookSecret) {
+    throw new Error(
+      "Telegram webhook secret is required"
+    );
+  }
+
+  const result =
+    await telegramApi<boolean>(
+      botToken,
+      "setWebhook",
+      {
+        url: webhookUrl,
+        secret_token: webhookSecret
+      }
+    );
+
+  if (result !== true) {
+    throw new Error(
+      "Telegram setWebhook returned an invalid response"
+    );
+  }
+}
+
+export async function deleteTelegramWebhook(
+  botToken: string
+): Promise<void> {
+  const result =
+    await telegramApi<boolean>(
+      botToken,
+      "deleteWebhook"
+    );
+
+  if (result !== true) {
+    throw new Error(
+      "Telegram deleteWebhook returned an invalid response"
+    );
+  }
+}
+
+export async function getTelegramWebhookInfo(
+  botToken: string
+): Promise<TelegramWebhookInfo> {
+  const result =
+    await telegramApi<TelegramGetWebhookInfoResult>(
+      botToken,
+      "getWebhookInfo"
+    );
+
+  if (
+    typeof result.url !== "string" ||
+    !Number.isInteger(
+      result.pending_update_count
+    )
+  ) {
+    throw new Error(
+      "Telegram getWebhookInfo returned an invalid response"
+    );
+  }
+
+  return {
+    url: result.url,
+    pendingUpdateCount:
+      result.pending_update_count,
+    lastErrorDate:
+      result.last_error_date,
+    lastErrorMessage:
+      result.last_error_message
+  };
 }
 
 export async function sendTelegramMessage(
@@ -148,9 +290,17 @@ export async function downloadTelegramFile(
     );
   }
 
-  const response = await fetch(
-    `https://api.telegram.org/file/bot${botToken}/${filePath}`
-  );
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `https://api.telegram.org/file/bot${botToken}/${filePath}`
+    );
+  } catch {
+    throw new Error(
+      "Telegram file download request failed"
+    );
+  }
 
   if (!response.ok) {
     throw new Error(

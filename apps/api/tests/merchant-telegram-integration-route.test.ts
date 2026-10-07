@@ -1,4 +1,4 @@
-﻿import type {
+import type {
     Server
   } from "node:http";
 
@@ -7,6 +7,7 @@
   import {
     MerchantSubscriptionStatus,
     MerchantTelegramIntegrationStatus,
+    Prisma,
     SubscriptionBillingInterval,
     prisma
   } from "@ethio-commerce/database";
@@ -17,8 +18,50 @@
     beforeEach,
     describe,
     expect,
-    it
+    it,
+    vi
   } from "vitest";
+
+  const telegramMocks =
+    vi.hoisted(() => ({
+      getTelegramBotIdentity:
+        vi.fn(),
+      setTelegramWebhook:
+        vi.fn(),
+      deleteTelegramWebhook:
+        vi.fn(),
+      getTelegramWebhookInfo:
+        vi.fn()
+    }));
+
+  const configMocks =
+    vi.hoisted(() => ({
+      getPublicApiBaseUrl:
+        vi.fn(() =>
+          "http://127.0.0.1:3000"
+        )
+    }));
+
+  vi.mock(
+    "../src/config/env.js",
+    async (importOriginal) => {
+      const actual =
+        await importOriginal<
+          typeof import("../src/config/env.js")
+        >();
+
+      return {
+        ...actual,
+        getPublicApiBaseUrl:
+          configMocks.getPublicApiBaseUrl
+      };
+    }
+  );
+
+  vi.mock(
+    "../src/services/telegram.js",
+    () => telegramMocks
+  );
 
   import merchantTelegramIntegrationRouter
     from "../src/routes/merchant-telegram-integration.js";
@@ -157,6 +200,10 @@
             merchant.id,
           webhookKey:
             "test-telegram-webhook-key",
+          telegramBotId:
+            "123456789",
+          telegramBotUsername:
+            "test_shop_bot",
           botTokenEncrypted:
             encryptTelegramCredential(
               botToken
@@ -167,6 +214,19 @@
             ),
           status:
             MerchantTelegramIntegrationStatus.ACTIVE
+        }
+      });
+
+      await prisma.merchantTelegramBotClaim.create({
+        data: {
+          merchantId:
+            merchant.id,
+          integrationId:
+            integration.id,
+          telegramBotId:
+            "123456789",
+          status:
+            "ACTIVE"
         }
       });
 
@@ -244,6 +304,33 @@
 
   beforeEach(
     async () => {
+      vi.clearAllMocks();
+
+      telegramMocks.getTelegramBotIdentity
+        .mockResolvedValue({
+          id: 123456789,
+          username:
+            "test_shop_bot",
+          firstName:
+            "Test Shop Bot"
+        });
+
+      telegramMocks.setTelegramWebhook
+        .mockResolvedValue(
+          undefined
+        );
+
+      telegramMocks.deleteTelegramWebhook
+        .mockResolvedValue(
+          undefined
+        );
+
+      telegramMocks.getTelegramWebhookInfo
+        .mockResolvedValue({
+          url: "",
+          pendingUpdateCount: 0
+        });
+
       await cleanup();
     }
   );
@@ -490,6 +577,109 @@
       );
 
       it(
+        "does not reserve or mutate Telegram state when webhook configuration is invalid",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.merchantTelegramIntegration.delete({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          configMocks.getPublicApiBaseUrl
+            .mockImplementationOnce(
+              () => {
+                throw new Error(
+                  "PUBLIC_API_BASE_URL must be configured before managing Telegram webhooks."
+                );
+              }
+            );
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+              {
+                method:
+                  "POST",
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    botToken:
+                      "configuration-failure-bot-token"
+                  })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(500);
+
+          await expect(
+            response.json()
+          ).resolves.toEqual({
+            error:
+              "Failed to create Telegram integration"
+          });
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).not.toHaveBeenCalled();
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          expect(
+            telegramMocks.deleteTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          const integration =
+            await prisma.merchantTelegramIntegration.findUnique({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(integration).toBeNull();
+
+          const botClaims =
+            await prisma.merchantTelegramBotClaim.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(botClaims).toHaveLength(0);
+
+          const audit =
+            await prisma.auditLog.findFirst({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                action:
+                  "TELEGRAM_INTEGRATION_CREATED"
+              }
+            });
+
+          expect(audit).toBeNull();
+        }
+      );
+
+      it(
         "creates and audits an encrypted Telegram integration",
         async () => {
           const fixture =
@@ -509,9 +699,6 @@
           const botToken =
             "created-telegram-bot-token";
 
-          const webhookSecret =
-            "created-telegram-webhook-secret";
-
           const response =
             await fetch(
               `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
@@ -525,10 +712,9 @@
                     "application/json"
                 },
                 body:
-                  JSON.stringify({
-                    botToken,
-                    webhookSecret
-                  })
+                JSON.stringify({
+                  botToken
+                })
               }
             );
 
@@ -568,12 +754,6 @@
             botToken
           );
 
-          expect(
-            JSON.stringify(body)
-          ).not.toContain(
-            webhookSecret
-          );
-
           const storedIntegration =
             await prisma.merchantTelegramIntegration.findUniqueOrThrow({
               where: {
@@ -582,13 +762,79 @@
               }
             });
 
+            const botClaims =
+            await prisma.merchantTelegramBotClaim.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(botClaims).toHaveLength(1);
+
+          expect(botClaims[0]).toMatchObject({
+            merchantId:
+              fixture.merchant.id,
+            integrationId:
+              storedIntegration.id,
+            telegramBotId:
+              "123456789",
+            status:
+              "ACTIVE"
+          });
+
+          expect(
+            storedIntegration.telegramBotId
+          ).toBe(
+            "123456789"
+          );
+
+          expect(
+            storedIntegration.telegramBotUsername
+          ).toBe(
+            "test_shop_bot"
+          );
+
           expect(
             storedIntegration.botTokenEncrypted
           ).not.toBe(botToken);
 
+          const generatedWebhookSecret =
+            decryptTelegramCredential(
+              storedIntegration.webhookSecretEncrypted
+           );
+
+          expect(
+            generatedWebhookSecret.length
+          ).toBeGreaterThan(0);
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledWith(
+            botToken
+          );
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledTimes(1);
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledWith(
+            botToken,
+            `http://127.0.0.1:3000/webhooks/telegram/${body.webhookKey}`,
+            generatedWebhookSecret
+          );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledTimes(1);
+
           expect(
             storedIntegration.webhookSecretEncrypted
-          ).not.toBe(webhookSecret);
+          ).not.toBe(
+            generatedWebhookSecret
+          );
 
           expect(
             storedIntegration.botTokenEncrypted
@@ -629,8 +875,648 @@
               audit?.metadata ?? null
             )
           ).not.toContain(
-            webhookSecret
+            generatedWebhookSecret
           );
+        }
+      );
+
+      it(
+        "rejects a Telegram bot already connected to another merchant before replacing its webhook",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const secondMerchant =
+            await prisma.merchant.create({
+              data: {
+                name:
+                  `${testPrefix}-second-merchant`,
+                currency:
+                  "ETB"
+              }
+            });
+
+          const secondUser =
+            await prisma.merchantUser.create({
+              data: {
+                merchantId:
+                  secondMerchant.id,
+                email:
+                  `${testPrefix}-second@example.test`,
+                passwordHash:
+                  "test-password-hash",
+                role:
+                  "OWNER",
+                tokenVersion:
+                  0
+              }
+            });
+
+          const existingSubscription =
+            await prisma.merchantSubscription.findFirstOrThrow({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          await prisma.merchantSubscription.create({
+            data: {
+              merchantId:
+                secondMerchant.id,
+              planId:
+                existingSubscription.planId,
+              status:
+                MerchantSubscriptionStatus.ACTIVE,
+              billingInterval:
+                SubscriptionBillingInterval.MONTHLY,
+              priceSnapshot:
+                "500.00",
+              commissionRateSnapshot:
+                "0.035000",
+              currency:
+                "ETB",
+              currentPeriodStart:
+                new Date(
+                  "2026-10-01T00:00:00.000Z"
+                ),
+              currentPeriodEnd:
+                new Date(
+                  "2026-11-01T00:00:00.000Z"
+                )
+            }
+          });
+
+          const secondToken =
+            createAuthToken({
+              id:
+                secondUser.id,
+              merchantId:
+                secondMerchant.id,
+              role:
+                secondUser.role,
+              tokenVersion:
+                secondUser.tokenVersion
+            });
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${secondMerchant.id}/telegram-integration`,
+              {
+                method:
+                  "POST",
+                headers: {
+                  authorization:
+                    `Bearer ${secondToken}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    botToken:
+                      "same-bot-different-token-text"
+                  })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(409);
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledWith(
+            "same-bot-different-token-text"
+          );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          expect(
+            telegramMocks.deleteTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          const secondIntegration =
+            await prisma.merchantTelegramIntegration.findUnique({
+              where: {
+                merchantId:
+                  secondMerchant.id
+              }
+            });
+
+          expect(
+            secondIntegration
+          ).toBeNull();
+
+          const existingIntegration =
+            await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            existingIntegration.telegramBotId
+          ).toBe(
+            "123456789"
+          );
+        }
+      );
+
+      it(
+        "does not persist an integration when Telegram webhook registration fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.merchantTelegramIntegration.delete({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const botToken =
+            "failed-webhook-bot-token";
+
+          telegramMocks.setTelegramWebhook
+            .mockRejectedValueOnce(
+              new Error(
+                "Telegram webhook registration failed"
+              )
+            );
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+              {
+                method:
+                  "POST",
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    botToken
+                  })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(500);
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledWith(
+            botToken
+          );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledTimes(1);
+
+          expect(
+            telegramMocks.deleteTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          const storedIntegration =
+            await prisma.merchantTelegramIntegration.findUnique({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            storedIntegration
+          ).toBeNull();
+
+          const botClaims =
+            await prisma.merchantTelegramBotClaim.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            botClaims
+          ).toHaveLength(0);
+
+          const audit =
+            await prisma.auditLog.findFirst({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                action:
+                  "TELEGRAM_INTEGRATION_CREATED"
+              }
+            });
+
+          expect(audit).toBeNull();
+        }
+      );
+
+      it(
+        "deletes the Telegram webhook when persistence fails after registration",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.merchantTelegramIntegration.delete({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const botToken =
+            "persistence-failure-bot-token";
+
+          const originalTransaction =
+            prisma.$transaction.bind(
+              prisma
+            );
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            );
+
+          transactionSpy
+            .mockImplementationOnce(
+              ((...args: Parameters<
+                typeof prisma.$transaction
+              >) =>
+                originalTransaction(
+                  ...args
+                )) as typeof prisma.$transaction
+            )
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated persistence failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "POST",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.getTelegramBotIdentity
+            ).toHaveBeenCalledWith(
+              botToken
+            );
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledWith(
+              botToken
+            );
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUnique({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration
+            ).toBeNull();
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_CREATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "keeps the provisioning reservation when Telegram webhook cleanup fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.merchantTelegramIntegration.delete({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const botToken =
+            "cleanup-failure-bot-token";
+
+          const originalTransaction =
+            prisma.$transaction.bind(
+              prisma
+            );
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            );
+
+          transactionSpy
+            .mockImplementationOnce(
+              ((...args: Parameters<
+                typeof prisma.$transaction
+              >) =>
+                originalTransaction(
+                  ...args
+                )) as typeof prisma.$transaction
+            )
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated persistence failure"
+              )
+            );
+
+          telegramMocks.deleteTelegramWebhook
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated Telegram cleanup failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "POST",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.getTelegramBotIdentity
+            ).toHaveBeenCalledWith(
+              botToken
+            );
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledWith(
+              botToken
+            );
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUnique({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration
+            ).not.toBeNull();
+
+            expect(
+              storedIntegration?.status
+            ).toBe(
+              MerchantTelegramIntegrationStatus.PROVISIONING
+            );
+
+            expect(
+              storedIntegration?.telegramBotId
+            ).toBe(
+              "123456789"
+            );
+
+            const botClaims =
+              await prisma.merchantTelegramBotClaim.findMany({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              botClaims
+            ).toHaveLength(1);
+
+            expect(
+              botClaims[0]
+            ).toMatchObject({
+              merchantId:
+                fixture.merchant.id,
+              integrationId:
+                storedIntegration!.id,
+              telegramBotId:
+                "123456789",
+              status:
+                "PENDING"
+            });
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_CREATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "does not register the Telegram webhook when bot claim reservation loses a uniqueness race",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await prisma.merchantTelegramIntegration.delete({
+            where: {
+              merchantId:
+                fixture.merchant.id
+            }
+          });
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const botToken =
+            "telegram-bot-race-token";
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            ).mockRejectedValueOnce(
+              new Prisma.PrismaClientKnownRequestError(
+                "Unique constraint failed",
+                {
+                  code: "P2002",
+                  clientVersion:
+                    "7.9.1",
+                  meta: {
+                    target: [
+                      "telegramBotId"
+                    ]
+                  }
+                }
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "POST",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(409);
+
+            expect(
+              telegramMocks.getTelegramBotIdentity
+            ).toHaveBeenCalledWith(
+              botToken
+            );
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).not.toHaveBeenCalled();
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).not.toHaveBeenCalled();
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUnique({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration
+            ).toBeNull();
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_CREATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
         }
       );
 
@@ -638,10 +1524,7 @@
         {
           name:
             "missing bot token",
-          body: {
-            webhookSecret:
-              "valid-webhook-secret"
-          },
+          body: {},
           expectedError:
             "botToken is required"
         },
@@ -650,34 +1533,10 @@
             "blank bot token",
           body: {
             botToken:
-              "   ",
-            webhookSecret:
-              "valid-webhook-secret"
-          },
-          expectedError:
-            "botToken is required"
-        },
-        {
-          name:
-            "missing webhook secret",
-          body: {
-            botToken:
-              "valid-bot-token"
-          },
-          expectedError:
-            "webhookSecret is required"
-        },
-        {
-          name:
-            "blank webhook secret",
-          body: {
-            botToken:
-              "valid-bot-token",
-            webhookSecret:
               "   "
           },
           expectedError:
-            "webhookSecret is required"
+            "botToken is required"
         }
       ])(
         "rejects Telegram integration creation with $name",
@@ -751,49 +1610,9 @@
         }
       );
 
-      it.each([
-        {
-          method:
-            "POST",
-          prepare: async (
-            merchantId: string
-          ) => {
-            await prisma.merchantTelegramIntegration.delete({
-              where: {
-                merchantId
-              }
-            });
-          },
-          body: {
-            botToken:
-              "valid-bot-token",
-            webhookSecret:
-              "valid-webhook-secret",
-            status:
-              "UNKNOWN"
-          },
-          action:
-            "TELEGRAM_INTEGRATION_CREATED"
-        },
-        {
-          method:
-            "PATCH",
-          prepare: async () => {},
-          body: {
-            status:
-              "UNKNOWN"
-          },
-          action:
-            "TELEGRAM_INTEGRATION_UPDATED"
-        }
-      ])(
-        "rejects invalid Telegram integration status on $method",
-        async ({
-          method,
-          prepare,
-          body,
-          action
-        }) => {
+      it(
+        "rejects invalid Telegram integration status on PATCH",
+        async () => {
           const fixture =
             await createFixture();
 
@@ -801,15 +1620,12 @@
             fixture.merchant.id
           );
 
-          await prepare(
-            fixture.merchant.id
-          );
-
           const response =
             await fetch(
               `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
               {
-                method,
+                method:
+                  "PATCH",
                 headers: {
                   authorization:
                     `Bearer ${fixture.token}`,
@@ -817,7 +1633,10 @@
                     "application/json"
                 },
                 body:
-                  JSON.stringify(body)
+                  JSON.stringify({
+                    status:
+                      "PROVISIONING"
+                  })
               }
             );
 
@@ -837,7 +1656,77 @@
               where: {
                 merchantId:
                   fixture.merchant.id,
-                action
+                action:
+                  "TELEGRAM_INTEGRATION_UPDATED"
+              }
+            });
+
+          expect(auditCount).toBe(0);
+        }
+      );
+
+      it(
+        "rejects client-provided Telegram webhook secrets on PATCH",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+              {
+                method:
+                  "PATCH",
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    webhookSecret:
+                      "client-controlled-secret"
+                  })
+              }
+            );
+
+          expect(response.status).toBe(400);
+
+          await expect(
+            response.json()
+          ).resolves.toEqual({
+            error:
+              "webhookSecret is managed by the server"
+          });
+
+          const storedIntegration =
+            await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            storedIntegration.webhookSecretEncrypted
+          ).toBe(
+            fixture.integration.webhookSecretEncrypted
+          );
+
+          const auditCount =
+            await prisma.auditLog.count({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                action:
+                  "TELEGRAM_INTEGRATION_UPDATED",
+                entityId:
+                  fixture.integration.id
               }
             });
 
@@ -1108,8 +1997,14 @@
           const newBotToken =
             "rotated-telegram-bot-token";
 
-          const newWebhookSecret =
-            "rotated-telegram-webhook-secret";
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_shop_bot",
+              firstName:
+                "Replacement Shop Bot"
+            });
 
           const response =
             await fetch(
@@ -1126,9 +2021,7 @@
                 body:
                   JSON.stringify({
                     botToken:
-                      newBotToken,
-                    webhookSecret:
-                      newWebhookSecret
+                      newBotToken
                   })
               }
             );
@@ -1166,10 +2059,14 @@
           );
 
           expect(
-            JSON.stringify(body)
-          ).not.toContain(
-            newWebhookSecret
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledWith(
+            newBotToken
           );
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledTimes(1);
 
           const storedIntegration =
             await prisma.merchantTelegramIntegration.findUniqueOrThrow({
@@ -1183,6 +2080,18 @@
             storedIntegration.webhookKey
           ).toBe(
             fixture.integration.webhookKey
+          );
+
+          expect(
+            storedIntegration.telegramBotId
+          ).toBe(
+            "987654321"
+          );
+
+          expect(
+            storedIntegration.telegramBotUsername
+          ).toBe(
+            "replacement_shop_bot"
           );
 
           expect(
@@ -1205,13 +2114,32 @@
             newBotToken
           );
 
-          expect(
+          const generatedWebhookSecret =
             decryptTelegramCredential(
               storedIntegration.webhookSecretEncrypted
-            )
-          ).toBe(
-            newWebhookSecret
+            );
+
+          expect(
+            generatedWebhookSecret.length
+          ).toBeGreaterThan(0);
+
+          expect(
+            generatedWebhookSecret
+          ).not.toBe(
+            fixture.webhookSecret
           );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledWith(
+            newBotToken,
+            `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+            generatedWebhookSecret
+          );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledTimes(1);
 
           const audit =
             await prisma.auditLog.findFirst({
@@ -1236,7 +2164,9 @@
           ).toEqual({
             changedFields: [
               "botToken",
-              "webhookSecret"
+              "webhookSecret",
+              "telegramBotId",
+              "telegramBotUsername"
             ]
           });
 
@@ -1253,8 +2183,1199 @@
               audit?.metadata ?? null
             )
           ).not.toContain(
-            newWebhookSecret
+            generatedWebhookSecret
           );
+
+          const claims =
+          await prisma.merchantTelegramBotClaim.findMany({
+            where: {
+              merchantId:
+                fixture.merchant.id,
+              integrationId:
+                fixture.integration.id
+            },
+            orderBy: {
+              createdAt:
+                "asc"
+            }
+          });
+
+        expect(claims).toHaveLength(1);
+
+        expect(claims[0]).toMatchObject({
+          merchantId:
+            fixture.merchant.id,
+          integrationId:
+            fixture.integration.id,
+          telegramBotId:
+            "987654321",
+          status:
+            "ACTIVE"
+        });
+
+        expect(
+          claims.some(
+            (claim) =>
+              claim.telegramBotId ===
+              fixture.integration.telegramBotId
+          )
+        ).toBe(false);
+
+        expect(
+          claims.some(
+            (claim) =>
+              claim.status ===
+              "PENDING"
+          )
+        ).toBe(false);
+        }
+      );
+
+      it(
+        "does not create a pending bot claim when replacement webhook configuration is invalid",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-configuration-failure-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_config_failure_bot",
+              firstName:
+                "Replacement Config Failure Bot"
+            });
+
+          configMocks.getPublicApiBaseUrl
+            .mockImplementationOnce(
+              () => {
+                throw new Error(
+                  "PUBLIC_API_BASE_URL must be configured before managing Telegram webhooks."
+                );
+              }
+            );
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+              {
+                method:
+                  "PATCH",
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    botToken:
+                      newBotToken
+                  })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(500);
+
+          await expect(
+            response.json()
+          ).resolves.toEqual({
+            error:
+              "Failed to update Telegram integration"
+          });
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledWith(
+            newBotToken
+          );
+
+          expect(
+            telegramMocks.getTelegramBotIdentity
+          ).toHaveBeenCalledTimes(1);
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          expect(
+            telegramMocks.deleteTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          const storedIntegration =
+            await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            storedIntegration.telegramBotId
+          ).toBe(
+            fixture.integration.telegramBotId
+          );
+
+          expect(
+            storedIntegration.telegramBotUsername
+          ).toBe(
+            fixture.integration.telegramBotUsername
+          );
+
+          expect(
+            storedIntegration.botTokenEncrypted
+          ).toBe(
+            fixture.integration.botTokenEncrypted
+          );
+
+          expect(
+            storedIntegration.webhookSecretEncrypted
+          ).toBe(
+            fixture.integration.webhookSecretEncrypted
+          );
+
+          expect(
+            storedIntegration.status
+          ).toBe(
+            MerchantTelegramIntegrationStatus.ACTIVE
+          );
+
+          const claims =
+            await prisma.merchantTelegramBotClaim.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                integrationId:
+                  fixture.integration.id
+              }
+            });
+
+          expect(claims).toHaveLength(1);
+
+          expect(claims[0]).toMatchObject({
+            merchantId:
+              fixture.merchant.id,
+            integrationId:
+              fixture.integration.id,
+            telegramBotId:
+              fixture.integration.telegramBotId,
+            status:
+              "ACTIVE"
+          });
+
+          expect(
+            claims.some(
+              (claim) =>
+                claim.status ===
+                "PENDING"
+            )
+          ).toBe(false);
+
+          const audit =
+            await prisma.auditLog.findFirst({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                actorUserId:
+                  fixture.user.id,
+                action:
+                  "TELEGRAM_INTEGRATION_UPDATED",
+                entityType:
+                  "TELEGRAM_INTEGRATION",
+                entityId:
+                  fixture.integration.id
+              }
+            });
+
+          expect(audit).toBeNull();
+        }
+      );
+
+      it(
+        "restores the existing integration when replacement webhook registration fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-webhook-failure-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_failure_bot",
+              firstName:
+                "Replacement Failure Bot"
+            });
+
+          telegramMocks.setTelegramWebhook
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated Telegram webhook failure"
+              )
+            );
+
+          const response =
+            await fetch(
+              `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+              {
+                method:
+                  "PATCH",
+                headers: {
+                  authorization:
+                    `Bearer ${fixture.token}`,
+                  "content-type":
+                    "application/json"
+                },
+                body:
+                  JSON.stringify({
+                    botToken:
+                      newBotToken
+                  })
+              }
+            );
+
+          expect(
+            response.status
+          ).toBe(500);
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledTimes(1);
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenCalledWith(
+            newBotToken,
+            `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+            expect.any(String)
+          );
+
+          expect(
+            telegramMocks.deleteTelegramWebhook
+          ).not.toHaveBeenCalled();
+
+          const storedIntegration =
+            await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+              where: {
+                merchantId:
+                  fixture.merchant.id
+              }
+            });
+
+          expect(
+            storedIntegration.telegramBotId
+          ).toBe(
+            fixture.integration.telegramBotId
+          );
+
+          expect(
+            storedIntegration.telegramBotUsername
+          ).toBe(
+            fixture.integration.telegramBotUsername
+          );
+
+          expect(
+            storedIntegration.botTokenEncrypted
+          ).toBe(
+            fixture.integration.botTokenEncrypted
+          );
+
+          expect(
+            storedIntegration.webhookSecretEncrypted
+          ).toBe(
+            fixture.integration.webhookSecretEncrypted
+          );
+
+          expect(
+            storedIntegration.status
+          ).toBe(
+            fixture.integration.status
+          );
+
+          const claims =
+            await prisma.merchantTelegramBotClaim.findMany({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                integrationId:
+                  fixture.integration.id
+              }
+            });
+
+          expect(claims).toHaveLength(1);
+
+          expect(claims[0]).toMatchObject({
+            merchantId:
+              fixture.merchant.id,
+            integrationId:
+              fixture.integration.id,
+            telegramBotId:
+              fixture.integration.telegramBotId,
+            status:
+              "ACTIVE"
+          });
+
+          expect(
+            claims.some(
+              (claim) =>
+                claim.telegramBotId ===
+                "987654321"
+            )
+          ).toBe(false);
+
+          expect(
+            claims.some(
+              (claim) =>
+                claim.status ===
+                "PENDING"
+            )
+          ).toBe(false);
+
+          const audit =
+            await prisma.auditLog.findFirst({
+              where: {
+                merchantId:
+                  fixture.merchant.id,
+                action:
+                  "TELEGRAM_INTEGRATION_UPDATED"
+              }
+            });
+
+          expect(audit).toBeNull();
+        }
+      );
+
+      it(
+        "cleans up the replacement webhook and restores the existing integration when final persistence fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-persistence-failure-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_persistence_bot",
+              firstName:
+                "Replacement Persistence Bot"
+            });
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            ).mockRejectedValueOnce(
+              new Error(
+                "Simulated replacement persistence failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "PATCH",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken:
+                        newBotToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(2);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledWith(
+              newBotToken
+            );
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(2);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenNthCalledWith(
+              2,
+              fixture.botToken,
+              `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+              fixture.webhookSecret
+            );
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            expect(
+              storedIntegration.telegramBotUsername
+            ).toBe(
+              fixture.integration.telegramBotUsername
+            );
+
+            expect(
+              storedIntegration.botTokenEncrypted
+            ).toBe(
+              fixture.integration.botTokenEncrypted
+            );
+
+            expect(
+              storedIntegration.webhookSecretEncrypted
+            ).toBe(
+              fixture.integration.webhookSecretEncrypted
+            );
+
+            expect(
+              storedIntegration.status
+            ).toBe(
+              fixture.integration.status
+            );
+
+            const claims =
+              await prisma.merchantTelegramBotClaim.findMany({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  integrationId:
+                    fixture.integration.id
+                }
+              });
+
+            expect(claims).toHaveLength(1);
+
+            expect(claims[0]).toMatchObject({
+              merchantId:
+                fixture.merchant.id,
+              integrationId:
+                fixture.integration.id,
+              telegramBotId:
+                fixture.integration.telegramBotId,
+              status:
+                "ACTIVE"
+            });
+
+            expect(
+              claims.some(
+                (claim) =>
+                  claim.telegramBotId ===
+                  "987654321"
+              )
+            ).toBe(false);
+
+            expect(
+              claims.some(
+                (claim) =>
+                  claim.status ===
+                  "PENDING"
+              )
+            ).toBe(false);
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_UPDATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "keeps the replacement provisioning reservation when final persistence cleanup fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-cleanup-failure-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_cleanup_bot",
+              firstName:
+                "Replacement Cleanup Bot"
+            });
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            ).mockRejectedValueOnce(
+              new Error(
+                "Simulated replacement persistence failure"
+              )
+            );
+
+          telegramMocks.deleteTelegramWebhook
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated replacement cleanup failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "PATCH",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken:
+                        newBotToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledWith(
+              newBotToken
+            );
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration.status
+            ).toBe(
+              fixture.integration.status
+            );
+
+            expect(
+              storedIntegration.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            expect(
+              storedIntegration.telegramBotUsername
+            ).toBe(
+              fixture.integration.telegramBotUsername
+            );
+
+            expect(
+              storedIntegration.botTokenEncrypted
+            ).toBe(
+              fixture.integration.botTokenEncrypted
+            );
+
+            expect(
+              storedIntegration.webhookSecretEncrypted
+            ).toBe(
+              fixture.integration.webhookSecretEncrypted
+            );
+
+            const claims =
+              await prisma.merchantTelegramBotClaim.findMany({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  integrationId:
+                    fixture.integration.id
+                }
+              });
+
+            expect(claims).toHaveLength(2);
+
+            expect(claims).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  telegramBotId:
+                    fixture.integration.telegramBotId,
+                  status:
+                    "ACTIVE"
+                }),
+                expect.objectContaining({
+                  telegramBotId:
+                    "987654321",
+                  status:
+                    "PENDING"
+                })
+              ])
+            );
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_UPDATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "keeps the replacement provisioning reservation when original webhook restoration fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-restore-failure-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_restore_failure_bot",
+              firstName:
+                "Replacement Restore Failure Bot"
+            });
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            ).mockRejectedValueOnce(
+              new Error(
+                "Simulated replacement persistence failure"
+              )
+            );
+
+          telegramMocks.setTelegramWebhook
+            .mockResolvedValueOnce(undefined)
+            .mockRejectedValueOnce(
+              new Error(
+                "Simulated original webhook restoration failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "PATCH",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken:
+                        newBotToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(2);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledWith(
+              newBotToken
+            );
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).toHaveBeenCalledTimes(1);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenNthCalledWith(
+              2,
+              fixture.botToken,
+              `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+              fixture.webhookSecret
+            );
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration.status
+            ).toBe(
+              fixture.integration.status
+            );
+
+            expect(
+              storedIntegration.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            expect(
+              storedIntegration.telegramBotUsername
+            ).toBe(
+              fixture.integration.telegramBotUsername
+            );
+
+            expect(
+              storedIntegration.botTokenEncrypted
+            ).toBe(
+              fixture.integration.botTokenEncrypted
+            );
+
+            expect(
+              storedIntegration.webhookSecretEncrypted
+            ).toBe(
+              fixture.integration.webhookSecretEncrypted
+            );
+
+            const claims =
+              await prisma.merchantTelegramBotClaim.findMany({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  integrationId:
+                    fixture.integration.id
+                }
+              });
+
+            expect(claims).toHaveLength(2);
+
+            expect(claims).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  telegramBotId:
+                    fixture.integration.telegramBotId,
+                  status:
+                    "ACTIVE"
+                }),
+                expect.objectContaining({
+                  telegramBotId:
+                    "987654321",
+                  status:
+                    "PENDING"
+                })
+              ])
+            );
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_UPDATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "restores the original webhook without deleting it when same-token final persistence fails",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 123456789,
+              username: "test_shop_bot",
+              firstName: "Test Shop Bot"
+            });
+
+          const transactionSpy =
+            vi.spyOn(
+              prisma,
+              "$transaction"
+            ).mockRejectedValueOnce(
+              new Error(
+                "Simulated same-token persistence failure"
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method: "PATCH",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken:
+                        fixture.botToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(500);
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenCalledTimes(2);
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).not.toHaveBeenCalled();
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).toHaveBeenNthCalledWith(
+              2,
+              fixture.botToken,
+              `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+              fixture.webhookSecret
+            );
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            expect(
+              storedIntegration.telegramBotUsername
+            ).toBe(
+              fixture.integration.telegramBotUsername
+            );
+
+            expect(
+              storedIntegration.botTokenEncrypted
+            ).toBe(
+              fixture.integration.botTokenEncrypted
+            );
+
+            expect(
+              storedIntegration.webhookSecretEncrypted
+            ).toBe(
+              fixture.integration.webhookSecretEncrypted
+            );
+
+            expect(
+              storedIntegration.status
+            ).toBe(
+              fixture.integration.status
+            );
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_UPDATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            transactionSpy.mockRestore();
+          }
+        }
+      );
+
+      it(
+        "does not replace the Telegram webhook when the pending bot claim loses a uniqueness race",
+        async () => {
+          const fixture =
+            await createFixture();
+
+          await createActiveSubscription(
+            fixture.merchant.id
+          );
+
+          const newBotToken =
+            "replacement-race-bot-token";
+
+          telegramMocks.getTelegramBotIdentity
+            .mockResolvedValueOnce({
+              id: 987654321,
+              username:
+                "replacement_race_bot",
+              firstName:
+                "Replacement Race Bot"
+            });
+
+          const claimCreateSpy =
+            vi.spyOn(
+              prisma.merchantTelegramBotClaim,
+              "create"
+            ).mockRejectedValueOnce(
+              new Prisma.PrismaClientKnownRequestError(
+                "Unique constraint failed",
+                {
+                  code: "P2002",
+                  clientVersion: "7.9.1",
+                  meta: {
+                    target: [
+                      "telegramBotId"
+                    ]
+                  }
+                }
+              )
+            );
+
+          try {
+            const response =
+              await fetch(
+                `${apiBaseUrl}/merchants/${fixture.merchant.id}/telegram-integration`,
+                {
+                  method:
+                    "PATCH",
+                  headers: {
+                    authorization:
+                      `Bearer ${fixture.token}`,
+                    "content-type":
+                      "application/json"
+                  },
+                  body:
+                    JSON.stringify({
+                      botToken:
+                        newBotToken
+                    })
+                }
+              );
+
+            expect(
+              response.status
+            ).toBe(409);
+
+            expect(
+              telegramMocks.getTelegramBotIdentity
+            ).toHaveBeenCalledWith(
+              newBotToken
+            );
+
+            expect(
+              claimCreateSpy
+            ).toHaveBeenCalledWith({
+              data: {
+                merchantId:
+                  fixture.merchant.id,
+                integrationId:
+                  fixture.integration.id,
+                telegramBotId:
+                  "987654321",
+                status:
+                  "PENDING"
+              }
+            });
+
+            expect(
+              telegramMocks.setTelegramWebhook
+            ).not.toHaveBeenCalled();
+
+            expect(
+              telegramMocks.deleteTelegramWebhook
+            ).not.toHaveBeenCalled();
+
+            const storedIntegration =
+              await prisma.merchantTelegramIntegration.findUniqueOrThrow({
+                where: {
+                  merchantId:
+                    fixture.merchant.id
+                }
+              });
+
+            expect(
+              storedIntegration.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            expect(
+              storedIntegration.telegramBotUsername
+            ).toBe(
+              fixture.integration.telegramBotUsername
+            );
+
+            expect(
+              storedIntegration.botTokenEncrypted
+            ).toBe(
+              fixture.integration.botTokenEncrypted
+            );
+
+            expect(
+              storedIntegration.webhookSecretEncrypted
+            ).toBe(
+              fixture.integration.webhookSecretEncrypted
+            );
+
+            expect(
+              storedIntegration.status
+            ).toBe(
+              MerchantTelegramIntegrationStatus.ACTIVE
+            );
+
+            const activeClaim =
+              await prisma.merchantTelegramBotClaim.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  integrationId:
+                    fixture.integration.id,
+                  status:
+                    "ACTIVE"
+                }
+              });
+
+            expect(activeClaim).not.toBeNull();
+
+            expect(
+              activeClaim?.telegramBotId
+            ).toBe(
+              fixture.integration.telegramBotId
+            );
+
+            const pendingClaim =
+              await prisma.merchantTelegramBotClaim.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  integrationId:
+                    fixture.integration.id,
+                  status:
+                    "PENDING"
+                }
+              });
+
+            expect(pendingClaim).toBeNull();
+
+            const audit =
+              await prisma.auditLog.findFirst({
+                where: {
+                  merchantId:
+                    fixture.merchant.id,
+                  action:
+                    "TELEGRAM_INTEGRATION_UPDATED"
+                }
+              });
+
+            expect(audit).toBeNull();
+          } finally {
+            claimCreateSpy.mockRestore();
+          }
         }
       );
 
