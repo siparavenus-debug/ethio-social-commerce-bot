@@ -90,6 +90,7 @@ import type {
             "test-password-hash",
           displayName:
             `Platform Test ${suffix}`,
+          role: "ADMIN",
           tokenVersion:
             0
         }

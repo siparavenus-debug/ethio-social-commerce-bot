@@ -92,7 +92,9 @@ router.post(
           id: user.id,
           email: user.email,
           displayName:
-            user.displayName
+            user.displayName,
+          role:
+            user.role
         }
       });
     } catch (error) {

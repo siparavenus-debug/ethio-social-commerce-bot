@@ -10,7 +10,15 @@ import {
 import "./platform.css";
 
 type Row = { id: string;[key: string]: unknown };
-type User = { id: string; email: string; displayName?: string | null };
+type PlatformRole = "OWNER" | "ADMIN" | "STAFF";
+
+type User = {
+  id: string;
+  email: string;
+  displayName?: string | null;
+  role: PlatformRole;
+};
+
 type Plan = Row & { name: string; code: string; isActive: boolean };
 type Subscription = Row & {
   status: string;
@@ -40,7 +48,8 @@ type View =
   | "Plans"
   | "Overdue"
   | "Revenue"
-  | "Audit";
+  | "Audit"
+  | "Operators";
 
 type BillingWorkTab =
   | "draft"
@@ -184,9 +193,9 @@ function rowMerchantId(
 
   return (
     merchant &&
-    typeof merchant === "object" &&
-    "id" in merchant &&
-    typeof merchant.id === "string"
+      typeof merchant === "object" &&
+      "id" in merchant &&
+      typeof merchant.id === "string"
       ? merchant.id
       : ""
   );
@@ -201,17 +210,17 @@ function billingWorkRows(
 
     const merchantName =
       merchant &&
-      typeof merchant === "object" &&
-      "name" in merchant &&
-      typeof merchant.name === "string"
+        typeof merchant === "object" &&
+        "name" in merchant &&
+        typeof merchant.name === "string"
         ? merchant.name
         : "—";
 
     const invoiceNumber =
       invoice &&
-      typeof invoice === "object" &&
-      "invoiceNumber" in invoice &&
-      typeof invoice.invoiceNumber === "string"
+        typeof invoice === "object" &&
+        "invoiceNumber" in invoice &&
+        typeof invoice.invoiceNumber === "string"
         ? invoice.invoiceNumber
         : typeof row.invoiceNumber === "string"
           ? row.invoiceNumber
@@ -398,7 +407,7 @@ export default function PlatformApp() {
 
         throw new PlatformApiError(
           data?.error ||
-            `Failed to load settlement evidence (${response.status})`,
+          `Failed to load settlement evidence (${response.status})`,
           response.status
         );
       }
@@ -664,6 +673,22 @@ export default function PlatformApp() {
             setOverdueSummary(summary);
           }
         }
+      } else if (
+        view === "Operators" &&
+        user?.role === "OWNER"
+      ) {
+        const result =
+          await platformRequest<{
+            users: Row[];
+          }>(
+            "/users",
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
+
+        data = result.users;
       } else if (view === "Audit") {
         const result =
           await platformRequest<{
@@ -815,884 +840,1005 @@ export default function PlatformApp() {
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
   if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button>{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
   return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons">
-  <button
-    type="button"
-    onClick={() =>
-      setChangingPassword(true)
-    }
-  >
-    Change password
-  </button>
-
-  <a href="/">
-    Merchant dashboard
-  </a>
-
-  <button
-    type="button"
-    onClick={logout}
-  >
-    Sign out
-  </button>
-  </div></div></header>
-
-{changingPassword && (
-  <div
-    className="pa-modal-backdrop"
-    onMouseDown={() =>
-      setChangingPassword(false)
-    }
-  >
-    <section
-      className="pa-modal pa-action-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Change password"
-      onMouseDown={event =>
-        event.stopPropagation()
+    <button
+      type="button"
+      onClick={() =>
+        setChangingPassword(true)
       }
     >
-      <div className="pa-modal-head">
-        <div>
-          <p className="pa-eyebrow">
-            PLATFORM ACCOUNT
-          </p>
+      Change password
+    </button>
 
-          <h2>
-            Change password
-          </h2>
-        </div>
+    <a href="/">
+      Merchant dashboard
+    </a>
 
-        <button
-          type="button"
-          className="pa-icon-button"
-          onClick={() =>
-            setChangingPassword(false)
+    <button
+      type="button"
+      onClick={logout}
+    >
+      Sign out
+    </button>
+  </div></div></header>
+
+    {changingPassword && (
+      <div
+        className="pa-modal-backdrop"
+        onMouseDown={() =>
+          setChangingPassword(false)
+        }
+      >
+        <section
+          className="pa-modal pa-action-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Change password"
+          onMouseDown={event =>
+            event.stopPropagation()
           }
-          aria-label="Close"
         >
-          ×
-        </button>
-      </div>
+          <div className="pa-modal-head">
+            <div>
+              <p className="pa-eyebrow">
+                PLATFORM ACCOUNT
+              </p>
 
-      <p>
-        Enter your current password and choose
-        a new password with at least 8 characters.
-        Changing it will sign out existing platform
-        sessions.
-      </p>
-
-      <form onSubmit={changePassword}>
-        <fieldset disabled={busy}>
-          <label>
-            Current password
-            <input
-              name="currentPassword"
-              type="password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-
-          <label>
-            New password
-            <input
-              name="newPassword"
-              type="password"
-              autoComplete="new-password"
-              minLength={8}
-              required
-            />
-          </label>
-
-          <div className="pa-buttons">
-            <button type="submit">
-              {busy
-                ? "Changing password…"
-                : "Change password"}
-            </button>
+              <h2>
+                Change password
+              </h2>
+            </div>
 
             <button
               type="button"
+              className="pa-icon-button"
               onClick={() =>
                 setChangingPassword(false)
               }
+              aria-label="Close"
             >
-              Cancel
+              ×
             </button>
           </div>
-        </fieldset>
-      </form>
-    </section>
-  </div>
-)}
 
-<nav aria-label="Platform sections">{([
-    "Merchants",
-    "Billing Work",
-    "Revenue",
-    "Overdue",
-    "Plans",
-    "Audit"
-  ] as View[]).map(v => <button key={v} aria-current={view === v ? "page" : undefined} disabled={busy} onClick={() => { setView(v); setSelected(""); setAction(null); setSearch(""); }}>{v}</button>)}</nav><main>
-    {view === "Merchants" && selected ? <div className="pa-detail-header"><button className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
-    {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
-    {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
-      {view === "Merchants" && !selected && <>
-        <div className="pa-buttons">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={merchantAction}
-          >
-            Create merchant
-          </button>
-        </div>
-        <div className="pa-merchant-toolbar">
-          <label className="pa-search">Find a merchant<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, phone, address, status or plan" /></label>
-          <label>Status<select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="ALL">All statuses</option><option value="NO_SUBSCRIPTION">No subscription</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label>
-          <label>Plan<select value={planFilter} onChange={e => setPlanFilter(e.target.value)}><option value="ALL">All plans</option>{plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
-          <label>Billing<select value={billingFilter} onChange={e => setBillingFilter(e.target.value)}><option value="ALL">All intervals</option><option value="MONTHLY">MONTHLY</option><option value="ANNUAL">ANNUAL</option><option value="NONE">No subscription</option></select></label>
-          <label>Opened<select value={createdFilter} onChange={e => setCreatedFilter(e.target.value)}><option value="ALL">Any time</option><option value="TODAY">Today</option><option value="7D">Last 7 days</option><option value="30D">Last 30 days</option></select></label>
-        </div>
-        <div className="pa-filter-summary"><span>{merchants.filter(m => {
-          const textMatch = `${m.name} ${m.id} ${m.phone || ""} ${m.alternatePhone || ""} ${m.address || ""} ${m.subscription?.status || ""} ${m.subscription?.plan?.name || ""}`.toLowerCase().includes(search.toLowerCase());
-          const statusMatch = statusFilter === "ALL" || (statusFilter === "NO_SUBSCRIPTION" ? !m.subscription : m.subscription?.status === statusFilter);
-          const planMatch = planFilter === "ALL" || m.subscription?.plan?.id === planFilter;
-          const billingMatch = billingFilter === "ALL" || (billingFilter === "NONE" ? !m.subscription : m.subscription?.billingInterval === billingFilter);
-          let createdMatch = true;
-          if (createdFilter !== "ALL") {
-            if (!m.createdAt) createdMatch = false;
-            else {
-              const created = new Date(m.createdAt).getTime();
-              const now = Date.now();
-              const day = 24 * 60 * 60 * 1000;
-              createdMatch = createdFilter === "TODAY" ? new Date(m.createdAt).toDateString() === new Date().toDateString() : created >= now - (createdFilter === "7D" ? 7 : 30) * day;
-            }
-          }
-          return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
-        }).length} of {merchants.length} merchants</span><button type="button" className="pa-link-button" onClick={() => { setSearch(""); setStatusFilter("ALL"); setPlanFilter("ALL"); setBillingFilter("ALL"); setCreatedFilter("ALL"); }}>Clear filters</button></div>
-        <div className="pa-table"><table><thead><tr><th>Merchant</th><th>Subscription</th><th>Plan</th><th>Billing</th><th>Current period</th><th>Opened</th><th>Currency</th><th>Action</th></tr></thead><tbody>{merchants.filter(m => {
-          const textMatch = `${m.name} ${m.id} ${m.phone || ""} ${m.alternatePhone || ""} ${m.address || ""} ${m.subscription?.status || ""} ${m.subscription?.plan?.name || ""}`.toLowerCase().includes(search.toLowerCase());
-          const statusMatch = statusFilter === "ALL" || (statusFilter === "NO_SUBSCRIPTION" ? !m.subscription : m.subscription?.status === statusFilter);
-          const planMatch = planFilter === "ALL" || m.subscription?.plan?.id === planFilter;
-          const billingMatch = billingFilter === "ALL" || (billingFilter === "NONE" ? !m.subscription : m.subscription?.billingInterval === billingFilter);
-          let createdMatch = true;
-          if (createdFilter !== "ALL") {
-            if (!m.createdAt) createdMatch = false;
-            else {
-              const created = new Date(m.createdAt).getTime();
-              const now = Date.now();
-              const day = 24 * 60 * 60 * 1000;
-              createdMatch = createdFilter === "TODAY" ? new Date(m.createdAt).toDateString() === new Date().toDateString() : created >= now - (createdFilter === "7D" ? 7 : 30) * day;
-            }
-          }
-          return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
-        }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
-      {view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{merchant.subscription && !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p><button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button></>}</section>
-
-<section className="pa-card">
-  <div className="pa-section-heading">
-    <div>
-      <h3>Account status</h3>
-      <p>
-        Platform account enforcement, separate from billing subscription status.
-      </p>
-    </div>
-
-    {merchant.accountStatus === "ACTIVE" && (
-      <button
-        disabled={busy}
-        onClick={() =>
-          setAction({
-            title: `Suspend account — ${merchant.name}`,
-            path: `${merchantPath}/account/status`,
-            method: "PATCH",
-            fields: [
-              { name: "reason", label: "Reason" }
-            ],
-            transform: values => ({
-              ...values,
-              nextStatus: "SUSPENDED"
-            })
-          })
-        }
-      >
-        Suspend account
-      </button>
-    )}
-
-    {merchant.accountStatus === "SUSPENDED" && (
-      <button
-        disabled={busy}
-        onClick={() =>
-          setAction({
-            title: `Reinstate account — ${merchant.name}`,
-            path: `${merchantPath}/account/status`,
-            method: "PATCH",
-            fields: [
-              { name: "reason", label: "Reason" }
-            ],
-            transform: values => ({
-              ...values,
-              nextStatus: "ACTIVE"
-            })
-          })
-        }
-      >
-        Reinstate account
-      </button>
-    )}
-  </div>
-
-  <div className="pa-metric-grid">
-    <div>
-      <span>Status</span>
-      <strong>{merchant.accountStatus}</strong>
-    </div>
-
-    {merchant.accountStatus === "SUSPENDED" && (
-      <>
-        <div>
-          <span>Suspension reason</span>
-          <strong>
-            {merchant.accountSuspensionReason || "—"}
-          </strong>
-        </div>
-        <div>
-          <span>Suspended at</span>
-          <strong>
-            {merchant.accountSuspendedAt
-              ? new Date(
-                  merchant.accountSuspendedAt
-                ).toLocaleString()
-              : "—"}
-          </strong>
-        </div>
-      </>
-    )}
-  </div>
-</section>
-
-<section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
-  r.hasReceiptEvidence === true ||
-  (
-    typeof r.receiptUrl === "string" &&
-    /^https?:\/\//i.test(
-      r.receiptUrl
-    )
-  )
-) && (
-  <button
-    type="button"
-    disabled={busy}
-    onClick={() =>
-      void openSettlementEvidence(
-        r
-      )
-    }
-  >
-    View receipt
-  </button>
-)}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
-      {view === "Billing Work" && (
-  <>
-      <section className="pa-card">
-      <div className="pa-section-heading">
-        <div>
-          <h3>Today's Billing Work</h3>
           <p>
-            Current pending workload and settlement
-            decisions completed today (UTC).
+            Enter your current password and choose
+            a new password with at least 8 characters.
+            Changing it will sign out existing platform
+            sessions.
           </p>
-        </div>
+
+          <form onSubmit={changePassword}>
+            <fieldset disabled={busy}>
+              <label>
+                Current password
+                <input
+                  name="currentPassword"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+
+              <label>
+                New password
+                <input
+                  name="newPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+
+              <div className="pa-buttons">
+                <button type="submit">
+                  {busy
+                    ? "Changing password…"
+                    : "Change password"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setChangingPassword(false)
+                  }
+                >
+                  Cancel
+                </button>
+              </div>
+            </fieldset>
+          </form>
+        </section>
       </div>
+    )}
 
-      {billingWorkSummary && (
-        <div className="pa-metric-grid">
-          <div>
-            <span>Pending total</span>
-            <strong>
-              {billingWorkSummary.pending.total}
-            </strong>
-            <small>
-              Draft invoices:{" "}
-              {billingWorkSummary.pending.draftInvoices}
-            </small>
-            <small>
-              Awaiting payment:{" "}
-              {billingWorkSummary.pending.awaitingPayment}
-            </small>
-            <small>
-              Payment review:{" "}
-              {billingWorkSummary.pending.paymentReview}
-            </small>
-          </div>
-
-          <div>
-            <span>Resolved today</span>
-            <strong>
-              {billingWorkSummary.resolvedToday.total}
-            </strong>
-            <small>
-              Verified:{" "}
-              {billingWorkSummary.resolvedToday.verified}
-            </small>
-            <small>
-              Rejected:{" "}
-              {billingWorkSummary.resolvedToday.rejected}
-            </small>
-          </div>
-        </div>
-      )}
-    </section>
-
-    <div className="pa-tabs">
-      {(
-        [
-          ["draft", "Draft Invoices"],
-          [
-            "awaiting-payment",
-            "Awaiting Payment"
-          ],
-          ["review", "Payment Review"],
-          ["resolved", "Resolved"]
-        ] as [
-          BillingWorkTab,
-          string
-        ][]
-      ).map(([tab, text]) => (
+    <nav aria-label="Platform sections">
+      {([
+        "Merchants",
+        "Billing Work",
+        ...(user.role === "OWNER" ? ["Operators" as View] : []),
+        ...(user.role !== "STAFF"
+          ? ["Revenue" as View, "Overdue" as View]
+          : []),
+        "Plans",
+        ...(user.role !== "STAFF" ? ["Audit" as View] : [])
+      ] as View[]).map(v => (
         <button
-          key={tab}
-          type="button"
+          key={v}
+          aria-current={view === v ? "page" : undefined}
           disabled={busy}
-          aria-pressed={
-            billingWorkTab === tab
-          }
           onClick={() => {
-            setBillingWorkTab(tab);
+            setView(v);
+            setSelected("");
             setAction(null);
+            setSearch("");
           }}
         >
-          {text}
+          {v}
         </button>
       ))}
-    </div>
-
-    {(billingWorkTab === "draft" ||
-      billingWorkTab ===
-        "awaiting-payment") && (
-<Table
-  rows={billingWorkRows(rows)}
-  columns={[
-    "invoiceNumber",
-    "merchantName",
-    "totalAmount",
-    "currency",
-    "status",
-    billingWorkTab === "draft"
-      ? "createdAt"
-      : "openedAt"
-  ]}
-  actions={r => {
-    const merchantId =
-      rowMerchantId(r);
-
-    if (
-      billingWorkTab !== "draft" ||
-      r.status !== "DRAFT" ||
-      !merchantId
-    ) {
-      return null;
-    }
-
-    return (
-      <button
-        type="button"
-        disabled={busy}
-        onClick={() =>
-          setAction({
-            title:
-              `Open invoice ${r.invoiceNumber}`,
-            path:
-              `/merchants/${encodeURIComponent(
-                merchantId
-              )}/billing/invoices/${encodeURIComponent(
-                r.id
-              )}/open`,
-            method: "POST",
-            fields: [],
-            note:
-              `Open invoice ${r.invoiceNumber} for ${r.totalAmount} ${r.currency}. The server enforces invoice lifecycle eligibility.`
-          })
-        }
-      >
-        Open invoice
-      </button>
-    );
-  }}
-/>
-    )}
-
-    {(billingWorkTab === "review" ||
-      billingWorkTab === "resolved") && (
-<Table
-  rows={billingWorkRows(rows)}
-  columns={[
-    "merchantName",
-    "invoiceNumber",
-    "amount",
-    "currency",
-    "status",
-    "provider",
-    "transactionReference",
-    billingWorkTab === "review"
-      ? "submittedAt"
-      : "verifiedAt"
-  ]}
-  actions={r => {
-    const merchantId =
-      rowMerchantId(r);
-
-    const hasReceipt =
-      r.hasReceiptEvidence === true ||
-      (
-        typeof r.receiptUrl ===
-          "string" &&
-        /^https?:\/\//i.test(
-          r.receiptUrl
-        )
-      );
-
-    return (
-      <>
-        {hasReceipt && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void openSettlementEvidence(
-                r
-              )
-            }
-          >
-            View receipt
-          </button>
-        )}
-
-        {billingWorkTab === "review" &&
-          r.status ===
-            "REVIEW_REQUIRED" &&
-          merchantId &&
-          ["verify", "reject"].map(
-            operation => (
+    </nav>
+    <main>
+      {view === "Merchants" && selected ? <div className="pa-detail-header"><button className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
+      {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
+      {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
+        {view === "Merchants" && !selected && <>
+          {user.role !== "STAFF" && (
+            <div className="pa-buttons">
               <button
-                key={operation}
                 type="button"
                 disabled={busy}
-                onClick={() =>
-                  setAction({
-                    title:
-                      `${label(
-                        operation
-                      )} settlement ${r.id}`,
-                    path:
-                      `/merchants/${encodeURIComponent(
-                        merchantId
-                      )}/billing/settlements/${encodeURIComponent(
-                        r.id
-                      )}/${operation}`,
-                    method: "POST",
-                    fields: [
-                      field(
-                        "reviewNote",
-                        "Review note",
-                        "text",
-                        true
-                      )
-                    ],
-                    note:
-                      `${label(
-                        operation
-                      )} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.`
-                  })
-                }
+                onClick={merchantAction}
               >
-                {label(operation)}
+                Create merchant
               </button>
-            )
+            </div>
           )}
-      </>
-    );
-  }}
-/>
-    )}
-  </>
-)}{view === "Plans" && <><button disabled={busy} onClick={() => planAction()}>Create plan</button><Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></>} /></>}
-      {view === "Revenue" && (
-        <>
-      <section className="pa-card">
-        <div className="pa-section-heading">
-          <div>
-            <h3>Collected revenue</h3>
-            <p>
-              Review paid invoice revenue for a selected UTC period.
-              Amounts remain separated by currency.
-            </p>
+          <div className="pa-merchant-toolbar">
+            <label className="pa-search">Find a merchant<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, phone, address, status or plan" /></label>
+            <label>Status<select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="ALL">All statuses</option><option value="NO_SUBSCRIPTION">No subscription</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label>
+            <label>Plan<select value={planFilter} onChange={e => setPlanFilter(e.target.value)}><option value="ALL">All plans</option>{plans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select></label>
+            <label>Billing<select value={billingFilter} onChange={e => setBillingFilter(e.target.value)}><option value="ALL">All intervals</option><option value="MONTHLY">MONTHLY</option><option value="ANNUAL">ANNUAL</option><option value="NONE">No subscription</option></select></label>
+            <label>Opened<select value={createdFilter} onChange={e => setCreatedFilter(e.target.value)}><option value="ALL">Any time</option><option value="TODAY">Today</option><option value="7D">Last 7 days</option><option value="30D">Last 30 days</option></select></label>
           </div>
-        </div>
-
-        <div className="pa-tabs">
-          <button
-            type="button"
-            className={
-              revenuePeriodMode === "month"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setRevenuePeriodMode("month")
-            }
-          >
-            Month
-          </button>
-
-          <button
-            type="button"
-            className={
-              revenuePeriodMode === "year"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setRevenuePeriodMode("year")
-            }
-          >
-            Year
-          </button>
-
-          <button
-            type="button"
-            className={
-              revenuePeriodMode === "custom"
-                ? "active"
-                : ""
-            }
-            onClick={() =>
-              setRevenuePeriodMode("custom")
-            }
-          >
-            Custom range
-          </button>
-        </div>
-
-        {revenuePeriodMode === "month" && (
-          <label>
-            Month
-            <input
-              type="month"
-              value={revenueMonth}
-              onChange={event =>
-                setRevenueMonth(
-                  event.target.value
-                )
+          <div className="pa-filter-summary"><span>{merchants.filter(m => {
+            const textMatch = `${m.name} ${m.id} ${m.phone || ""} ${m.alternatePhone || ""} ${m.address || ""} ${m.subscription?.status || ""} ${m.subscription?.plan?.name || ""}`.toLowerCase().includes(search.toLowerCase());
+            const statusMatch = statusFilter === "ALL" || (statusFilter === "NO_SUBSCRIPTION" ? !m.subscription : m.subscription?.status === statusFilter);
+            const planMatch = planFilter === "ALL" || m.subscription?.plan?.id === planFilter;
+            const billingMatch = billingFilter === "ALL" || (billingFilter === "NONE" ? !m.subscription : m.subscription?.billingInterval === billingFilter);
+            let createdMatch = true;
+            if (createdFilter !== "ALL") {
+              if (!m.createdAt) createdMatch = false;
+              else {
+                const created = new Date(m.createdAt).getTime();
+                const now = Date.now();
+                const day = 24 * 60 * 60 * 1000;
+                createdMatch = createdFilter === "TODAY" ? new Date(m.createdAt).toDateString() === new Date().toDateString() : created >= now - (createdFilter === "7D" ? 7 : 30) * day;
               }
-            />
-          </label>
-        )}
-
-        {revenuePeriodMode === "year" && (
-          <label>
-            Year
-            <input
-              type="number"
-              min="2000"
-              max="2100"
-              value={revenueYear}
-              onChange={event =>
-                setRevenueYear(
-                  event.target.value
-                )
+            }
+            return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
+          }).length} of {merchants.length} merchants</span><button type="button" className="pa-link-button" onClick={() => { setSearch(""); setStatusFilter("ALL"); setPlanFilter("ALL"); setBillingFilter("ALL"); setCreatedFilter("ALL"); }}>Clear filters</button></div>
+          <div className="pa-table"><table><thead><tr><th>Merchant</th><th>Subscription</th><th>Plan</th><th>Billing</th><th>Current period</th><th>Opened</th><th>Currency</th><th>Action</th></tr></thead><tbody>{merchants.filter(m => {
+            const textMatch = `${m.name} ${m.id} ${m.phone || ""} ${m.alternatePhone || ""} ${m.address || ""} ${m.subscription?.status || ""} ${m.subscription?.plan?.name || ""}`.toLowerCase().includes(search.toLowerCase());
+            const statusMatch = statusFilter === "ALL" || (statusFilter === "NO_SUBSCRIPTION" ? !m.subscription : m.subscription?.status === statusFilter);
+            const planMatch = planFilter === "ALL" || m.subscription?.plan?.id === planFilter;
+            const billingMatch = billingFilter === "ALL" || (billingFilter === "NONE" ? !m.subscription : m.subscription?.billingInterval === billingFilter);
+            let createdMatch = true;
+            if (createdFilter !== "ALL") {
+              if (!m.createdAt) createdMatch = false;
+              else {
+                const created = new Date(m.createdAt).getTime();
+                const now = Date.now();
+                const day = 24 * 60 * 60 * 1000;
+                createdMatch = createdFilter === "TODAY" ? new Date(m.createdAt).toDateString() === new Date().toDateString() : created >= now - (createdFilter === "7D" ? 7 : 30) * day;
               }
-            />
-          </label>
-        )}
+            }
+            return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
+          }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
+        {view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
+          merchant.subscription &&
+          !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
 
-        {revenuePeriodMode === "custom" && (
-          <div className="pa-form-grid">
-            <label>
-              From
-              <input
-                type="date"
-                value={revenueCustomStart}
-                onChange={event =>
-                  setRevenueCustomStart(
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              Through
-              <input
-                type="date"
-                value={revenueCustomEnd}
-                min={
-                  revenueCustomStart ||
-                  undefined
-                }
-                onChange={event =>
-                  setRevenueCustomEnd(
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-          </div>
-        )}
-
-        {revenueSummary &&
-        revenueSummary.currencies.length > 0 ? (
-          <div className="pa-metric-grid">
-            {revenueSummary.currencies.map(
-              summary => (
-                <div key={summary.currency}>
-                  <span>{summary.currency}</span>
-                  <strong>
-                    Collected total:{" "}
-                    {summary.totalAmount}{" "}
-                    {summary.currency}
-                  </strong>
-                  <small>
-                    Collected subscription:{" "}
-                    {summary.subscriptionAmount}{" "}
-                    {summary.currency}
-                  </small>
-                  <small>
-                    Collected commission:{" "}
-                    {summary.commissionAmount}{" "}
-                    {summary.currency}
-                  </small>
-                </div>
-              )
-            )}
-          </div>
-        ) : (
-          <p className="pa-empty">
-            {revenuePeriodMode === "custom" &&
-            (!revenueCustomStart ||
-              !revenueCustomEnd)
-              ? "Choose both dates to view collected revenue."
-              : "No collected revenue for the selected period."}
-          </p>
-        )}
-      </section>
-
-          <Table
-            rows={rows}
-            columns={[
-              "invoiceNumber",
-              "merchant",
-              "totalAmount",
-              "currency",
-              "status",
-              "paidAt"
-            ]}
-          />
-        </>
-      )}
-
-      {view === "Overdue" && (
-        <>
           <section className="pa-card">
             <div className="pa-section-heading">
               <div>
-                <h3>Overdue invoices</h3>
+                <h3>Account status</h3>
                 <p>
-                  Review invoices currently marked OVERDUE for a selected UTC period.
-                  Amounts remain separated by currency.
+                  Platform account enforcement, separate from billing subscription status.
                 </p>
               </div>
-            </div>
 
-            <div className="pa-tabs">
-              <button
-                type="button"
-                className={
-                  overduePeriodMode === "month"
-                    ? "active"
-                    : ""
-                }
-                onClick={() =>
-                  setOverduePeriodMode("month")
-                }
-              >
-                Month
-              </button>
-
-              <button
-                type="button"
-                className={
-                  overduePeriodMode === "year"
-                    ? "active"
-                    : ""
-                }
-                onClick={() =>
-                  setOverduePeriodMode("year")
-                }
-              >
-                Year
-              </button>
-
-              <button
-                type="button"
-                className={
-                  overduePeriodMode === "custom"
-                    ? "active"
-                    : ""
-                }
-                onClick={() =>
-                  setOverduePeriodMode("custom")
-                }
-              >
-                Custom range
-              </button>
-            </div>
-
-            {overduePeriodMode === "month" && (
-              <label>
-                Month
-                <input
-                  type="month"
-                  value={overdueMonth}
-                  onChange={event =>
-                    setOverdueMonth(
-                      event.target.value
-                    )
-                  }
-                />
-              </label>
-            )}
-
-            {overduePeriodMode === "year" && (
-              <label>
-                Year
-                <input
-                  type="number"
-                  min="2000"
-                  max="2100"
-                  value={overdueYear}
-                  onChange={event =>
-                    setOverdueYear(
-                      event.target.value
-                    )
-                  }
-                />
-              </label>
-            )}
-
-            {overduePeriodMode === "custom" && (
-              <div className="pa-form-grid">
-                <label>
-                  From
-                  <input
-                    type="date"
-                    value={overdueCustomStart}
-                    onChange={event =>
-                      setOverdueCustomStart(
-                        event.target.value
-                      )
+              {user.role !== "STAFF" &&
+                merchant.accountStatus === "ACTIVE" && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      setAction({
+                        title: `Suspend account — ${merchant.name}`,
+                        path: `${merchantPath}/account/status`,
+                        method: "PATCH",
+                        fields: [
+                          { name: "reason", label: "Reason" }
+                        ],
+                        transform: values => ({
+                          ...values,
+                          nextStatus: "SUSPENDED"
+                        })
+                      })
                     }
-                  />
-                </label>
-
-                <label>
-                  Through
-                  <input
-                    type="date"
-                    value={overdueCustomEnd}
-                    min={
-                      overdueCustomStart ||
-                      undefined
-                    }
-                    onChange={event =>
-                      setOverdueCustomEnd(
-                        event.target.value
-                      )
-                    }
-                  />
-                </label>
-              </div>
-            )}
-
-            {overdueSummary &&
-            overdueSummary.currencies.length > 0 ? (
-              <div className="pa-metric-grid">
-                {overdueSummary.currencies.map(
-                  summary => (
-                    <div key={summary.currency}>
-                      <span>{summary.currency}</span>
-                      <strong>
-                        Overdue total:{" "}
-                        {summary.totalAmount}{" "}
-                        {summary.currency}
-                      </strong>
-                      <small>
-                        Invoice count:{" "}
-                        {summary.invoiceCount}
-                      </small>
-                    </div>
-                  )
+                  >
+                    Suspend account
+                  </button>
                 )}
+
+              {user.role !== "STAFF" &&
+                merchant.accountStatus === "SUSPENDED" && (
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      setAction({
+                        title: `Reinstate account — ${merchant.name}`,
+                        path: `${merchantPath}/account/status`,
+                        method: "PATCH",
+                        fields: [
+                          { name: "reason", label: "Reason" }
+                        ],
+                        transform: values => ({
+                          ...values,
+                          nextStatus: "ACTIVE"
+                        })
+                      })
+                    }
+                  >
+                    Reinstate account
+                  </button>
+                )}
+            </div>
+
+            <div className="pa-metric-grid">
+              <div>
+                <span>Status</span>
+                <strong>{merchant.accountStatus}</strong>
               </div>
-            ) : (
-              <p className="pa-empty">
-                {overduePeriodMode === "custom" &&
-                (!overdueCustomStart ||
-                  !overdueCustomEnd)
-                  ? "Choose both dates to view overdue invoices."
-                  : "No overdue invoices for the selected period."}
-              </p>
-            )}
+
+              {merchant.accountStatus === "SUSPENDED" && (
+                <>
+                  <div>
+                    <span>Suspension reason</span>
+                    <strong>
+                      {merchant.accountSuspensionReason || "—"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Suspended at</span>
+                    <strong>
+                      {merchant.accountSuspendedAt
+                        ? new Date(
+                          merchant.accountSuspendedAt
+                        ).toLocaleString()
+                        : "—"}
+                    </strong>
+                  </div>
+                </>
+              )}
+            </div>
           </section>
 
-          <Table
-            rows={rows}
-            columns={[
-              "invoiceNumber",
-              "merchant",
-              "totalAmount",
-              "currency",
-              "status",
-              "dueAt"
-            ]}
-            actions={r => {
-              const merchantId =
-                rowMerchantId(r);
+          <section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
+            r.hasReceiptEvidence === true ||
+            (
+              typeof r.receiptUrl === "string" &&
+              /^https?:\/\//i.test(
+                r.receiptUrl
+              )
+            )
+          ) && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void openSettlementEvidence(
+                    r
+                  )
+                }
+              >
+                View receipt
+              </button>
+            )}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
+        {view === "Billing Work" && (
+          <>
+            <section className="pa-card">
+              <div className="pa-section-heading">
+                <div>
+                  <h3>Today's Billing Work</h3>
+                  <p>
+                    Current pending workload and settlement
+                    decisions completed today (UTC).
+                  </p>
+                </div>
+              </div>
 
-              if (!merchantId) {
-                return null;
-              }
+              {billingWorkSummary && (
+                <div className="pa-metric-grid">
+                  <div>
+                    <span>Pending total</span>
+                    <strong>
+                      {billingWorkSummary.pending.total}
+                    </strong>
+                    <small>
+                      Draft invoices:{" "}
+                      {billingWorkSummary.pending.draftInvoices}
+                    </small>
+                    <small>
+                      Awaiting payment:{" "}
+                      {billingWorkSummary.pending.awaitingPayment}
+                    </small>
+                    <small>
+                      Payment review:{" "}
+                      {billingWorkSummary.pending.paymentReview}
+                    </small>
+                  </div>
 
-              return (
+                  <div>
+                    <span>Resolved today</span>
+                    <strong>
+                      {billingWorkSummary.resolvedToday.total}
+                    </strong>
+                    <small>
+                      Verified:{" "}
+                      {billingWorkSummary.resolvedToday.verified}
+                    </small>
+                    <small>
+                      Rejected:{" "}
+                      {billingWorkSummary.resolvedToday.rejected}
+                    </small>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <div className="pa-tabs">
+              {(
+                [
+                  ["draft", "Draft Invoices"],
+                  [
+                    "awaiting-payment",
+                    "Awaiting Payment"
+                  ],
+                  ["review", "Payment Review"],
+                  ["resolved", "Resolved"]
+                ] as [
+                  BillingWorkTab,
+                  string
+                ][]
+              ).map(([tab, text]) => (
                 <button
+                  key={tab}
                   type="button"
                   disabled={busy}
+                  aria-pressed={
+                    billingWorkTab === tab
+                  }
                   onClick={() => {
-                    setView("Merchants");
-                    setSelected(merchantId);
-                    setLedger("invoices");
+                    setBillingWorkTab(tab);
                     setAction(null);
                   }}
                 >
-                  Manage merchant
+                  {text}
                 </button>
-              );
-            }}
-          />
-        </>
-      )}
-      {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}
-    </>}</main></div>;
+              ))}
+            </div>
+
+            {(billingWorkTab === "draft" ||
+              billingWorkTab ===
+              "awaiting-payment") && (
+                <Table
+                  rows={billingWorkRows(rows)}
+                  columns={[
+                    "invoiceNumber",
+                    "merchantName",
+                    "totalAmount",
+                    "currency",
+                    "status",
+                    billingWorkTab === "draft"
+                      ? "createdAt"
+                      : "openedAt"
+                  ]}
+                  actions={r => {
+                    const merchantId =
+                      rowMerchantId(r);
+
+                    if (
+                      billingWorkTab !== "draft" ||
+                      r.status !== "DRAFT" ||
+                      !merchantId
+                    ) {
+                      return null;
+                    }
+
+                    return (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          setAction({
+                            title:
+                              `Open invoice ${r.invoiceNumber}`,
+                            path:
+                              `/merchants/${encodeURIComponent(
+                                merchantId
+                              )}/billing/invoices/${encodeURIComponent(
+                                r.id
+                              )}/open`,
+                            method: "POST",
+                            fields: [],
+                            note:
+                              `Open invoice ${r.invoiceNumber} for ${r.totalAmount} ${r.currency}. The server enforces invoice lifecycle eligibility.`
+                          })
+                        }
+                      >
+                        Open invoice
+                      </button>
+                    );
+                  }}
+                />
+              )}
+
+            {(billingWorkTab === "review" ||
+              billingWorkTab === "resolved") && (
+                <Table
+                  rows={billingWorkRows(rows)}
+                  columns={[
+                    "merchantName",
+                    "invoiceNumber",
+                    "amount",
+                    "currency",
+                    "status",
+                    "provider",
+                    "transactionReference",
+                    billingWorkTab === "review"
+                      ? "submittedAt"
+                      : "verifiedAt"
+                  ]}
+                  actions={r => {
+                    const merchantId =
+                      rowMerchantId(r);
+
+                    const hasReceipt =
+                      r.hasReceiptEvidence === true ||
+                      (
+                        typeof r.receiptUrl ===
+                        "string" &&
+                        /^https?:\/\//i.test(
+                          r.receiptUrl
+                        )
+                      );
+
+                    return (
+                      <>
+                        {hasReceipt && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void openSettlementEvidence(
+                                r
+                              )
+                            }
+                          >
+                            View receipt
+                          </button>
+                        )}
+
+                        {billingWorkTab === "review" &&
+                          r.status ===
+                          "REVIEW_REQUIRED" &&
+                          merchantId &&
+                          ["verify", "reject"].map(
+                            operation => (
+                              <button
+                                key={operation}
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  setAction({
+                                    title:
+                                      `${label(
+                                        operation
+                                      )} settlement ${r.id}`,
+                                    path:
+                                      `/merchants/${encodeURIComponent(
+                                        merchantId
+                                      )}/billing/settlements/${encodeURIComponent(
+                                        r.id
+                                      )}/${operation}`,
+                                    method: "POST",
+                                    fields: [
+                                      field(
+                                        "reviewNote",
+                                        "Review note",
+                                        "text",
+                                        true
+                                      )
+                                    ],
+                                    note:
+                                      `${label(
+                                        operation
+                                      )} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.`
+                                  })
+                                }
+                              >
+                                {label(operation)}
+                              </button>
+                            )
+                          )}
+                      </>
+                    );
+                  }}
+                />
+              )}
+          </>
+        )}{view === "Plans" && <>
+          {user.role === "OWNER" && (
+            <button disabled={busy} onClick={() => planAction()}>
+              Create plan
+            </button>
+          )}<Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => user.role === "OWNER" ? <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></> : null} /></>}
+        {view === "Revenue" && (
+          <>
+            <section className="pa-card">
+              <div className="pa-section-heading">
+                <div>
+                  <h3>Collected revenue</h3>
+                  <p>
+                    Review paid invoice revenue for a selected UTC period.
+                    Amounts remain separated by currency.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pa-tabs">
+                <button
+                  type="button"
+                  className={
+                    revenuePeriodMode === "month"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setRevenuePeriodMode("month")
+                  }
+                >
+                  Month
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    revenuePeriodMode === "year"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setRevenuePeriodMode("year")
+                  }
+                >
+                  Year
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    revenuePeriodMode === "custom"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setRevenuePeriodMode("custom")
+                  }
+                >
+                  Custom range
+                </button>
+              </div>
+
+              {revenuePeriodMode === "month" && (
+                <label>
+                  Month
+                  <input
+                    type="month"
+                    value={revenueMonth}
+                    onChange={event =>
+                      setRevenueMonth(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              )}
+
+              {revenuePeriodMode === "year" && (
+                <label>
+                  Year
+                  <input
+                    type="number"
+                    min="2000"
+                    max="2100"
+                    value={revenueYear}
+                    onChange={event =>
+                      setRevenueYear(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              )}
+
+              {revenuePeriodMode === "custom" && (
+                <div className="pa-form-grid">
+                  <label>
+                    From
+                    <input
+                      type="date"
+                      value={revenueCustomStart}
+                      onChange={event =>
+                        setRevenueCustomStart(
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Through
+                    <input
+                      type="date"
+                      value={revenueCustomEnd}
+                      min={
+                        revenueCustomStart ||
+                        undefined
+                      }
+                      onChange={event =>
+                        setRevenueCustomEnd(
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
+              {revenueSummary &&
+                revenueSummary.currencies.length > 0 ? (
+                <div className="pa-metric-grid">
+                  {revenueSummary.currencies.map(
+                    summary => (
+                      <div key={summary.currency}>
+                        <span>{summary.currency}</span>
+                        <strong>
+                          Collected total:{" "}
+                          {summary.totalAmount}{" "}
+                          {summary.currency}
+                        </strong>
+                        <small>
+                          Collected subscription:{" "}
+                          {summary.subscriptionAmount}{" "}
+                          {summary.currency}
+                        </small>
+                        <small>
+                          Collected commission:{" "}
+                          {summary.commissionAmount}{" "}
+                          {summary.currency}
+                        </small>
+                      </div>
+                    )
+                  )}
+                </div>
+              ) : (
+                <p className="pa-empty">
+                  {revenuePeriodMode === "custom" &&
+                    (!revenueCustomStart ||
+                      !revenueCustomEnd)
+                    ? "Choose both dates to view collected revenue."
+                    : "No collected revenue for the selected period."}
+                </p>
+              )}
+            </section>
+
+            <Table
+              rows={rows}
+              columns={[
+                "invoiceNumber",
+                "merchant",
+                "totalAmount",
+                "currency",
+                "status",
+                "paidAt"
+              ]}
+            />
+          </>
+        )}
+
+        {view === "Overdue" && (
+          <>
+            <section className="pa-card">
+              <div className="pa-section-heading">
+                <div>
+                  <h3>Overdue invoices</h3>
+                  <p>
+                    Review invoices currently marked OVERDUE for a selected UTC period.
+                    Amounts remain separated by currency.
+                  </p>
+                </div>
+              </div>
+
+              <div className="pa-tabs">
+                <button
+                  type="button"
+                  className={
+                    overduePeriodMode === "month"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setOverduePeriodMode("month")
+                  }
+                >
+                  Month
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    overduePeriodMode === "year"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setOverduePeriodMode("year")
+                  }
+                >
+                  Year
+                </button>
+
+                <button
+                  type="button"
+                  className={
+                    overduePeriodMode === "custom"
+                      ? "active"
+                      : ""
+                  }
+                  onClick={() =>
+                    setOverduePeriodMode("custom")
+                  }
+                >
+                  Custom range
+                </button>
+              </div>
+
+              {overduePeriodMode === "month" && (
+                <label>
+                  Month
+                  <input
+                    type="month"
+                    value={overdueMonth}
+                    onChange={event =>
+                      setOverdueMonth(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              )}
+
+              {overduePeriodMode === "year" && (
+                <label>
+                  Year
+                  <input
+                    type="number"
+                    min="2000"
+                    max="2100"
+                    value={overdueYear}
+                    onChange={event =>
+                      setOverdueYear(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              )}
+
+              {overduePeriodMode === "custom" && (
+                <div className="pa-form-grid">
+                  <label>
+                    From
+                    <input
+                      type="date"
+                      value={overdueCustomStart}
+                      onChange={event =>
+                        setOverdueCustomStart(
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    Through
+                    <input
+                      type="date"
+                      value={overdueCustomEnd}
+                      min={
+                        overdueCustomStart ||
+                        undefined
+                      }
+                      onChange={event =>
+                        setOverdueCustomEnd(
+                          event.target.value
+                        )
+                      }
+                    />
+                  </label>
+                </div>
+              )}
+
+              {overdueSummary &&
+                overdueSummary.currencies.length > 0 ? (
+                <div className="pa-metric-grid">
+                  {overdueSummary.currencies.map(
+                    summary => (
+                      <div key={summary.currency}>
+                        <span>{summary.currency}</span>
+                        <strong>
+                          Overdue total:{" "}
+                          {summary.totalAmount}{" "}
+                          {summary.currency}
+                        </strong>
+                        <small>
+                          Invoice count:{" "}
+                          {summary.invoiceCount}
+                        </small>
+                      </div>
+                    )
+                  )}
+                </div>
+              ) : (
+                <p className="pa-empty">
+                  {overduePeriodMode === "custom" &&
+                    (!overdueCustomStart ||
+                      !overdueCustomEnd)
+                    ? "Choose both dates to view overdue invoices."
+                    : "No overdue invoices for the selected period."}
+                </p>
+              )}
+            </section>
+
+            <Table
+              rows={rows}
+              columns={[
+                "invoiceNumber",
+                "merchant",
+                "totalAmount",
+                "currency",
+                "status",
+                "dueAt"
+              ]}
+              actions={r => {
+                const merchantId =
+                  rowMerchantId(r);
+
+                if (!merchantId) {
+                  return null;
+                }
+
+                return (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setView("Merchants");
+                      setSelected(merchantId);
+                      setLedger("invoices");
+                      setAction(null);
+                    }}
+                  >
+                    Manage merchant
+                  </button>
+                );
+              }}
+            />
+          </>
+        )}
+        {view === "Operators" && user.role === "OWNER" && (
+          <>
+            <div className="pa-buttons">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setAction({
+                    title: "Create platform operator",
+                    path: "/users",
+                    method: "POST",
+                    fields: [
+                      field("email", "Email", "email"),
+                      field("displayName", "Display name"),
+                      field("password", "Password", "password"),
+                      {
+                        ...field("role", "Platform role"),
+                        options: ["STAFF", "ADMIN"]
+                      }
+                    ],
+                    note: "Only OWNER can create platform operators. OWNER accounts cannot be created here."
+                  });
+                }}
+              >
+                Create operator
+              </button>
+            </div>
+
+            <Table
+              rows={rows}
+              columns={[
+                "email",
+                "displayName",
+                "role",
+                "createdAt"
+              ]}
+              actions={r => {
+                if (r.role === "OWNER") {
+                  return null;
+                }
+
+                return (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setAction({
+                          title: `Change role: ${String(r.email)}`,
+                          path: `/users/${encodeURIComponent(r.id)}`,
+                          method: "PATCH",
+                          fields: [
+                            {
+                              ...field("role", "Platform role"),
+                              options: ["STAFF", "ADMIN"],
+                              value: r.role
+                            }
+                          ],
+                          note:
+                            "Changing this operator's role will invalidate their existing sessions."
+                        });
+                      }}
+                    >
+                      Change role
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setAction({
+                          title: `Reset password: ${String(r.email)}`,
+                          path: `/users/${encodeURIComponent(r.id)}/password`,
+                          method: "PATCH",
+                          fields: [
+                            field("newPassword", "New password (minimum 8 characters)", "password")
+                          ],
+                          note:
+                            "Resetting this operator's password will invalidate their existing sessions. The new password must contain at least 8 characters."
+                        });
+                      }}
+                    >
+                      Reset password
+                    </button>
+                  </>
+                );
+              }}
+            />
+          </>
+        )}
+
+        {view === "Audit" && <Table rows={rows} columns={["createdAt", "actor", "action", "entityType", "entityId"]} />}
+      </>}</main></div>;
 }

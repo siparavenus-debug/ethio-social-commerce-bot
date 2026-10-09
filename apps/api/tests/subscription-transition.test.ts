@@ -167,7 +167,8 @@ import {
         passwordHash:
           "test-password-hash",
         displayName:
-          `Platform Test ${suffix}`
+          `Platform Test ${suffix}`,
+        role: "ADMIN"
       }
     });
   }

@@ -5,8 +5,8 @@ import {
 } from "@ethio-commerce/database";
 
 import {
-  hashPassword
-} from "../services/auth.js";
+  bootstrapPlatformOwner
+} from "../services/platform-bootstrap.js";
 
 function ask(
   question: string,
@@ -80,47 +80,12 @@ async function main() {
     );
   }
 
-  const normalizedEmail =
-    email.trim().toLowerCase();
-
-  const existingUser =
-    await prisma.platformUser.findUnique({
-      where: {
-        email: normalizedEmail
-      },
-      select: {
-        id: true
-      }
-    });
-
-  if (existingUser) {
-    throw new Error(
-      `A platform user with ${normalizedEmail} already exists.`
-    );
-  }
-
-  const passwordHash =
-    await hashPassword(
-      password
-    );
-
   const user =
-    await prisma.platformUser.create({
-      data: {
-        email:
-          normalizedEmail,
-
-        passwordHash,
-
-        displayName:
-          displayName || null
-      },
-      select: {
-        id: true,
-        email: true,
-        displayName: true
-      }
-    });
+  await bootstrapPlatformOwner({
+    email,
+    displayName,
+    password
+  });
 
   console.log("");
   console.log(

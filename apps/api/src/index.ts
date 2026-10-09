@@ -6,6 +6,7 @@ import { env } from "./config/env.js";
 import authRouter from "./routes/auth.js";
 import platformAuthRouter from "./routes/platform-auth.js";
 import platformAdminRouter from "./routes/platform-admin.js";
+import platformUsersRouter from "./routes/platform-users.js";
 import merchantsRouter from "./routes/merchants.js";
 import merchantProfileRouter from "./routes/merchant-profile.js";
 import productsRouter from "./routes/products.js";
@@ -252,6 +253,11 @@ async function start() {
   app.use(
     "/platform",
     platformAdminRouter
+  );
+
+  app.use(
+    "/platform/users",
+    platformUsersRouter
   );
 
   /*

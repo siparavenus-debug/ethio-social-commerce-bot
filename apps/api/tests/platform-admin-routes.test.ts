@@ -268,7 +268,12 @@ async function cleanup():
 }
 
 async function createPlatformFixture(
-    suffix: string
+    suffix: string,
+    role:
+        "OWNER" |
+        "ADMIN" |
+        "STAFF" =
+        "OWNER"
 ) {
     const user =
         await prisma.platformUser.create({
@@ -279,6 +284,7 @@ async function createPlatformFixture(
                     "test-password-hash",
                 displayName:
                     `Platform Test ${suffix}`,
+                role,
                 tokenVersion:
                     0
             }
@@ -592,6 +598,55 @@ afterAll(
 describe(
     "platform administration routes",
     () => {
+        it(
+            "denies ADMIN access to merchant OWNER password recovery",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "owner-password-admin-denied",
+                        "ADMIN"
+                    );
+
+                const merchant =
+                    await createMerchant(
+                        "owner-password-admin-denied"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants/${merchant.id}/owner/password`,
+                        {
+                            method:
+                                "PATCH",
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body:
+                                JSON.stringify({
+                                    newPassword:
+                                        "UnauthorizedPassword456!"
+                                })
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(403);
+
+                expect(
+                    await response.json()
+                ).toEqual({
+                    error:
+                        "You do not have permission to perform this platform action"
+                });
+            }
+        );
+
         it(
             "allows a platform user to reset the sole merchant OWNER password and invalidates existing sessions",
             async () => {
@@ -5570,6 +5625,69 @@ describe(
         );
 
         it(
+            "denies STAFF access to the platform audit log",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "audit-staff-denied",
+                        "STAFF"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/audit`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(403);
+
+                expect(
+                    await response.json()
+                ).toEqual({
+                    error:
+                        "You do not have permission to perform this platform action"
+                });
+            }
+        );
+
+        it(
+            "allows ADMIN access to the platform audit log",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "audit-admin-allowed",
+                        "ADMIN"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/audit`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
+            }
+        );
+
+        it(
             "returns platform audit records with their platform actor",
             async () => {
                 const {
@@ -5800,6 +5918,34 @@ describe(
                     dueAt:
                         dueAt.toISOString()
                 });
+            }
+        );
+
+        it(
+            "allows STAFF access to the platform billing workload summary",
+            async () => {
+                const {
+                    token
+                } =
+                    await createPlatformFixture(
+                        "billing-work-summary-staff",
+                        "STAFF"
+                    );
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/billing/work/summary`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${token}`
+                            }
+                        }
+                    );
+
+                expect(
+                    response.status
+                ).toBe(200);
             }
         );
 

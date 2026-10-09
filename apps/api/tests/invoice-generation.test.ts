@@ -436,7 +436,8 @@ async function createPlatformUser(
       passwordHash:
         "test-password-hash",
       displayName:
-        `Platform Test ${suffix}`
+        `Platform Test ${suffix}`,
+      role: "ADMIN"
     }
   });
 }

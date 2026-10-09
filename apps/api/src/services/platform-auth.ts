@@ -3,7 +3,10 @@ import {
     timingSafeEqual
   } from "node:crypto";
 
-  import { prisma } from "@ethio-commerce/database";
+  import {
+    prisma,
+    type PlatformUserRole
+  } from "@ethio-commerce/database";
 
   import { env } from "../config/env.js";
   import { verifyPassword } from "./auth.js";
@@ -21,6 +24,7 @@ import {
     id: string;
     email: string;
     displayName: string | null;
+    role: PlatformUserRole;
     tokenVersion: number;
   };
 
@@ -216,6 +220,7 @@ import {
           email: true,
           passwordHash: true,
           displayName: true,
+          role: true,
           tokenVersion: true
         }
       });
@@ -238,6 +243,7 @@ import {
       id: user.id,
       email: user.email,
       displayName: user.displayName,
+      role: user.role,
       tokenVersion: user.tokenVersion
     };
   }

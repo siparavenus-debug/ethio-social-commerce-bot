@@ -3,7 +3,7 @@ import path from "node:path";
 
 dotenv.config({
   path: path.resolve(process.cwd(), "../../.env"),
-  override: true,
+  override: false,
 });
 
 if (!process.env.PUBLIC_API_BASE_URL) {

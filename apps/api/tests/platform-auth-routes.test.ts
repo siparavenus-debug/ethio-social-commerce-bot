@@ -186,6 +186,8 @@ describe(
               passwordHash,
               displayName:
                 "Platform Password Test",
+              role:
+                "OWNER",
               tokenVersion:
                 0
             }
@@ -318,6 +320,8 @@ describe(
               passwordHash,
               displayName:
                 "Platform Wrong Password Test",
+              role:
+                "OWNER",
               tokenVersion:
                 0
             }
@@ -422,6 +426,8 @@ describe(
               passwordHash,
               displayName:
                 "Platform Short Password Test",
+              role:
+                "OWNER",
               tokenVersion:
                 0
             }
@@ -568,6 +574,8 @@ describe(
               passwordHash,
               displayName:
                 "Platform Missing Password Test",
+              role:
+                "OWNER",
               tokenVersion:
                 0
             }
@@ -623,6 +631,145 @@ describe(
         ).toBe(
           user.tokenVersion
         );
+      }
+    );
+
+    it(
+      "returns the authenticated platform user's current role",
+      async () => {
+        const passwordHash =
+          await hashPassword(
+            "PlatformPassword123!"
+          );
+
+        const user =
+          await prisma.platformUser.create({
+            data: {
+              email:
+                `${testPrefix}-me-role@example.test`,
+              passwordHash,
+              displayName:
+                "Platform Role Test",
+              role:
+                "STAFF",
+              tokenVersion:
+                0
+            }
+          });
+
+        const token =
+          createPlatformAuthToken({
+            id:
+              user.id,
+            tokenVersion:
+              user.tokenVersion
+          });
+
+        const response =
+          await fetch(
+            `${apiBaseUrl}/platform/auth/me`,
+            {
+              headers: {
+                authorization:
+                  `Bearer ${token}`
+              }
+            }
+          );
+
+        expect(
+          response.status
+        ).toBe(200);
+
+        const body =
+          await response.json();
+
+        expect(
+          body.user
+        ).toMatchObject({
+          id:
+            user.id,
+          email:
+            user.email,
+          displayName:
+            user.displayName,
+          role:
+            "STAFF",
+          tokenVersion:
+            user.tokenVersion
+        });
+      }
+    );
+
+    it(
+      "returns the platform user's role on successful login",
+      async () => {
+        const password =
+          "PlatformLoginPassword123!";
+
+        const passwordHash =
+          await hashPassword(
+            password
+          );
+
+        const user =
+          await prisma.platformUser.create({
+            data: {
+              email:
+                `${testPrefix}-login-role@example.test`,
+              passwordHash,
+              displayName:
+                "Platform Login Role Test",
+              role:
+                "ADMIN",
+              tokenVersion:
+                0
+            }
+          });
+
+        const response =
+          await fetch(
+            `${apiBaseUrl}/platform/auth/login`,
+            {
+              method:
+                "POST",
+              headers: {
+                "content-type":
+                  "application/json"
+              },
+              body:
+                JSON.stringify({
+                  email:
+                    user.email,
+                  password
+                })
+            }
+          );
+
+        expect(
+          response.status
+        ).toBe(200);
+
+        const body =
+          await response.json();
+
+        expect(
+          body.token
+        ).toEqual(
+          expect.any(String)
+        );
+
+        expect(
+          body.user
+        ).toEqual({
+          id:
+            user.id,
+          email:
+            user.email,
+          displayName:
+            user.displayName,
+          role:
+            "ADMIN"
+        });
       }
     );
   }

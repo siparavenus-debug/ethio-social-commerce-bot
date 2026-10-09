@@ -300,6 +300,8 @@ async function createPlatformFixture() {
           "test-password-hash",
         displayName:
           "Gate 13 Platform Administrator",
+        role:
+          "OWNER",
         tokenVersion:
           0
       }

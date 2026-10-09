@@ -249,6 +249,7 @@ describe(
                         "unused-in-middleware-test",
                     displayName:
                         "Platform Admin",
+                    role: "ADMIN",
                     tokenVersion: 3,
                     createdAt:
                         new Date("2026-01-01T00:00:00.000Z"),
@@ -296,6 +297,7 @@ describe(
                         "unused-in-middleware-test",
                     displayName:
                         "Platform Admin",
+                    role: "ADMIN",
                     tokenVersion: 4,
                     createdAt:
                         new Date("2026-01-01T00:00:00.000Z"),
@@ -332,6 +334,7 @@ describe(
                         "admin@example.com",
                     displayName:
                         "Platform Admin",
+                    role: "ADMIN",
                     tokenVersion: 4
                 });
             }

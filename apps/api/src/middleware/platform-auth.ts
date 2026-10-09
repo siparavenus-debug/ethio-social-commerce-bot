@@ -4,7 +4,10 @@ import type {
     Response
   } from "express";
 
-  import { prisma } from "@ethio-commerce/database";
+  import {
+    prisma,
+    type PlatformUserRole
+  } from "@ethio-commerce/database";
 
   import {
     verifyAuthToken
@@ -97,6 +100,7 @@ import type {
             id: true,
             email: true,
             displayName: true,
+            role: true,
             tokenVersion: true
           }
         });
@@ -126,6 +130,7 @@ import type {
         id: user.id,
         email: user.email,
         displayName: user.displayName,
+        role: user.role,
         tokenVersion: user.tokenVersion
       };
 
@@ -141,4 +146,38 @@ import type {
           "Platform authentication service failed"
       });
     }
+  }
+
+  export function requirePlatformRole(
+    ...allowedRoles: PlatformUserRole[]
+  ) {
+    return (
+      req: Request,
+      res: Response,
+      next: NextFunction
+    ): void => {
+      if (!req.platformAuth) {
+        res.status(401).json({
+          error:
+            "Platform authentication required"
+        });
+
+        return;
+      }
+
+      if (
+        !allowedRoles.includes(
+          req.platformAuth.role
+        )
+      ) {
+        res.status(403).json({
+          error:
+            "You do not have permission to perform this platform action"
+        });
+
+        return;
+      }
+
+      next();
+    };
   }

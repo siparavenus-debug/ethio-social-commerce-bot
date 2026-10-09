@@ -13,6 +13,12 @@ enum MerchantUserRole {
   STAFF
 }
 
+enum PlatformUserRole {
+  OWNER
+  ADMIN
+  STAFF
+}
+
 enum ProductStatus {
   ACTIVE
   DRAFT
@@ -661,11 +667,12 @@ model AuditLog {
 }
 
 model PlatformUser {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String           @id @default(cuid())
+  email        String           @unique
   passwordHash String
   displayName  String?
-  tokenVersion Int      @default(0)
+  role         PlatformUserRole
+  tokenVersion Int              @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

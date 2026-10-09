@@ -11,7 +11,8 @@ import {
 import { Router } from "express";
 
 import {
-  requirePlatformAuth
+  requirePlatformAuth,
+  requirePlatformRole
 } from "../middleware/platform-auth.js";
 
 import {
@@ -64,6 +65,14 @@ const router = Router();
 const MAX_PHONE_LENGTH = 50;
 const MAX_ADDRESS_LENGTH = 1000;
 
+function normalizeRouteParam(
+  value: string | string[] | undefined
+): string {
+  return typeof value === "string"
+    ? value.trim()
+    : "";
+}
+
 router.use(requirePlatformAuth);
 
 /*
@@ -77,6 +86,10 @@ router.use(requirePlatformAuth);
 
 router.get(
   "/audit",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (_req, res) => {
     try {
       const auditLogs =
@@ -110,6 +123,11 @@ router.get(
 
 router.get(
   "/billing/work/summary",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const now =
@@ -217,6 +235,11 @@ router.get(
 
 router.get(
   "/billing/settlements/review",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const settlements =
@@ -255,6 +278,11 @@ router.get(
 
 router.get(
   "/billing/settlements/resolved",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const settlements =
@@ -298,6 +326,11 @@ router.get(
 
 router.get(
   "/billing/invoices/draft",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const invoices =
@@ -334,6 +367,11 @@ router.get(
 
 router.get(
   "/billing/invoices/awaiting-payment",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const invoices =
@@ -370,6 +408,10 @@ router.get(
 
 router.get(
   "/billing/revenue/monthly-summary",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const month =
@@ -538,6 +580,10 @@ router.get(
 
 router.get(
   "/billing/revenue/range-summary",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const start =
@@ -708,6 +754,10 @@ router.get(
 
 router.get(
   "/billing/revenue/range",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const start =
@@ -830,6 +880,10 @@ router.get(
 
 router.get(
   "/billing/revenue",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (_req, res) => {
     try {
       const invoices =
@@ -866,6 +920,10 @@ router.get(
 
 router.get(
   "/billing/overdue/range",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const start =
@@ -988,6 +1046,10 @@ router.get(
 
 router.get(
   "/billing/overdue/range-summary",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const start =
@@ -1138,6 +1200,10 @@ router.get(
 
 router.get(
   "/billing/overdue",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (_req, res) => {
     try {
       const invoices =
@@ -1174,6 +1240,10 @@ router.get(
 
 router.post(
   "/merchants",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     const name =
       typeof req.body?.name === "string"
@@ -1405,6 +1475,11 @@ router.post(
 
 router.get(
   "/merchants",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const merchants =
@@ -1474,10 +1549,15 @@ router.get(
 
 router.get(
   "/merchants/:merchantId",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -1550,6 +1630,9 @@ router.get(
 
 router.patch(
   "/merchants/:merchantId/owner/password",
+  requirePlatformRole(
+    "OWNER"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -1564,7 +1647,7 @@ router.patch(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       const newPassword =
         typeof req.body?.newPassword ===
@@ -1704,6 +1787,10 @@ router.patch(
 
 router.post(
   "/merchants/:merchantId/subscription",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -1718,7 +1805,7 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -1902,6 +1989,10 @@ router.post(
 
 router.patch(
   "/merchants/:merchantId/subscription/status",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -1916,7 +2007,7 @@ router.patch(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -1982,6 +2073,10 @@ router.patch(
 
 router.patch(
   "/merchants/:merchantId/account/status",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -1996,7 +2091,7 @@ router.patch(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2074,6 +2169,11 @@ router.patch(
 
 router.get(
   "/plans",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (_req, res) => {
     try {
       const plans =
@@ -2120,6 +2220,9 @@ router.get(
 
 router.post(
   "/plans",
+  requirePlatformRole(
+    "OWNER"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2224,6 +2327,9 @@ router.post(
 
 router.patch(
   "/plans/:planId",
+  requirePlatformRole(
+    "OWNER"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2238,7 +2344,7 @@ router.patch(
       }
 
       const planId =
-        req.params.planId?.trim();
+        normalizeRouteParam(req.params.planId);
 
       if (!planId) {
         res.status(400).json({
@@ -2329,6 +2435,9 @@ router.patch(
 
 router.patch(
   "/plans/:planId/active-state",
+  requirePlatformRole(
+    "OWNER"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2343,7 +2452,7 @@ router.patch(
       }
 
       const planId =
-        req.params.planId?.trim();
+        normalizeRouteParam(req.params.planId);
 
       if (!planId) {
         res.status(400).json({
@@ -2403,10 +2512,15 @@ router.patch(
  */
 router.get(
   "/merchants/:merchantId/billing/commissions",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2449,10 +2563,15 @@ router.get(
  */
 router.get(
   "/merchants/:merchantId/billing/invoices",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2499,10 +2618,15 @@ router.get(
  */
 router.get(
   "/merchants/:merchantId/billing/settlements",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2557,13 +2681,18 @@ router.get(
  */
 router.get(
   "/merchants/:merchantId/billing/settlements/:settlementId/evidence",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       const settlementId =
-        req.params.settlementId?.trim();
+        normalizeRouteParam(req.params.settlementId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2702,6 +2831,11 @@ router.get(
  */
 router.post(
   "/merchants/:merchantId/billing/invoices",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2716,7 +2850,7 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2903,6 +3037,11 @@ router.post(
  */
 router.post(
   "/merchants/:merchantId/billing/invoices/:invoiceId/open",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2917,9 +3056,9 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
       const invoiceId =
-        req.params.invoiceId?.trim();
+        normalizeRouteParam(req.params.invoiceId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -2972,6 +3111,11 @@ router.post(
  */
 router.post(
   "/merchants/:merchantId/billing/invoices/:invoiceId/overdue",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -2986,9 +3130,9 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
       const invoiceId =
-        req.params.invoiceId?.trim();
+        normalizeRouteParam(req.params.invoiceId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -3045,6 +3189,11 @@ router.post(
  */
 router.post(
   "/merchants/:merchantId/billing/settlements/:settlementId/verify",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -3059,9 +3208,9 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
       const settlementId =
-        req.params.settlementId?.trim();
+        normalizeRouteParam(req.params.settlementId);
 
       if (!merchantId) {
         res.status(400).json({
@@ -3134,6 +3283,11 @@ router.post(
  */
 router.post(
   "/merchants/:merchantId/billing/settlements/:settlementId/reject",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
   async (req, res) => {
     try {
       const actorPlatformUserId =
@@ -3148,9 +3302,9 @@ router.post(
       }
 
       const merchantId =
-        req.params.merchantId?.trim();
+        normalizeRouteParam(req.params.merchantId);
       const settlementId =
-        req.params.settlementId?.trim();
+        normalizeRouteParam(req.params.settlementId);
 
       if (!merchantId) {
         res.status(400).json({
