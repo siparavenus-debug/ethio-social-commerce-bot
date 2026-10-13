@@ -1,4 +1,9 @@
-﻿import type {
+import {
+  createHash,
+  randomBytes
+} from "node:crypto";
+
+import type {
     Server
   } from "node:http";
 
@@ -67,6 +72,14 @@
     }
 
     await prisma.auditLog.deleteMany({
+      where: {
+        merchantId: {
+          in: merchantIds
+        }
+      }
+    });
+
+    await prisma.merchantOwnerActivation.deleteMany({
       where: {
         merchantId: {
           in: merchantIds
@@ -716,6 +729,487 @@
           expect(
             response.status
           ).not.toBe(200);
+        }
+      );
+
+      it(
+        "activates a merchant owner using a valid invitation token",
+        async () => {
+          const merchant =
+            await prisma.merchant.create({
+              data: {
+                name: `${testPrefix}-owner-activation`,
+                currency: "ETB"
+              }
+            });
+
+          const ownerEmail =
+            `${testPrefix}-owner-activation@example.test`;
+
+          const activationToken =
+            randomBytes(32).toString("base64url");
+
+          const tokenHash =
+            createHash("sha256")
+              .update(activationToken)
+              .digest("hex");
+
+          const invitation =
+            await prisma.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail,
+                ownerDisplayName: "Activated Owner",
+                tokenHash,
+                expiresAt: new Date(
+                  Date.now() + 60 * 60 * 1000
+                )
+              }
+            });
+
+          const password = "SecureOwnerPassword123!";
+
+          const response = await fetch(
+            `${apiBaseUrl}/auth/activate-owner`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                token: activationToken,
+                password
+              })
+            }
+          );
+
+          expect(response.status).toBe(200);
+
+          const owner =
+            await prisma.merchantUser.findUniqueOrThrow({
+              where: {
+                email: ownerEmail
+              }
+            });
+
+          expect(owner.merchantId).toBe(merchant.id);
+          expect(owner.role).toBe(MerchantUserRole.OWNER);
+          expect(owner.displayName).toBe("Activated Owner");
+
+          expect(owner.passwordHash).not.toBe(password);
+
+          expect(
+            await verifyPassword(
+              password,
+              owner.passwordHash
+            )
+          ).toBe(true);
+
+          const updatedInvitation =
+            await prisma.merchantOwnerActivation.findUniqueOrThrow({
+              where: {
+                id: invitation.id
+              }
+            });
+
+          expect(updatedInvitation.consumedAt).not.toBeNull();
+
+          const authenticated =
+            await authenticateUser(ownerEmail, password);
+
+          expect(authenticated).not.toBeNull();
+          expect(authenticated?.id).toBe(owner.id);
+
+          const body = await response.json();
+
+          expect(body).not.toHaveProperty("password");
+          expect(body).not.toHaveProperty("passwordHash");
+          expect(body).not.toHaveProperty("token");
+        }
+      );
+
+      it(
+        "rejects an expired merchant owner activation invitation",
+        async () => {
+          const merchant =
+            await prisma.merchant.create({
+              data: {
+                name: `${testPrefix}-expired-owner-activation`,
+                currency: "ETB"
+              }
+            });
+
+          const ownerEmail =
+            `${testPrefix}-expired-owner@example.test`;
+
+          const activationToken =
+            randomBytes(32).toString("base64url");
+
+          const invitation =
+            await prisma.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail,
+                tokenHash: createHash("sha256")
+                  .update(activationToken)
+                  .digest("hex"),
+                expiresAt: new Date(
+                  Date.now() - 60 * 1000
+                )
+              }
+            });
+
+          const response = await fetch(
+            `${apiBaseUrl}/auth/activate-owner`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                token: activationToken,
+                password: "SecureOwnerPassword123!"
+              })
+            }
+          );
+
+          expect(response.status).toBe(400);
+
+          const owner =
+            await prisma.merchantUser.findUnique({
+              where: { email: ownerEmail }
+            });
+
+          expect(owner).toBeNull();
+
+          const storedInvitation =
+            await prisma.merchantOwnerActivation.findUniqueOrThrow({
+              where: { id: invitation.id }
+            });
+
+          expect(storedInvitation.consumedAt).toBeNull();
+
+          const activationAudits =
+            await prisma.auditLog.count({
+              where: {
+                merchantId: merchant.id,
+                action: "MERCHANT_OWNER_ACTIVATED"
+              }
+            });
+
+          expect(activationAudits).toBe(0);
+        }
+      );
+
+      it(
+        "prevents reuse of a consumed merchant owner activation token",
+        async () => {
+          const merchant =
+            await prisma.merchant.create({
+              data: {
+                name: `${testPrefix}-reused-owner-activation`,
+                currency: "ETB"
+              }
+            });
+
+          const ownerEmail =
+            `${testPrefix}-reused-owner@example.test`;
+
+          const activationToken =
+            randomBytes(32).toString("base64url");
+
+          const invitation =
+            await prisma.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail,
+                ownerDisplayName: "Single Use Owner",
+                tokenHash: createHash("sha256")
+                  .update(activationToken)
+                  .digest("hex"),
+                expiresAt: new Date(
+                  Date.now() + 60 * 60 * 1000
+                )
+              }
+            });
+
+          const url =
+            `${apiBaseUrl}/auth/activate-owner`;
+
+          const headers = {
+            "content-type": "application/json"
+          };
+
+          const firstResponse = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              token: activationToken,
+              password: "FirstOwnerPassword123!"
+            })
+          });
+
+          expect(firstResponse.status).toBe(200);
+
+          const secondResponse = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              token: activationToken,
+              password: "SecondOwnerPassword456!"
+            })
+          });
+
+          expect(secondResponse.status).toBe(400);
+
+          const owners =
+            await prisma.merchantUser.findMany({
+              where: {
+                merchantId: merchant.id,
+                role: MerchantUserRole.OWNER
+              }
+            });
+
+          expect(owners).toHaveLength(1);
+          expect(owners[0]?.email).toBe(ownerEmail);
+
+          expect(
+            await verifyPassword(
+              "FirstOwnerPassword123!",
+              owners[0]!.passwordHash
+            )
+          ).toBe(true);
+
+          expect(
+            await verifyPassword(
+              "SecondOwnerPassword456!",
+              owners[0]!.passwordHash
+            )
+          ).toBe(false);
+
+          const storedInvitation =
+            await prisma.merchantOwnerActivation.findUniqueOrThrow({
+              where: { id: invitation.id }
+            });
+
+          expect(storedInvitation.consumedAt).not.toBeNull();
+
+          const activationAudits =
+            await prisma.auditLog.count({
+              where: {
+                merchantId: merchant.id,
+                action: "MERCHANT_OWNER_ACTIVATED"
+              }
+            });
+
+          expect(activationAudits).toBe(1);
+        }
+      );
+
+      it(
+        "allows only one concurrent merchant owner activation",
+        async () => {
+          const merchant =
+            await prisma.merchant.create({
+              data: {
+                name: `${testPrefix}-concurrent-owner-activation`,
+                currency: "ETB"
+              }
+            });
+
+          const ownerEmail =
+            `${testPrefix}-concurrent-owner@example.test`;
+
+          const activationToken =
+            randomBytes(32).toString("base64url");
+
+          const invitation =
+            await prisma.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail,
+                ownerDisplayName: "Concurrent Owner",
+                tokenHash: createHash("sha256")
+                  .update(activationToken)
+                  .digest("hex"),
+                expiresAt: new Date(
+                  Date.now() + 60 * 60 * 1000
+                )
+              }
+            });
+
+          const url =
+            `${apiBaseUrl}/auth/activate-owner`;
+
+          const headers = {
+            "content-type": "application/json"
+          };
+
+          const [first, second] = await Promise.all([
+            fetch(url, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                token: activationToken,
+                password: "ConcurrentPasswordA123!"
+              })
+            }),
+            fetch(url, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                token: activationToken,
+                password: "ConcurrentPasswordB456!"
+              })
+            })
+          ]);
+
+          expect(
+            [first.status, second.status].sort()
+          ).toEqual([200, 400]);
+
+          const owners =
+            await prisma.merchantUser.findMany({
+              where: {
+                merchantId: merchant.id,
+                role: MerchantUserRole.OWNER
+              }
+            });
+
+          expect(owners).toHaveLength(1);
+          expect(owners[0]?.email).toBe(ownerEmail);
+
+          const passwordAMatches =
+            await verifyPassword(
+              "ConcurrentPasswordA123!",
+              owners[0]!.passwordHash
+            );
+
+          const passwordBMatches =
+            await verifyPassword(
+              "ConcurrentPasswordB456!",
+              owners[0]!.passwordHash
+            );
+
+          expect(
+            Number(passwordAMatches) +
+              Number(passwordBMatches)
+          ).toBe(1);
+
+          const storedInvitation =
+            await prisma.merchantOwnerActivation.findUniqueOrThrow({
+              where: { id: invitation.id }
+            });
+
+          expect(storedInvitation.consumedAt).not.toBeNull();
+
+          const activationAudits =
+            await prisma.auditLog.count({
+              where: {
+                merchantId: merchant.id,
+                action: "MERCHANT_OWNER_ACTIVATED"
+              }
+            });
+
+          expect(activationAudits).toBe(1);
+        }
+      );
+
+      it(
+        "rejects owner activation when the email already belongs to another merchant",
+        async () => {
+          const existing =
+            await createFixture(
+              "activation-existing-email"
+            );
+
+          const merchant =
+            await prisma.merchant.create({
+              data: {
+                name: `${testPrefix}-duplicate-email-activation`,
+                currency: "ETB"
+              }
+            });
+
+          const activationToken =
+            randomBytes(32).toString("base64url");
+
+          const invitation =
+            await prisma.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail: existing.user.email,
+                ownerDisplayName: "Invited Owner",
+                tokenHash: createHash("sha256")
+                  .update(activationToken)
+                  .digest("hex"),
+                expiresAt: new Date(
+                  Date.now() + 60 * 60 * 1000
+                )
+              }
+            });
+
+          const response = await fetch(
+            `${apiBaseUrl}/auth/activate-owner`,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json"
+              },
+              body: JSON.stringify({
+                token: activationToken,
+                password: "NewActivationPassword123!"
+              })
+            }
+          );
+
+          expect(response.status).toBe(400);
+
+          const existingUser =
+            await prisma.merchantUser.findUniqueOrThrow({
+              where: {
+                email: existing.user.email
+              }
+            });
+
+          expect(existingUser.id).toBe(existing.user.id);
+          expect(existingUser.merchantId).toBe(
+            existing.merchant.id
+          );
+
+          expect(existingUser.passwordHash).toBe(
+            existing.passwordHash
+          );
+
+          expect(
+            await verifyPassword(
+              existing.currentPassword,
+              existingUser.passwordHash
+            )
+          ).toBe(true);
+
+          expect(
+            await prisma.merchantUser.count({
+              where: { merchantId: merchant.id }
+            })
+          ).toBe(0);
+
+          const storedInvitation =
+            await prisma.merchantOwnerActivation.findUniqueOrThrow({
+              where: { id: invitation.id }
+            });
+
+          expect(storedInvitation.consumedAt).toBeNull();
+
+          const activationAudits =
+            await prisma.auditLog.count({
+              where: {
+                merchantId: merchant.id,
+                action: "MERCHANT_OWNER_ACTIVATED"
+              }
+            });
+
+          expect(activationAudits).toBe(0);
         }
       );
     }

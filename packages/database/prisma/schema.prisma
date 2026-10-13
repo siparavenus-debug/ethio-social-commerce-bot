@@ -92,6 +92,13 @@ enum MerchantAccountStatus {
   SUSPENDED
 }
 
+enum MerchantOnboardingStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  DISCARDED
+}
+
 enum CommissionStatus {
   ACCRUED
   INVOICED
@@ -137,6 +144,13 @@ enum MerchantSettlementProvider {
   OTHER
 }
 
+enum MerchantInvitationDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
 model Merchant {
   id             String   @id @default(cuid())
   name           String
@@ -170,6 +184,8 @@ model Merchant {
   invoiceItems          MerchantInvoiceItem[]
   invoiceReminders      MerchantInvoiceReminder[]
   settlements           MerchantSettlement[]
+  onboardingApplication MerchantOnboardingApplication?
+  ownerActivations MerchantOwnerActivation[]
 }
 
 model MerchantUser {
@@ -187,6 +203,47 @@ model MerchantUser {
 
   @@index([merchantId])
 }
+
+model MerchantOwnerActivation {
+  id               String    @id @default(cuid())
+  merchantId       String
+  ownerEmail       String
+  ownerDisplayName String?
+  tokenHash        String    @unique
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  invitationDelivery MerchantInvitationDelivery?
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId])
+  @@index([ownerEmail])
+  @@index([expiresAt])
+}
+
+
+model MerchantInvitationDelivery {
+  id               String                           @id @default(cuid())
+  activationId     String                           @unique
+  status           MerchantInvitationDeliveryStatus @default(PENDING)
+  recipientEmail   String
+  encryptedToken   String?
+  attemptCount     Int                              @default(0)
+  nextAttemptAt    DateTime                         @default(now())
+  processingUntil  DateTime?
+  sentAt           DateTime?
+  lastError        String?
+  createdAt        DateTime                         @default(now())
+  updatedAt        DateTime                         @updatedAt
+
+activation MerchantOwnerActivation @relation(fields: [activationId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([status, processingUntil])
+}
+
 
 model Customer {
   id             String   @id @default(cuid())
@@ -677,6 +734,42 @@ model PlatformUser {
   updatedAt    DateTime @updatedAt
 
   auditLogs PlatformAuditLog[]
+
+  createdOnboardingApplications  MerchantOnboardingApplication[] @relation("OnboardingCreator")
+  reviewedOnboardingApplications MerchantOnboardingApplication[] @relation("OnboardingReviewer")
+}
+
+model MerchantOnboardingApplication {
+  id               String                   @id @default(cuid())
+  status           MerchantOnboardingStatus @default(PENDING_APPROVAL)
+
+  name             String
+  currency         String                   @default("ETB") @db.VarChar(3)
+  phone            String
+  alternatePhone   String?
+  address          String?
+  telegramUsername String?
+
+  ownerEmail       String
+  ownerDisplayName String?
+
+  createdById      String
+  reviewedById     String?
+  reviewedAt       DateTime?
+  reviewReason     String?
+
+  merchantId       String?                  @unique
+
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  createdBy PlatformUser  @relation("OnboardingCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewedBy PlatformUser? @relation("OnboardingReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  merchant   Merchant?     @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([createdById, createdAt])
+  @@index([reviewedById, reviewedAt])
 }
 
 model PlatformAuditLog {

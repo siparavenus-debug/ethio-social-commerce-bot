@@ -79,6 +79,10 @@ import {
 } from "../src/services/platform-auth.js";
 
 import {
+  decryptMerchantInvitation
+} from "../src/services/merchant-invitation-encryption.js";
+
+import {
   createOrder
 } from "../src/tools/orders.js";
 
@@ -252,6 +256,32 @@ async function cleanup():
     }
   });
 
+  await prisma.merchantInvitationDelivery.deleteMany({
+    where: {
+      activation: {
+        merchantId: {
+          in: merchantIds
+        }
+      }
+    }
+  });
+
+  await prisma.merchantOwnerActivation.deleteMany({
+    where: {
+      merchantId: {
+        in: merchantIds
+      }
+    }
+  });
+
+  await prisma.merchantOnboardingApplication.deleteMany({
+    where: {
+      name: {
+        startsWith: testPrefix
+      }
+    }
+  });
+
   await prisma.merchant.deleteMany({
     where: {
       id: {
@@ -290,18 +320,21 @@ async function cleanup():
   });
 }
 
-async function createPlatformFixture() {
+async function createPlatformFixture(
+  suffix = "admin",
+  role: "OWNER" | "ADMIN" | "STAFF" = "OWNER"
+) {
   const user =
     await prisma.platformUser.create({
       data: {
         email:
-          `${testPrefix}-platform-admin@example.test`,
+          `${testPrefix}-platform-${suffix}@example.test`,
         passwordHash:
           "test-password-hash",
         displayName:
           "Gate 13 Platform Administrator",
         role:
-          "OWNER",
+          role,
         tokenVersion:
           0
       }
@@ -481,6 +514,12 @@ describe(
         const platform =
           await createPlatformFixture();
 
+        const reviewer =
+          await createPlatformFixture(
+            "onboarding-reviewer",
+            "ADMIN"
+          );
+
         const planResponse =
           await fetch(
             `${apiBaseUrl}/platform/plans`,
@@ -557,57 +596,153 @@ describe(
         const telegramBotToken =
           "gate-13-merchant-bot-token";
 
-        const merchantResponse =
+        const onboardingResponse =
           await fetch(
-            `${apiBaseUrl}/platform/merchants`,
+            `${apiBaseUrl}/platform/merchant-onboarding`,
             {
-              method:
-                "POST",
+              method: "POST",
               headers: {
                 authorization:
                   `Bearer ${platform.token}`,
                 "content-type":
                   "application/json"
               },
-              body:
-                JSON.stringify({
-                  name:
-                    merchantName,
-                  currency:
-                    "ETB",
-                  phone:
-                    "0911000013",
-                  address:
-                    "Gate 13 Address",
-                  ownerEmail:
-                    ownerEmail.toUpperCase(),
-                  ownerPassword,
-                  ownerDisplayName:
-                    "Gate 13 Owner"
-                })
+              body: JSON.stringify({
+                name: merchantName,
+                currency: "ETB",
+                phone: "0911000013",
+                address: "Gate 13 Address",
+                ownerEmail:
+                  ownerEmail.toUpperCase(),
+                ownerDisplayName:
+                  "Gate 13 Owner"
+              })
             }
           );
 
         expect(
-          merchantResponse.status
+          onboardingResponse.status
         ).toBe(201);
 
-        const merchantBody =
-          await merchantResponse.json() as {
-            merchant: {
-              id: string;
-              name: string;
-              currency: string;
-              accountStatus: string;
-            };
-            owner: {
-              id: string;
-              merchantId: string;
-              email: string;
-              displayName: string | null;
-              role: string;
-            };
+        const onboardingBody =
+          await onboardingResponse.json() as {
+            id: string;
+            status: string;
           };
+
+        expect(onboardingBody).toMatchObject({
+          status: "PENDING_APPROVAL"
+        });
+
+        expect(onboardingBody.id.length)
+          .toBeGreaterThan(0);
+
+        const approvalResponse =
+          await fetch(
+            `${apiBaseUrl}/platform/merchant-onboarding/${onboardingBody.id}/approve`,
+            {
+              method: "POST",
+              headers: {
+                authorization:
+                  `Bearer ${reviewer.token}`,
+                "content-type":
+                  "application/json"
+              }
+            }
+          );
+
+        expect(approvalResponse.status)
+          .toBe(200);
+
+        const approvalBody =
+          await approvalResponse.json() as {
+            applicationId: string;
+            merchantId: string;
+            status: string;
+          };
+
+        expect(approvalBody).toMatchObject({
+          applicationId: onboardingBody.id,
+          status: "APPROVED"
+        });
+
+        expect(approvalBody.merchantId.length)
+          .toBeGreaterThan(0);
+
+        const invitation =
+          await prisma.merchantInvitationDelivery.findFirst({
+            where: {
+              activation: {
+                merchantId: approvalBody.merchantId
+              }
+            },
+            include: {
+              activation: true
+            }
+          });
+
+        expect(invitation).not.toBeNull();
+
+        expect(invitation?.status)
+          .toBe("PENDING");
+
+        expect(invitation?.encryptedToken)
+          .not.toBeNull();
+
+        const activationToken =
+          decryptMerchantInvitation(
+            invitation!.encryptedToken!
+          );
+
+        const activationResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/activate-owner`,
+            {
+              method: "POST",
+              headers: {
+                "content-type":
+                  "application/json"
+              },
+              body: JSON.stringify({
+                token: activationToken,
+                password: ownerPassword
+              })
+            }
+          );
+
+        expect(activationResponse.status)
+          .toBe(200);
+
+        const activatedOwner =
+          await prisma.merchantUser.findUnique({
+            where: {
+              email: ownerEmail
+            }
+          });
+
+        expect(activatedOwner).not.toBeNull();
+
+        expect(activatedOwner).toMatchObject({
+          merchantId: approvalBody.merchantId,
+          email: ownerEmail,
+          displayName: "Gate 13 Owner",
+          role: "OWNER"
+        });
+
+        expect(activatedOwner!.passwordHash)
+          .not.toBe(ownerPassword);
+
+        const createdMerchant =
+          await prisma.merchant.findUniqueOrThrow({
+            where: {
+              id: approvalBody.merchantId
+            }
+          });
+
+        const merchantBody = {
+          merchant: createdMerchant,
+          owner: activatedOwner!
+        };
 
         expect(
           merchantBody.merchant
@@ -688,7 +823,7 @@ describe(
             "OWNER"
         });
 
-                const meResponse =
+        const meResponse =
           await fetch(
             `${apiBaseUrl}/auth/me`,
             {
@@ -732,7 +867,7 @@ describe(
             0
         });
 
-                const createAdminResponse =
+        const createAdminResponse =
           await fetch(
             `${apiBaseUrl}/merchants/${merchantBody.merchant.id}/users`,
             {
@@ -848,7 +983,7 @@ describe(
             "ADMIN"
         });
 
-                const listUsersResponse =
+        const listUsersResponse =
           await fetch(
             `${apiBaseUrl}/merchants/${merchantBody.merchant.id}/users`,
             {
@@ -1015,12 +1150,12 @@ describe(
         const trialEndsAt =
           new Date(
             currentPeriodStart.getTime() +
+            (
               (
-                (
-                  currentPeriodEnd.getTime() -
-                  currentPeriodStart.getTime()
-                ) / 2
-              )
+                currentPeriodEnd.getTime() -
+                currentPeriodStart.getTime()
+              ) / 2
+            )
           );
 
         const initializeSubscriptionResponse =
@@ -1179,10 +1314,10 @@ describe(
                   "application/json"
               },
               body:
-              JSON.stringify({
-                botToken:
-                  telegramBotToken
-              })
+                JSON.stringify({
+                  botToken:
+                    telegramBotToken
+                })
             }
           );
 
@@ -1479,57 +1614,168 @@ describe(
           OrderStatus.PENDING_PAYMENT
         );
 
-                const isolationOwnerEmail =
+        const isolationOwnerEmail =
           `${testPrefix}-isolation-owner@example.test`;
 
         const isolationOwnerPassword =
           "gate-13-isolation-owner-password";
 
-        const isolationMerchantResponse =
+        const isolationOnboardingResponse =
           await fetch(
-            `${apiBaseUrl}/platform/merchants`,
+            `${apiBaseUrl}/platform/merchant-onboarding`,
             {
-              method:
-                "POST",
+              method: "POST",
               headers: {
                 authorization:
                   `Bearer ${platform.token}`,
                 "content-type":
                   "application/json"
               },
-              body:
-                JSON.stringify({
-                  name:
-                    `${testPrefix} Isolation Merchant`,
-                  currency:
-                    "ETB",
-                  ownerEmail:
-                    isolationOwnerEmail,
-                  ownerPassword:
-                    isolationOwnerPassword,
-                  ownerDisplayName:
-                    "Gate 13 Isolation Owner"
-                })
+              body: JSON.stringify({
+                name:
+                  `${testPrefix} Isolation Merchant`,
+                currency: "ETB",
+                phone: "0911000014",
+                ownerEmail:
+                  isolationOwnerEmail,
+                ownerDisplayName:
+                  "Gate 13 Isolation Owner"
+              })
             }
           );
 
         expect(
-          isolationMerchantResponse.status
+          isolationOnboardingResponse.status
         ).toBe(201);
 
-        const isolationMerchantBody =
-          await isolationMerchantResponse.json() as {
-            merchant: {
-              id: string;
-            };
-            owner: {
-              id: string;
-              merchantId: string;
-              email: string;
-              displayName: string | null;
-              role: string;
-            };
+        const isolationOnboardingBody =
+          await isolationOnboardingResponse.json() as {
+            id: string;
+            status: string;
           };
+
+        expect(isolationOnboardingBody).toMatchObject({
+          status: "PENDING_APPROVAL"
+        });
+
+        expect(isolationOnboardingBody.id.length)
+          .toBeGreaterThan(0);
+
+        const isolationApprovalResponse =
+          await fetch(
+            `${apiBaseUrl}/platform/merchant-onboarding/${isolationOnboardingBody.id}/approve`,
+            {
+              method: "POST",
+              headers: {
+                authorization:
+                  `Bearer ${reviewer.token}`,
+                "content-type":
+                  "application/json"
+              }
+            }
+          );
+
+        expect(isolationApprovalResponse.status)
+          .toBe(200);
+
+        const isolationApprovalBody =
+          await isolationApprovalResponse.json() as {
+            applicationId: string;
+            merchantId: string;
+            status: string;
+          };
+
+        expect(isolationApprovalBody).toMatchObject({
+          applicationId:
+            isolationOnboardingBody.id,
+          status: "APPROVED"
+        });
+
+        expect(isolationApprovalBody.merchantId.length)
+          .toBeGreaterThan(0);
+
+        expect(isolationApprovalBody.merchantId)
+          .not.toBe(merchantBody.merchant.id);
+
+        const isolationInvitation =
+          await prisma.merchantInvitationDelivery.findFirst({
+            where: {
+              activation: {
+                merchantId:
+                  isolationApprovalBody.merchantId
+              }
+            },
+            include: {
+              activation: true
+            }
+          });
+
+        expect(isolationInvitation)
+          .not.toBeNull();
+
+        expect(isolationInvitation?.status)
+          .toBe("PENDING");
+
+        expect(isolationInvitation?.encryptedToken)
+          .not.toBeNull();
+
+        const isolationActivationToken =
+          decryptMerchantInvitation(
+            isolationInvitation!.encryptedToken!
+          );
+
+        const isolationActivationResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/activate-owner`,
+            {
+              method: "POST",
+              headers: {
+                "content-type":
+                  "application/json"
+              },
+              body: JSON.stringify({
+                token: isolationActivationToken,
+                password: isolationOwnerPassword
+              })
+            }
+          );
+
+        expect(isolationActivationResponse.status)
+          .toBe(200);
+
+        const isolationActivatedOwner =
+          await prisma.merchantUser.findUnique({
+            where: {
+              email: isolationOwnerEmail
+            }
+          });
+
+        expect(isolationActivatedOwner)
+          .not.toBeNull();
+
+        expect(isolationActivatedOwner).toMatchObject({
+          merchantId:
+            isolationApprovalBody.merchantId,
+          email: isolationOwnerEmail,
+          displayName:
+            "Gate 13 Isolation Owner",
+          role: "OWNER"
+        });
+
+        expect(isolationActivatedOwner!.passwordHash)
+          .not.toBe(isolationOwnerPassword);
+
+        const isolationCreatedMerchant =
+          await prisma.merchant.findUniqueOrThrow({
+            where: {
+              id: isolationApprovalBody.merchantId
+            }
+          });
+
+        const isolationMerchantBody = {
+          merchant: isolationCreatedMerchant,
+          owner: isolationActivatedOwner!
+        };
 
         expect(
           isolationMerchantBody.owner
@@ -1779,7 +2025,7 @@ describe(
           commissionsBeforeVerification
         ).toBe(0);
 
-                const crossMerchantPaymentReviewResponse =
+        const crossMerchantPaymentReviewResponse =
           await fetch(
             `${apiBaseUrl}/merchants/${merchantBody.merchant.id}/payment-review/${paymentBody.id}`,
             {
@@ -1966,50 +2212,50 @@ describe(
             }
           );
 
-          expect(
-            verificationResponse.status
-          ).toBe(200);
+        expect(
+          verificationResponse.status
+        ).toBe(200);
 
-          const verificationBody =
-            await verificationResponse.json() as {
-              message: string;
-              payment: {
-                id: string;
-                merchantId: string;
-                orderId: string;
-                status: string;
-              };
-              order: {
-                id: string;
-                merchantId: string;
-                status: string;
-              };
-            };
-
-          expect(
-            verificationBody
-          ).toMatchObject({
-            message:
-              "Payment verified successfully",
+        const verificationBody =
+          await verificationResponse.json() as {
+            message: string;
             payment: {
-              id:
-                paymentBody.id,
-              merchantId:
-                merchantBody.merchant.id,
-              orderId:
-                customerOrder.id,
-              status:
-                PaymentStatus.VERIFIED
-            },
+              id: string;
+              merchantId: string;
+              orderId: string;
+              status: string;
+            };
             order: {
-              id:
-                customerOrder.id,
-              merchantId:
-                merchantBody.merchant.id,
-              status:
-                OrderStatus.PAID
-            }
-          });
+              id: string;
+              merchantId: string;
+              status: string;
+            };
+          };
+
+        expect(
+          verificationBody
+        ).toMatchObject({
+          message:
+            "Payment verified successfully",
+          payment: {
+            id:
+              paymentBody.id,
+            merchantId:
+              merchantBody.merchant.id,
+            orderId:
+              customerOrder.id,
+            status:
+              PaymentStatus.VERIFIED
+          },
+          order: {
+            id:
+              customerOrder.id,
+            merchantId:
+              merchantBody.merchant.id,
+            status:
+              OrderStatus.PAID
+          }
+        });
 
         const verifiedPayment =
           await prisma.payment.findUniqueOrThrow({
@@ -2075,7 +2321,7 @@ describe(
           commissionsAfterVerification
         ).toHaveLength(1);
 
-                const commission =
+        const commission =
           commissionsAfterVerification[0]!;
 
         expect(
@@ -2126,7 +2372,7 @@ describe(
           settlementsFromCustomerPayment
         ).toBe(0);
 
-                const invoiceNumber =
+        const invoiceNumber =
           `${testPrefix}-invoice-001`;
 
         const generateInvoiceResponse =
@@ -2295,7 +2541,7 @@ describe(
           persistedInvoice.items
         ).toHaveLength(2);
 
-                const openInvoiceResponse =
+        const openInvoiceResponse =
           await fetch(
             `${apiBaseUrl}/platform/merchants/${merchantBody.merchant.id}/billing/invoices/${generateInvoiceBody.invoice.id}/open`,
             {
@@ -2354,7 +2600,7 @@ describe(
 
         expect(
           dueAt.getTime() -
-            openedAt.getTime()
+          openedAt.getTime()
         ).toBe(
           7 * 24 * 60 * 60 * 1000
         );
@@ -2465,8 +2711,8 @@ describe(
           String(
             sendTelegramMessageMock
               .mock.calls[
-                telegramCallsBeforeFulfillment
-              ]?.[2]
+            telegramCallsBeforeFulfillment
+            ]?.[2]
           );
 
         const deliveryCodeMatch =
@@ -2596,175 +2842,175 @@ describe(
         ).toBeNull();
 
         const newOwnerPassword =
-        "gate-13-owner-new-password";
+          "gate-13-owner-new-password";
 
-      const changePasswordResponse =
-        await fetch(
-          `${apiBaseUrl}/auth/password`,
-          {
-            method:
-              "PATCH",
-            headers: {
-              authorization:
-                `Bearer ${loginBody.token}`,
-              "content-type":
-                "application/json"
-            },
-            body:
-              JSON.stringify({
-                currentPassword:
-                  ownerPassword,
-                newPassword:
-                  newOwnerPassword
-              })
-          }
-        );
-
-      expect(
-        changePasswordResponse.status
-      ).toBe(200);
-
-      const changePasswordBody =
-        await changePasswordResponse.json() as {
-          message: string;
-        };
-
-      expect(
-        changePasswordBody.message
-      ).toBe(
-        "Password changed successfully"
-      );
-
-      const oldTokenMeResponse =
-        await fetch(
-          `${apiBaseUrl}/auth/me`,
-          {
-            headers: {
-              authorization:
-                `Bearer ${loginBody.token}`
+        const changePasswordResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/password`,
+            {
+              method:
+                "PATCH",
+              headers: {
+                authorization:
+                  `Bearer ${loginBody.token}`,
+                "content-type":
+                  "application/json"
+              },
+              body:
+                JSON.stringify({
+                  currentPassword:
+                    ownerPassword,
+                  newPassword:
+                    newOwnerPassword
+                })
             }
-          }
-        );
+          );
 
-      expect(
-        oldTokenMeResponse.status
-      ).toBe(401);
+        expect(
+          changePasswordResponse.status
+        ).toBe(200);
 
-      const oldPasswordLoginResponse =
-        await fetch(
-          `${apiBaseUrl}/auth/login`,
-          {
-            method:
-              "POST",
-            headers: {
-              "content-type":
-                "application/json"
-            },
-            body:
-              JSON.stringify({
-                email:
-                  ownerEmail,
-                password:
-                  ownerPassword
-              })
-          }
-        );
-
-      expect(
-        oldPasswordLoginResponse.status
-      ).toBe(401);
-
-      const newPasswordLoginResponse =
-        await fetch(
-          `${apiBaseUrl}/auth/login`,
-          {
-            method:
-              "POST",
-            headers: {
-              "content-type":
-                "application/json"
-            },
-            body:
-              JSON.stringify({
-                email:
-                  ownerEmail,
-                password:
-                  newOwnerPassword
-              })
-          }
-        );
-
-      expect(
-        newPasswordLoginResponse.status
-      ).toBe(200);
-
-      const newPasswordLoginBody =
-        await newPasswordLoginResponse.json() as {
-          token: string;
-          user: {
-            id: string;
-            merchantId: string;
-            email: string;
-            role: string;
+        const changePasswordBody =
+          await changePasswordResponse.json() as {
+            message: string;
           };
-        };
 
-      expect(
-        newPasswordLoginBody.user
-      ).toMatchObject({
-        id:
-          loginBody.user.id,
-        merchantId:
-          merchantBody.merchant.id,
-        email:
-          ownerEmail,
-        role:
-          "OWNER"
-      });
+        expect(
+          changePasswordBody.message
+        ).toBe(
+          "Password changed successfully"
+        );
 
-      expect(
-        newPasswordLoginBody.token
-      ).not.toBe(
-        loginBody.token
-      );
-
-      const newTokenMeResponse =
-        await fetch(
-          `${apiBaseUrl}/auth/me`,
-          {
-            headers: {
-              authorization:
-                `Bearer ${newPasswordLoginBody.token}`
+        const oldTokenMeResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/me`,
+            {
+              headers: {
+                authorization:
+                  `Bearer ${loginBody.token}`
+              }
             }
-          }
+          );
+
+        expect(
+          oldTokenMeResponse.status
+        ).toBe(401);
+
+        const oldPasswordLoginResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/login`,
+            {
+              method:
+                "POST",
+              headers: {
+                "content-type":
+                  "application/json"
+              },
+              body:
+                JSON.stringify({
+                  email:
+                    ownerEmail,
+                  password:
+                    ownerPassword
+                })
+            }
+          );
+
+        expect(
+          oldPasswordLoginResponse.status
+        ).toBe(401);
+
+        const newPasswordLoginResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/login`,
+            {
+              method:
+                "POST",
+              headers: {
+                "content-type":
+                  "application/json"
+              },
+              body:
+                JSON.stringify({
+                  email:
+                    ownerEmail,
+                  password:
+                    newOwnerPassword
+                })
+            }
+          );
+
+        expect(
+          newPasswordLoginResponse.status
+        ).toBe(200);
+
+        const newPasswordLoginBody =
+          await newPasswordLoginResponse.json() as {
+            token: string;
+            user: {
+              id: string;
+              merchantId: string;
+              email: string;
+              role: string;
+            };
+          };
+
+        expect(
+          newPasswordLoginBody.user
+        ).toMatchObject({
+          id:
+            loginBody.user.id,
+          merchantId:
+            merchantBody.merchant.id,
+          email:
+            ownerEmail,
+          role:
+            "OWNER"
+        });
+
+        expect(
+          newPasswordLoginBody.token
+        ).not.toBe(
+          loginBody.token
         );
 
-      expect(
-        newTokenMeResponse.status
-      ).toBe(200);
+        const newTokenMeResponse =
+          await fetch(
+            `${apiBaseUrl}/auth/me`,
+            {
+              headers: {
+                authorization:
+                  `Bearer ${newPasswordLoginBody.token}`
+              }
+            }
+          );
 
-      const newTokenMeBody =
-        await newTokenMeResponse.json() as {
-          user: {
-            id: string;
-            merchantId: string;
-            email: string;
-            role: string;
+        expect(
+          newTokenMeResponse.status
+        ).toBe(200);
+
+        const newTokenMeBody =
+          await newTokenMeResponse.json() as {
+            user: {
+              id: string;
+              merchantId: string;
+              email: string;
+              role: string;
+            };
           };
-        };
 
-      expect(
-        newTokenMeBody.user
-      ).toMatchObject({
-        id:
-          loginBody.user.id,
-        merchantId:
-          merchantBody.merchant.id,
-        email:
-          ownerEmail,
-        role:
-          "OWNER"
-      });
+        expect(
+          newTokenMeBody.user
+        ).toMatchObject({
+          id:
+            loginBody.user.id,
+          merchantId:
+            merchantBody.merchant.id,
+          email:
+            ownerEmail,
+          role:
+            "OWNER"
+        });
       }
     );
   }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   parseCorsAllowedOrigins,
+  resolveApiPort,
   validateAuthSecretSeparation
 } from "../src/config/env.js";
 
@@ -18,6 +19,25 @@ import {
 } from "../src/services/platform-auth.js";
 
 describe("authentication security", () => {
+  describe("API port resolution", () => {
+    it("prefers Railway PORT over API_PORT", () => {
+      expect(
+        resolveApiPort("8080", "3000")
+      ).toBe(8080);
+    });
+
+    it("uses API_PORT when Railway PORT is absent", () => {
+      expect(
+        resolveApiPort(undefined, "4000")
+      ).toBe(4000);
+    });
+
+    it("defaults to 3000 when neither port is configured", () => {
+      expect(
+        resolveApiPort(undefined, undefined)
+      ).toBe(3000);
+    });
+  });
   it("parses configured CORS origins into an exact allowlist", () => {
     expect(
       parseCorsAllowedOrigins(

@@ -1,4 +1,9 @@
 import {
+  createHash,
+  randomBytes
+} from "node:crypto";
+
+import {
   MerchantAccountStatus,
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
@@ -60,10 +65,39 @@ import {
   hashPassword
 } from "../services/auth.js";
 
+import {
+  encryptMerchantInvitation
+} from "../services/merchant-invitation-encryption.js";
+
 const router = Router();
 
 const MAX_PHONE_LENGTH = 50;
 const MAX_ADDRESS_LENGTH = 1000;
+
+const OWNER_ACTIVATION_TTL_HOURS = 24;
+
+function createOwnerActivationToken(): {
+  token: string;
+  tokenHash: string;
+  expiresAt: Date;
+} {
+  const token = randomBytes(32).toString("base64url");
+
+  const tokenHash = createHash("sha256")
+    .update(token)
+    .digest("hex");
+
+  const expiresAt = new Date(
+    Date.now() +
+    OWNER_ACTIVATION_TTL_HOURS * 60 * 60 * 1000
+  );
+
+  return {
+    token,
+    tokenHash,
+    expiresAt
+  };
+}
 
 function normalizeRouteParam(
   value: string | string[] | undefined
@@ -491,11 +525,11 @@ router.get(
           string,
           {
             subscriptionAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
             commissionAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
             totalAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
           }
         >();
 
@@ -665,11 +699,11 @@ router.get(
           string,
           {
             subscriptionAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
             commissionAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
             totalAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
           }
         >();
 
@@ -1130,7 +1164,7 @@ router.get(
           {
             invoiceCount: number;
             totalAmount:
-              Prisma.Decimal;
+            Prisma.Decimal;
           }
         >();
 
@@ -1239,235 +1273,881 @@ router.get(
 );
 
 router.post(
-  "/merchants",
-  requirePlatformRole(
-    "OWNER",
-    "ADMIN"
-  ),
+  "/merchant-onboarding/:applicationId/approve",
+  requirePlatformRole("OWNER", "ADMIN"),
   async (req, res) => {
-    const name =
-      typeof req.body?.name === "string"
-        ? req.body.name.trim()
+    const applicationId = normalizeRouteParam(
+      req.params.applicationId
+    );
+
+    const actorPlatformUserId = req.platformAuth?.id;
+
+    if (!actorPlatformUserId) {
+      res.status(401).json({
+        error: "Platform authentication required"
+      });
+      return;
+    }
+
+    const activation = createOwnerActivationToken();
+
+    try {
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const application =
+            await tx.merchantOnboardingApplication.findUnique({
+              where: {
+                id: applicationId
+              }
+            });
+
+          if (!application) {
+            return { outcome: "NOT_FOUND" as const };
+          }
+
+          if (application.createdById === actorPlatformUserId) {
+            return { outcome: "SELF_APPROVAL" as const };
+          }
+
+          if (application.status !== "PENDING_APPROVAL") {
+            return { outcome: "NOT_PENDING" as const };
+          }
+
+          const claimed =
+            await tx.merchantOnboardingApplication.updateMany({
+              where: {
+                id: application.id,
+                status: "PENDING_APPROVAL",
+                merchantId: null
+              },
+              data: {
+                status: "APPROVED",
+                reviewedById: actorPlatformUserId,
+                reviewedAt: new Date()
+              }
+            });
+
+          if (claimed.count !== 1) {
+            return { outcome: "NOT_PENDING" as const };
+          }
+
+          const approvedApplication =
+            await tx.merchantOnboardingApplication.findUniqueOrThrow({
+              where: {
+                id: application.id
+              }
+            });
+
+          const merchant = await tx.merchant.create({
+            data: {
+              name: approvedApplication.name,
+              currency: "ETB",
+              phone: approvedApplication.phone,
+              alternatePhone: approvedApplication.alternatePhone,
+              address: approvedApplication.address
+            }
+          });
+
+          const ownerActivation =
+            await tx.merchantOwnerActivation.create({
+              data: {
+                merchantId: merchant.id,
+                ownerEmail: approvedApplication.ownerEmail,
+                ownerDisplayName: approvedApplication.ownerDisplayName,
+                tokenHash: activation.tokenHash,
+                expiresAt: activation.expiresAt
+              }
+            });
+
+          await tx.merchantInvitationDelivery.create({
+            data: {
+              activationId: ownerActivation.id,
+              recipientEmail: approvedApplication.ownerEmail,
+              encryptedToken: encryptMerchantInvitation(
+                activation.token
+              ),
+              status: "PENDING"
+            }
+          });
+
+          await tx.merchantOnboardingApplication.update({
+            where: {
+              id: application.id
+            },
+            data: {
+              merchantId: merchant.id
+            }
+          });
+
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId,
+              merchantId: merchant.id,
+              action: "MERCHANT_ONBOARDING_APPROVED",
+              entityType: "MERCHANT_ONBOARDING_APPLICATION",
+              entityId: application.id,
+              metadata: {
+                ownerEmail: approvedApplication.ownerEmail
+              }
+            }
+          });
+
+          return {
+            outcome: "APPROVED" as const,
+            merchantId: merchant.id
+          };
+        }
+      );
+
+      if (result.outcome === "NOT_FOUND") {
+        res.status(404).json({
+          error: "Onboarding application not found"
+        });
+        return;
+      }
+
+      if (result.outcome === "SELF_APPROVAL") {
+        res.status(403).json({
+          error: "You cannot approve your own onboarding application"
+        });
+        return;
+      }
+
+      if (result.outcome === "NOT_PENDING") {
+        res.status(409).json({
+          error: "Onboarding application is not pending approval"
+        });
+        return;
+      }
+
+      res.status(200).json({
+        applicationId,
+        merchantId: result.merchantId,
+        status: "APPROVED"
+      });
+    } catch (error) {
+      console.error(
+        "Failed to approve merchant onboarding:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Failed to approve merchant onboarding application"
+      });
+    }
+  }
+);
+
+router.post(
+  "/merchant-onboarding/:applicationId/discard",
+  requirePlatformRole("OWNER", "ADMIN"),
+  async (req, res) => {
+    const applicationId = normalizeRouteParam(
+      req.params.applicationId
+    );
+
+    const actorPlatformUserId = req.platformAuth?.id;
+
+    if (!actorPlatformUserId) {
+      res.status(401).json({
+        error: "Platform authentication required"
+      });
+      return;
+    }
+
+    const reason =
+      typeof req.body?.reason === "string"
+        ? req.body.reason.trim()
         : "";
 
-    const currency =
-      typeof req.body?.currency === "string"
-        ? req.body.currency
-            .trim()
-            .toUpperCase()
-        : "ETB";
-
-    const phone =
-      typeof req.body?.phone === "string" &&
-      req.body.phone.trim()
-        ? req.body.phone.trim()
-        : null;
-
-    const alternatePhone =
-      typeof req.body?.alternatePhone === "string" &&
-      req.body.alternatePhone.trim()
-        ? req.body.alternatePhone.trim()
-        : null;
-
-    const address =
-      typeof req.body?.address === "string" &&
-      req.body.address.trim()
-        ? req.body.address.trim()
-        : null;
-
-    const ownerEmail =
-      typeof req.body?.ownerEmail === "string"
-        ? req.body.ownerEmail
-            .trim()
-            .toLowerCase()
-        : "";
-
-    const ownerPassword =
-      typeof req.body?.ownerPassword === "string"
-        ? req.body.ownerPassword
-        : "";
-
-    const ownerDisplayName =
-      typeof req.body?.ownerDisplayName === "string" &&
-      req.body.ownerDisplayName.trim()
-        ? req.body.ownerDisplayName.trim()
-        : null;
-
-    if (!name) {
+    if (!reason) {
       res.status(400).json({
-        error:
-          "Merchant name is required"
+        error: "Onboarding discard reason is required"
       });
       return;
     }
 
-    if (currency.length !== 3) {
-      res.status(400).json({
-        error:
-          "Merchant currency must be exactly 3 characters"
-      });
-      return;
-    }
+    try {
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const application =
+            await tx.merchantOnboardingApplication.findUnique({
+              where: {
+                id: applicationId
+              }
+            });
 
-    if (
-      phone &&
-      phone.length > MAX_PHONE_LENGTH
-    ) {
-      res.status(400).json({
-        error:
-          `phone must be at most ${MAX_PHONE_LENGTH} characters`
-      });
-      return;
-    }
+          if (!application) {
+            return {
+              outcome: "NOT_FOUND" as const
+            };
+          }
 
-    if (
-      alternatePhone &&
-      alternatePhone.length >
-        MAX_PHONE_LENGTH
-    ) {
-      res.status(400).json({
-        error:
-          `alternatePhone must be at most ${MAX_PHONE_LENGTH} characters`
-      });
-      return;
-    }
+          if (
+            application.createdById === actorPlatformUserId
+          ) {
+            return {
+              outcome: "SELF_REVIEW" as const
+            };
+          }
 
-    if (
-      address &&
-      address.length >
-        MAX_ADDRESS_LENGTH
-    ) {
-      res.status(400).json({
-        error:
-          `address must be at most ${MAX_ADDRESS_LENGTH} characters`
-      });
-      return;
-    }
+          if (
+            application.status !== "PENDING_APPROVAL" ||
+            application.merchantId !== null
+          ) {
+            return {
+              outcome: "NOT_PENDING" as const
+            };
+          }
 
-    if (
-      !ownerEmail ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
-        ownerEmail
-      )
-    ) {
-      res.status(400).json({
-        error:
-          "A valid owner email is required"
-      });
-      return;
-    }
+          const claimed =
+            await tx.merchantOnboardingApplication.updateMany({
+              where: {
+                id: application.id,
+                status: "PENDING_APPROVAL",
+                merchantId: null
+              },
+              data: {
+                status: "DISCARDED",
+                reviewedById: actorPlatformUserId,
+                reviewedAt: new Date(),
+                reviewReason: reason
+              }
+            });
 
-    if (ownerPassword.length < 8) {
-      res.status(400).json({
-        error:
-          "Owner password must be at least 8 characters"
+          if (claimed.count !== 1) {
+            return {
+              outcome: "NOT_PENDING" as const
+            };
+          }
+
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId,
+              action: "MERCHANT_ONBOARDING_DISCARDED",
+              entityType:
+                "MERCHANT_ONBOARDING_APPLICATION",
+              entityId: application.id,
+              metadata: {
+                reason
+              }
+            }
+          });
+
+          return {
+            outcome: "DISCARDED" as const
+          };
+        }
+      );
+
+      if (result.outcome === "NOT_FOUND") {
+        res.status(404).json({
+          error: "Onboarding application not found"
+        });
+        return;
+      }
+
+      if (result.outcome === "SELF_REVIEW") {
+        res.status(403).json({
+          error:
+            "You cannot review your own onboarding application"
+        });
+        return;
+      }
+
+      if (result.outcome === "NOT_PENDING") {
+        res.status(409).json({
+          error:
+            "Onboarding application is not pending approval"
+        });
+        return;
+      }
+
+      res.status(200).json({
+        applicationId,
+        status: "DISCARDED"
       });
-      return;
+    } catch (error) {
+      console.error(
+        "Failed to discard merchant onboarding:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to discard merchant onboarding application"
+      });
     }
+  }
+);
+
+router.post(
+  "/merchant-onboarding/:applicationId/reject",
+  requirePlatformRole("OWNER", "ADMIN"),
+  async (req, res) => {
+    const applicationId =
+      normalizeRouteParam(req.params.applicationId);
 
     const actorPlatformUserId =
       req.platformAuth?.id;
 
     if (!actorPlatformUserId) {
       res.status(401).json({
-        error:
-          "Platform authentication required"
+        error: "Platform authentication required"
+      });
+      return;
+    }
+
+    const reason =
+      typeof req.body?.reason === "string"
+        ? req.body.reason.trim()
+        : "";
+
+    if (!reason) {
+      res.status(400).json({
+        error: "Onboarding rejection reason is required"
       });
       return;
     }
 
     try {
-      const passwordHash =
-        await hashPassword(
-          ownerPassword
-        );
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const application =
+            await tx.merchantOnboardingApplication.findUnique({
+              where: { id: applicationId }
+            });
 
-      const result =
-        await prisma.$transaction(
-          async (tx) => {
-            const merchant =
-              await tx.merchant.create({
-                data: {
-                  name,
-                  currency:
-                    currency || "ETB",
-                  phone,
-                  alternatePhone,
-                  address
-                }
-              });
+          if (!application) {
+            return { outcome: "NOT_FOUND" as const };
+          }
 
-            const owner =
-              await tx.merchantUser.create({
-                data: {
-                  merchantId:
-                    merchant.id,
-                  email:
-                    ownerEmail,
-                  passwordHash,
-                  displayName:
-                    ownerDisplayName,
-                  role:
-                    "OWNER"
-                },
-                select: {
-                  id: true,
-                  merchantId: true,
-                  email: true,
-                  displayName: true,
-                  role: true
-                }
-              });
+          if (
+            application.createdById === actorPlatformUserId
+          ) {
+            return { outcome: "SELF_REVIEW" as const };
+          }
 
-            await tx.platformAuditLog.create({
+          if (application.status !== "PENDING_APPROVAL") {
+            return { outcome: "NOT_PENDING" as const };
+          }
+
+          const claimed =
+            await tx.merchantOnboardingApplication.updateMany({
+              where: {
+                id: application.id,
+                status: "PENDING_APPROVAL",
+                merchantId: null
+              },
               data: {
-                actorPlatformUserId,
-                merchantId:
-                  merchant.id,
-                action:
-                  "MERCHANT_CREATED",
-                entityType:
-                  "MERCHANT",
-                entityId:
-                  merchant.id,
-                metadata: {
-                  ownerUserId:
-                    owner.id,
-                  ownerEmail:
-                    owner.email
-                }
+                status: "REJECTED",
+                reviewedById: actorPlatformUserId,
+                reviewedAt: new Date(),
+                reviewReason: reason
               }
             });
 
-            return {
-              merchant,
-              owner
-            };
+          if (claimed.count !== 1) {
+            return { outcome: "NOT_PENDING" as const };
           }
-        );
 
-      res.status(201).json(result);
-    } catch (error) {
-      if (
-        error instanceof
-          Prisma.PrismaClientKnownRequestError &&
-        error.code === "P2002"
-      ) {
-        res.status(409).json({
-          error:
-            "An account with that email already exists"
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId,
+              action: "MERCHANT_ONBOARDING_REJECTED",
+              entityType: "MERCHANT_ONBOARDING_APPLICATION",
+              entityId: application.id,
+              metadata: {
+                reason
+              }
+            }
+          });
+
+          return { outcome: "REJECTED" as const };
+        }
+      );
+
+      if (result.outcome === "NOT_FOUND") {
+        res.status(404).json({
+          error: "Onboarding application not found"
         });
         return;
       }
 
+      if (result.outcome === "SELF_REVIEW") {
+        res.status(403).json({
+          error:
+            "You cannot review your own onboarding application"
+        });
+        return;
+      }
+
+      if (result.outcome === "NOT_PENDING") {
+        res.status(409).json({
+          error:
+            "Onboarding application is not pending approval"
+        });
+        return;
+      }
+
+      res.status(200).json({
+        applicationId,
+        status: "REJECTED"
+      });
+    } catch (error) {
       console.error(
-        "Failed to create merchant:",
+        "Failed to reject merchant onboarding:",
         error
       );
 
       res.status(500).json({
         error:
-          "Failed to create merchant"
+          "Failed to reject merchant onboarding application"
+      });
+    }
+  }
+);
+
+router.patch(
+  "/merchant-onboarding/:applicationId",
+  requirePlatformRole("OWNER", "ADMIN", "STAFF"),
+  async (req, res) => {
+    const applicationId =
+      normalizeRouteParam(req.params.applicationId);
+    const actorPlatformUserId = req.platformAuth?.id;
+
+    if (!actorPlatformUserId) {
+      res.status(401).json({
+        error: "Platform authentication required"
+      });
+      return;
+    }
+
+    const fields = [
+      "name",
+      "phone",
+      "alternatePhone",
+      "address",
+      "telegramUsername",
+      "ownerEmail",
+      "ownerDisplayName",
+      "currency"
+    ] as const;
+
+    const body = req.body;
+
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body) ||
+      Object.keys(body).some(
+        (key) => !fields.includes(key as typeof fields[number])
+      )
+    ) {
+      res.status(400).json({
+        error: "Invalid onboarding correction fields"
+      });
+      return;
+    }
+
+    const data: {
+      name?: string;
+      phone?: string;
+      alternatePhone?: string | null;
+      address?: string | null;
+      telegramUsername?: string | null;
+      ownerEmail?: string;
+      ownerDisplayName?: string | null;
+    } = {};
+
+    for (const field of fields) {
+      if (!Object.prototype.hasOwnProperty.call(body, field)) {
+        continue;
+      }
+
+      const value = body[field];
+
+      if (field === "currency") {
+        if (
+          typeof value !== "string" ||
+          value.trim().toUpperCase() !== "ETB"
+        ) {
+          res.status(400).json({
+            error: "Merchant currency must be ETB"
+          });
+          return;
+        }
+        continue;
+      }
+
+      const optional = [
+        "alternatePhone",
+        "address",
+        "telegramUsername",
+        "ownerDisplayName"
+      ].includes(field);
+
+      if (
+        value !== null &&
+        typeof value !== "string"
+      ) {
+        res.status(400).json({
+          error: `Invalid ${field}`
+        });
+        return;
+      }
+
+      if (!optional && typeof value !== "string") {
+        res.status(400).json({
+          error: `Invalid ${field}`
+        });
+        return;
+      }
+
+      const normalized =
+        typeof value === "string" ? value.trim() : "";
+
+      if (!optional && !normalized) {
+        res.status(400).json({
+          error: `${field} is required`
+        });
+        return;
+      }
+
+      if (
+        (field === "phone" || field === "alternatePhone") &&
+        normalized.length > MAX_PHONE_LENGTH
+      ) {
+        res.status(400).json({
+          error: `${field} exceeds maximum length`
+        });
+        return;
+      }
+
+      if (
+        field === "address" &&
+        normalized.length > MAX_ADDRESS_LENGTH
+      ) {
+        res.status(400).json({
+          error: "address exceeds maximum length"
+        });
+        return;
+      }
+
+      if (field === "ownerEmail") {
+        const email = normalized.toLowerCase();
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          res.status(400).json({
+            error: "A valid owner email is required"
+          });
+          return;
+        }
+
+        data.ownerEmail = email;
+      } else if (field === "name") {
+        data.name = normalized;
+      } else if (field === "phone") {
+        data.phone = normalized;
+      } else if (field === "alternatePhone") {
+        data.alternatePhone = normalized || null;
+      } else if (field === "address") {
+        data.address = normalized || null;
+      } else if (field === "telegramUsername") {
+        data.telegramUsername = normalized || null;
+      } else if (field === "ownerDisplayName") {
+        data.ownerDisplayName = normalized || null;
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      res.status(400).json({
+        error: "At least one correction field is required"
+      });
+      return;
+    }
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT "id"
+          FROM "MerchantOnboardingApplication"
+          WHERE "id" = ${applicationId}
+          FOR UPDATE
+`        ;
+        const existing =
+          await tx.merchantOnboardingApplication.findUnique({
+            where: { id: applicationId }
+          });
+
+        if (!existing) {
+          return { outcome: "NOT_FOUND" as const };
+        }
+
+        if (existing.status !== "PENDING_APPROVAL") {
+          return { outcome: "NOT_PENDING" as const };
+        }
+
+        const updated =
+          await tx.merchantOnboardingApplication.updateMany({
+            where: {
+              id: applicationId,
+              status: "PENDING_APPROVAL",
+              merchantId: null
+            },
+            data
+          });
+
+        if (updated.count !== 1) {
+          return { outcome: "NOT_PENDING" as const };
+        }
+
+        await tx.platformAuditLog.create({
+          data: {
+            actorPlatformUserId,
+            action: "MERCHANT_ONBOARDING_CORRECTED",
+            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+            entityId: applicationId,
+            metadata: {
+              changedFields: Object.keys(data),
+              before: Object.fromEntries(
+                Object.keys(data).map((field) => [
+                  field,
+                  existing[field as keyof typeof data]
+                ])
+              ),
+              after: data
+            }
+          }
+        });
+
+        return { outcome: "CORRECTED" as const };
+      });
+
+      if (result.outcome === "NOT_FOUND") {
+        res.status(404).json({
+          error: "Onboarding application not found"
+        });
+        return;
+      }
+
+      if (result.outcome === "NOT_PENDING") {
+        res.status(409).json({
+          error: "Onboarding application is not pending approval"
+        });
+        return;
+      }
+
+      res.status(200).json({
+        applicationId,
+        status: "PENDING_APPROVAL"
+      });
+    } catch (error) {
+      console.error(
+        "Failed to correct merchant onboarding:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Failed to correct merchant onboarding application"
+      });
+    }
+  }
+);
+
+router.get(
+  "/merchant-onboarding",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
+  async (_req, res) => {
+    try {
+      const applications =
+        await prisma.merchantOnboardingApplication.findMany({
+          orderBy: {
+            createdAt: "desc"
+          },
+          select: {
+            id: true,
+            status: true,
+            name: true,
+            currency: true,
+            phone: true,
+            alternatePhone: true,
+            address: true,
+            telegramUsername: true,
+            ownerEmail: true,
+            ownerDisplayName: true,
+            createdById: true,
+            reviewedById: true,
+            reviewedAt: true,
+            reviewReason: true,
+            merchantId: true,
+            createdAt: true,
+            updatedAt: true
+          }
+        });
+
+      res.json({
+        applications
+      });
+    } catch (error) {
+      console.error(
+        "Failed to load merchant onboarding applications:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to load merchant onboarding applications"
+      });
+    }
+  }
+);
+
+router.post(
+  "/merchant-onboarding",
+  requirePlatformRole("OWNER", "ADMIN", "STAFF"),
+  async (req, res) => {
+    const name =
+      typeof req.body?.name === "string"
+        ? req.body.name.trim()
+        : "";
+
+    const phone =
+      typeof req.body?.phone === "string"
+        ? req.body.phone.trim()
+        : "";
+
+    const ownerEmail =
+      typeof req.body?.ownerEmail === "string"
+        ? req.body.ownerEmail.trim().toLowerCase()
+        : "";
+
+    const optionalText = (value: unknown): string | null =>
+      typeof value === "string" && value.trim()
+        ? value.trim()
+        : null;
+
+    const alternatePhone =
+      optionalText(req.body?.alternatePhone);
+    const address =
+      optionalText(req.body?.address);
+    const telegramUsername =
+      optionalText(req.body?.telegramUsername);
+    const ownerDisplayName =
+      optionalText(req.body?.ownerDisplayName);
+
+    const currency =
+      typeof req.body?.currency === "string"
+        ? req.body.currency.trim().toUpperCase()
+        : "ETB";
+
+    if (!name) {
+      res.status(400).json({
+        error: "Merchant name is required"
+      });
+      return;
+    }
+
+    if (!phone || phone.length > MAX_PHONE_LENGTH) {
+      res.status(400).json({
+        error: `phone is required and must be at most ${MAX_PHONE_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (
+      alternatePhone &&
+      alternatePhone.length > MAX_PHONE_LENGTH
+    ) {
+      res.status(400).json({
+        error: `alternatePhone must be at most ${MAX_PHONE_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (address && address.length > MAX_ADDRESS_LENGTH) {
+      res.status(400).json({
+        error: `address must be at most ${MAX_ADDRESS_LENGTH} characters`
+      });
+      return;
+    }
+
+    if (currency !== "ETB") {
+      res.status(400).json({
+        error: "Merchant currency must be ETB"
+      });
+      return;
+    }
+
+    if (
+      !ownerEmail ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)
+    ) {
+      res.status(400).json({
+        error: "A valid owner email is required"
+      });
+      return;
+    }
+
+    const actorPlatformUserId = req.platformAuth?.id;
+
+    if (!actorPlatformUserId) {
+      res.status(401).json({
+        error: "Platform authentication required"
+      });
+      return;
+    }
+
+    try {
+      const application = await prisma.$transaction(
+        async (tx) => {
+          const created =
+            await tx.merchantOnboardingApplication.create({
+              data: {
+                name,
+                currency: "ETB",
+                phone,
+                alternatePhone,
+                address,
+                telegramUsername,
+                ownerEmail,
+                ownerDisplayName,
+                createdById: actorPlatformUserId
+              }
+            });
+
+          await tx.platformAuditLog.create({
+            data: {
+              actorPlatformUserId,
+              action: "MERCHANT_ONBOARDING_SUBMITTED",
+              entityType: "MERCHANT_ONBOARDING_APPLICATION",
+              entityId: created.id,
+              metadata: {
+                status: created.status
+              }
+            }
+          });
+
+          return created;
+        }
+      );
+
+      res.status(201).json({
+        id: application.id,
+        status: application.status
+      });
+    } catch (error) {
+      console.error(
+        "Merchant onboarding submission failed:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Failed to submit merchant onboarding application"
       });
     }
   }
@@ -1651,7 +2331,7 @@ router.patch(
 
       const newPassword =
         typeof req.body?.newPassword ===
-        "string"
+          "string"
           ? req.body.newPassword
           : "";
 

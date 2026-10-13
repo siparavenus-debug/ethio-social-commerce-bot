@@ -9,6 +9,7 @@
         "test": "vitest run",
         "platform-auth:create-user": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/create-platform-user.ts",
         "billing:process-overdue": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/process-overdue-invoices.ts",
+        "merchant:process-invitations": "node dist/scripts/process-merchant-invitations.js",
         "ai:evaluate-multilingual": "node --env-file=../../.env ../../node_modules/tsx/dist/cli.mjs src/scripts/evaluate-multilingual-ai.ts"
     },
     "dependencies": {

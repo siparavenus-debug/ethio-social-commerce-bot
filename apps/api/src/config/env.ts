@@ -6,11 +6,23 @@ dotenv.config({
     process.cwd(),
     ".env"
   ),
-  override: true
+  override: false
 });
 
-const port = Number(
-  process.env.API_PORT ?? "3000"
+export function resolveApiPort(
+  railwayPort: string | undefined,
+  apiPort: string | undefined
+): number {
+  return Number(
+    railwayPort ??
+    apiPort ??
+    "3000"
+  );
+}
+
+const port = resolveApiPort(
+  process.env.PORT,
+  process.env.API_PORT
 );
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -137,6 +149,40 @@ if (
   );
 }
 
+const merchantInvitationEncryptionKey =
+  process.env.MERCHANT_INVITATION_ENCRYPTION_KEY?.trim();
+
+if (
+  !merchantInvitationEncryptionKey ||
+  merchantInvitationEncryptionKey.length < 32
+) {
+  throw new Error(
+    "MERCHANT_INVITATION_ENCRYPTION_KEY must be configured and contain at least 32 characters."
+  );
+}
+
+if (
+  [
+    authSecret,
+    platformAuthSecret,
+    deliveryConfirmationSecret,
+    telegramCredentialEncryptionKey
+  ].includes(merchantInvitationEncryptionKey)
+) {
+  throw new Error(
+    "MERCHANT_INVITATION_ENCRYPTION_KEY must differ from existing security secrets."
+  );
+}
+
+const resendApiKey =
+  process.env.RESEND_API_KEY?.trim();
+
+const resendFromEmail =
+  process.env.RESEND_FROM_EMAIL?.trim();
+
+const merchantActivationBaseUrl =
+  process.env.MERCHANT_ACTIVATION_BASE_URL?.trim();
+
 const authTokenTtlSeconds =
   Number(
     process.env.AUTH_TOKEN_TTL_SECONDS ??
@@ -201,6 +247,12 @@ export const env = {
   deliveryConfirmationSecret,
 
   telegramCredentialEncryptionKey,
+
+  merchantInvitationEncryptionKey,
+
+  resendApiKey,
+  resendFromEmail,
+  merchantActivationBaseUrl,
 
   authTokenTtlSeconds,
 

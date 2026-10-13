@@ -42,8 +42,31 @@ type Merchant = Row & {
   accountSuspendedAt?: string | null;
   subscription: Subscription | null;
 };
+type MerchantOnboardingApplication = Row & {
+  status:
+    | "PENDING_APPROVAL"
+    | "APPROVED"
+    | "REJECTED"
+    | "DISCARDED";
+  name: string;
+  currency: "ETB";
+  phone: string;
+  alternatePhone: string | null;
+  address: string | null;
+  telegramUsername: string | null;
+  ownerEmail: string;
+  ownerDisplayName: string | null;
+  createdById: string;
+  reviewedById: string | null;
+  reviewedAt: string | null;
+  reviewReason: string | null;
+  merchantId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 type View =
   | "Merchants"
+  | "Merchant Onboarding"
   | "Billing Work"
   | "Plans"
   | "Overdue"
@@ -287,6 +310,8 @@ export default function PlatformApp() {
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<View>("Merchants");
   const [merchants, setMerchants] = useState<Merchant[]>([]);
+  const [onboardingApplications, setOnboardingApplications] =
+    useState<MerchantOnboardingApplication[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [selected, setSelected] = useState("");
   const [merchant, setMerchant] = useState<Merchant | null>(null);
@@ -334,7 +359,7 @@ export default function PlatformApp() {
   const session = useRef(0);
   function logout() {
     session.current++; try { sessionStorage.removeItem(PLATFORM_SESSION_KEY); } catch { /* Memory session still clears. */ }
-    setToken(""); setUser(null); setChecking(false); setRows([]); setMerchants([]); setPlans([]); setMerchant(null); setSelected(""); setAction(null); setNotice(""); setBusy(false);
+    setToken(""); setUser(null); setChecking(false); setRows([]); setMerchants([]); setOnboardingApplications([]); setPlans([]); setMerchant(null); setSelected(""); setAction(null); setNotice(""); setBusy(false);
   }
   function fail(e: unknown) {
     if (e instanceof PlatformApiError && e.status === 401) logout();
@@ -460,7 +485,7 @@ export default function PlatformApp() {
   useEffect(() => {
     if (!user || !token) return;
     const controller = new AbortController();
-    setLoading(true); setError(""); setRows([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
+    setLoading(true); setError(""); setRows([]); setOnboardingApplications([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
     async function load() {
       const [m, p] = await Promise.all([
         platformRequest<{ merchants: Merchant[] }>("/merchants", token, "GET", undefined, controller.signal),
@@ -474,7 +499,21 @@ export default function PlatformApp() {
         ]);
         detail = d.merchant;
         data = history[ledger];
-      } else if (view === "Billing Work") {
+        } else if (view === "Merchant Onboarding") {
+          const result = await platformRequest<{
+            applications: MerchantOnboardingApplication[];
+          }>(
+            "/merchant-onboarding",
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
+
+          if (!controller.signal.aborted) {
+            setOnboardingApplications(result.applications);
+          }
+        } else if (view === "Billing Work") {
         const billingWorkRoutes: Record<
           BillingWorkTab,
           {
@@ -786,55 +825,130 @@ export default function PlatformApp() {
   }
   function merchantAction() {
     setAction({
-      title: "Create merchant",
-      path: "/merchants",
+      title: "Submit merchant onboarding application",
+      path: "/merchant-onboarding",
       method: "POST",
       fields: [
         field("name", "Merchant name"),
-        {
-          ...field(
-            "currency",
-            "Currency (3-letter code)"
-          ),
-          value: "ETB"
-        },
-        field(
-          "phone",
-          "Phone",
-          "text",
-          true
-        ),
-        field(
-          "alternatePhone",
-          "Alternate phone",
-          "text",
-          true
-        ),
-        field(
-          "address",
-          "Address",
-          "text",
-          true
-        ),
-        field(
-          "ownerEmail",
-          "Owner email",
-          "email"
-        ),
-        field(
-          "ownerPassword",
-          "Owner password",
-          "password"
-        ),
-        field(
-          "ownerDisplayName",
-          "Owner display name",
-          "text",
-          true
-        )
+        field("phone", "Primary phone"),
+        field("alternatePhone", "Alternate phone", "text", true),
+        field("address", "Address", "text", true),
+        field("telegramUsername", "Telegram username", "text", true),
+        field("ownerEmail", "Owner email", "email"),
+        field("ownerDisplayName", "Owner display name", "text", true)
       ],
       note:
-        "Subscription is initialized separately after the merchant account is created."
+        "Submitting an application does not create a merchant account. " +
+        "A different authorized platform administrator must approve it. " +
+        "The merchant owner will set their own password through a secure invitation."
+    });
+  }
+  function editOnboardingAction(
+    application: MerchantOnboardingApplication
+  ) {
+    if (application.status !== "PENDING_APPROVAL") {
+      return;
+    }
+
+    setAction({
+      title: `Edit application — ${application.name}`,
+      path: `/merchant-onboarding/${encodeURIComponent(application.id)}`,
+      method: "PATCH",
+      fields: [
+        field("name", "Merchant name"),
+        field("phone", "Primary phone"),
+        field("alternatePhone", "Alternate phone", "text", true),
+        field("address", "Address", "text", true),
+        field("telegramUsername", "Telegram username", "text", true),
+        field("ownerEmail", "Owner email", "email"),
+        field("ownerDisplayName", "Owner display name", "text", true)
+      ].map(f => ({
+        ...f,
+        value: application[f.name]
+      })),
+      note:
+        "Corrections are permitted only while the application is pending. " +
+        "Changes are validated and audited by the server.",
+      transform: values => ({
+        ...values,
+        alternatePhone: values.alternatePhone ?? "",
+        address: values.address ?? "",
+        telegramUsername: values.telegramUsername ?? "",
+        ownerDisplayName: values.ownerDisplayName ?? ""
+      })
+    });
+  }
+  function approveOnboardingAction(
+    application: MerchantOnboardingApplication
+  ) {
+    if (
+      !user ||
+      user.role === "STAFF" ||
+      application.status !== "PENDING_APPROVAL" ||
+      application.createdById === user.id
+    ) {
+      return;
+    }
+
+    setAction({
+      title: `Approve application — ${application.name}`,
+      path: `/merchant-onboarding/${encodeURIComponent(application.id)}/approve`,
+      method: "POST",
+      fields: [],
+      note:
+        "Approval creates the merchant account and prepares a secure " +
+        "owner activation invitation. The merchant owner must set " +
+        "their own password. Confirm that the application details " +
+        "have been independently reviewed."
+    });
+  }
+  function rejectOnboardingAction(
+    application: MerchantOnboardingApplication
+  ) {
+    if (
+      !user ||
+      user.role === "STAFF" ||
+      application.status !== "PENDING_APPROVAL" ||
+      application.createdById === user.id
+    ) {
+      return;
+    }
+
+    setAction({
+      title: `Reject application — ${application.name}`,
+      path: `/merchant-onboarding/${encodeURIComponent(application.id)}/reject`,
+      method: "POST",
+      fields: [
+        field("reason", "Rejection reason")
+      ],
+      note:
+        "Rejection prevents this application from creating a merchant account. " +
+        "A reason is required and the decision is recorded in the platform audit log."
+    });
+  }
+  function discardOnboardingAction(
+    application: MerchantOnboardingApplication
+  ) {
+    if (
+      !user ||
+      user.role === "STAFF" ||
+      application.status !== "PENDING_APPROVAL" ||
+      application.createdById === user.id
+    ) {
+      return;
+    }
+
+    setAction({
+      title: `Discard application — ${application.name}`,
+      path: `/merchant-onboarding/${encodeURIComponent(application.id)}/discard`,
+      method: "POST",
+      fields: [
+        field("reason", "Discard reason")
+      ],
+      note:
+        "Discarding closes this pending application without creating " +
+        "a merchant account. A reason is required, and the decision " +
+        "is recorded in the platform audit log."
     });
   }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
@@ -952,10 +1066,11 @@ export default function PlatformApp() {
       </div>
     )}
 
-    <nav aria-label="Platform sections">
-      {([
-        "Merchants",
-        "Billing Work",
+<nav aria-label="Platform sections">
+  {([
+    "Merchants",
+    "Merchant Onboarding",
+    "Billing Work",
         ...(user.role === "OWNER" ? ["Operators" as View] : []),
         ...(user.role !== "STAFF"
           ? ["Revenue" as View, "Overdue" as View]
@@ -983,17 +1098,6 @@ export default function PlatformApp() {
       {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
       {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
         {view === "Merchants" && !selected && <>
-          {user.role !== "STAFF" && (
-            <div className="pa-buttons">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={merchantAction}
-              >
-                Create merchant
-              </button>
-            </div>
-          )}
           <div className="pa-merchant-toolbar">
             <label className="pa-search">Find a merchant<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, phone, address, status or plan" /></label>
             <label>Status<select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="ALL">All statuses</option><option value="NO_SUBSCRIPTION">No subscription</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label>
@@ -1035,7 +1139,91 @@ export default function PlatformApp() {
             }
             return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
           }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
-        {view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
+        {view === "Merchant Onboarding" && (
+  <section className="pa-card">
+  <div className="pa-buttons">
+  <button
+    type="button"
+    disabled={busy}
+    onClick={merchantAction}
+  >
+    Submit onboarding application
+  </button>
+</div>
+    <div className="pa-section-heading">
+      <div>
+        <h3>Merchant onboarding applications</h3>
+        <p>
+          Review submitted applications and track their
+          approval status.
+        </p>
+      </div>
+    </div>
+
+    <Table
+  rows={onboardingApplications}
+  columns={[
+    "name",
+    "status",
+    "phone",
+    "ownerEmail",
+    "currency",
+    "createdAt"
+  ]}
+  actions={row => {
+    const application =
+      row as MerchantOnboardingApplication;
+
+    if (application.status !== "PENDING_APPROVAL") {
+      return null;
+    }
+
+    const canApprove =
+      user.role !== "STAFF" &&
+      application.createdById !== user.id;
+
+    return (
+      <>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => editOnboardingAction(application)}
+        >
+          Edit
+        </button>
+
+        {canApprove && (
+  <>
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => approveOnboardingAction(application)}
+    >
+      Approve
+    </button>
+
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => rejectOnboardingAction(application)}
+    >
+      Reject
+    </button>
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => discardOnboardingAction(application)}
+    >
+      Discard
+    </button>
+  </>
+)}
+      </>
+    );
+  }}
+/>
+  </section>
+)}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
           merchant.subscription &&
           !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
 

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Router } from "express";
 
 import {
@@ -32,6 +34,136 @@ const loginRateLimiter =
         "Too many login attempts. Please try again later."
     }
   });
+
+/*
+ * POST /auth/activate-owner
+ *
+ * Redeem a single-use merchant owner invitation.
+ */
+router.post(
+  "/activate-owner",
+  loginRateLimiter,
+  async (req, res) => {
+    try {
+      const token =
+        typeof req.body?.token === "string"
+          ? req.body.token.trim()
+          : "";
+
+      const password =
+        typeof req.body?.password === "string"
+          ? req.body.password
+          : "";
+
+      if (!token || password.length < 8) {
+        res.status(400).json({
+          error: "Valid activation token and password are required"
+        });
+        return;
+      }
+
+      const tokenHash = createHash("sha256")
+        .update(token)
+        .digest("hex");
+
+      const invitation =
+        await prisma.merchantOwnerActivation.findUnique({
+          where: { tokenHash }
+        });
+
+      if (
+        !invitation ||
+        invitation.consumedAt ||
+        invitation.expiresAt <= new Date()
+      ) {
+        res.status(400).json({
+          error: "Invalid or expired activation invitation"
+        });
+        return;
+      }
+
+      const passwordHash =
+        await hashPassword(password);
+
+      const result = await prisma.$transaction(
+        async (tx) => {
+          const claimed =
+            await tx.merchantOwnerActivation.updateMany({
+              where: {
+                id: invitation.id,
+                consumedAt: null,
+                expiresAt: { gt: new Date() }
+              },
+              data: {
+                consumedAt: new Date()
+              }
+            });
+
+          if (claimed.count !== 1) {
+            return null;
+          }
+
+          const owner = await tx.merchantUser.create({
+            data: {
+              merchantId: invitation.merchantId,
+              email: invitation.ownerEmail.trim().toLowerCase(),
+              displayName: invitation.ownerDisplayName,
+              passwordHash,
+              role: "OWNER"
+            }
+          });
+
+          await tx.auditLog.create({
+            data: {
+              merchantId: invitation.merchantId,
+              actorUserId: owner.id,
+              action: "MERCHANT_OWNER_ACTIVATED",
+              entityType: "MERCHANT_USER",
+              entityId: owner.id
+            }
+          });
+
+          return owner;
+        }
+      );
+
+      if (!result) {
+        res.status(400).json({
+          error: "Invalid or expired activation invitation"
+        });
+        return;
+      }
+
+      res.status(200).json({
+        message: "Merchant owner activated successfully"
+      });
+    } catch (error) {
+      if (
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "P2002"
+      ) {
+        res.status(400).json({
+          error:
+            "Invalid or unavailable activation invitation"
+        });
+
+        return;
+      }
+
+      console.error(
+        "Merchant owner activation failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Merchant owner activation failed"
+      });
+    }
+  }
+);
 
 /*
  * POST /auth/login

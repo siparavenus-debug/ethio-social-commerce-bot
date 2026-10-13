@@ -51,6 +51,12 @@ import {
     initializeMerchantSubscription
 } from "../src/services/subscription.js";
 
+import {
+    decryptMerchantInvitation
+} from "../src/services/merchant-invitation-encryption.js";
+
+import { kMaxLength } from "node:buffer";
+
 const testPrefix =
     "platform-admin-routes";
 
@@ -229,6 +235,32 @@ async function cleanup():
         }
     });
 
+    await prisma.merchantOnboardingApplication.deleteMany({
+        where: {
+            name: {
+                startsWith: testPrefix
+            }
+        }
+    });
+
+    await prisma.merchantInvitationDelivery.deleteMany({
+        where: {
+            activation: {
+                merchantId: {
+                    in: testMerchantIds
+                }
+            }
+        }
+    });
+
+    await prisma.merchantOwnerActivation.deleteMany({
+        where: {
+            merchantId: {
+                in: testMerchantIds
+            }
+        }
+    });
+
     await prisma.merchant.deleteMany({
         where: {
             name: {
@@ -240,22 +272,22 @@ async function cleanup():
 
     await prisma.subscriptionPlan.deleteMany({
         where: {
-          OR: [
-            {
-              code: {
-                startsWith:
-                  testPrefix
-              }
-            },
-            {
-              code: {
-                startsWith:
-                  testPrefix.toUpperCase()
-              }
-            }
-          ]
+            OR: [
+                {
+                    code: {
+                        startsWith:
+                            testPrefix
+                    }
+                },
+                {
+                    code: {
+                        startsWith:
+                            testPrefix.toUpperCase()
+                    }
+                }
+            ]
         }
-      });
+    });
 
     await prisma.platformUser.deleteMany({
         where: {
@@ -325,7 +357,7 @@ async function createInvoiceFinancialFixture(
             suffix
         );
 
-        const periodStart =
+    const periodStart =
         new Date(
             "2026-09-01T00:00:00.000Z"
         );
@@ -489,29 +521,29 @@ async function createInvoiceFinancialFixture(
                 )
         );
 
-        await prisma.commission.update({
-            where: {
-                id:
-                    commission.id
-            },
-            data: {
-                createdAt:
-                    new Date(
-                        "2026-09-15T00:00:00.000Z"
-                    )
-            }
-        });
+    await prisma.commission.update({
+        where: {
+            id:
+                commission.id
+        },
+        data: {
+            createdAt:
+                new Date(
+                    "2026-09-15T00:00:00.000Z"
+                )
+        }
+    });
 
-        return {
-            merchant,
-            plan,
-            subscription,
-            customer,
-            product,
-            order,
-            payment,
-            commission
-        };
+    return {
+        merchant,
+        plan,
+        subscription,
+        customer,
+        product,
+        order,
+        payment,
+        commission
+    };
 }
 
 beforeAll(
@@ -598,6 +630,3286 @@ afterAll(
 describe(
     "platform administration routes",
     () => {
+        it(
+            "allows STAFF to list pending onboarding applications",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "onboarding-staff-list",
+                        "STAFF"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Staff Listing`,
+                            currency: "ETB",
+                            phone: "+251911000002",
+                            ownerEmail:
+                                `${testPrefix}-staff-list@example.com`,
+                            createdById: fixture.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`
+                            }
+                        }
+                    );
+
+                expect(response.status).toBe(200);
+
+                const body =
+                    await response.json() as {
+                        applications: Array<{
+                            id: string;
+                            status: string;
+                            createdById: string;
+                        }>;
+                    };
+
+                expect(body.applications).toEqual(
+                    expect.arrayContaining([
+                        expect.objectContaining({
+                            id: application.id,
+                            status: "PENDING_APPROVAL",
+                            createdById: fixture.user.id
+                        })
+                    ])
+                );
+            }
+        );
+
+        it(
+            "rejects merchant OWNER access to onboarding application listing",
+            async () => {
+                const merchant =
+                    await createMerchant(
+                        "onboarding-list-boundary"
+                    );
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId: merchant.id,
+                            email:
+                                `${testPrefix}-list-boundary-owner@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    "BoundaryOwnerPassword123!"
+                                ),
+                            displayName: "Boundary Owner",
+                            role: "OWNER",
+                            tokenVersion: 0
+                        }
+                    });
+
+                const merchantToken =
+                    createAuthToken({
+                        id: owner.id,
+                        merchantId: merchant.id,
+                        role: owner.role,
+                        tokenVersion: owner.tokenVersion
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`
+                            }
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+            }
+        );
+
+        it(
+            "rejects unauthenticated onboarding application listing",
+            async () => {
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`
+                    );
+
+                expect(response.status).toBe(401);
+            }
+        );
+
+        it(
+            "allows STAFF to submit onboarding without provisioning a merchant",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "onboarding-staff-create",
+                        "STAFF"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Pending Onboarding Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-pending-onboarding-owner@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: merchantName,
+                                currency: "ETB",
+                                phone: "+251911000001",
+                                ownerEmail,
+                                ownerDisplayName:
+                                    "Pending Merchant Owner"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(201);
+
+                const body =
+                    await response.json() as {
+                        id: string;
+                        status: string;
+                    };
+
+                expect(body.id).toBeTruthy();
+
+                expect(body.status).toBe(
+                    "PENDING_APPROVAL"
+                );
+
+                const savedApplication =
+                    await prisma.merchantOnboardingApplication.findUnique({
+                        where: {
+                            id: body.id
+                        }
+                    });
+
+                expect(savedApplication).not.toBeNull();
+
+                expect(savedApplication).toMatchObject({
+                    name: merchantName,
+                    currency: "ETB",
+                    phone: "+251911000001",
+                    ownerEmail,
+                    status: "PENDING_APPROVAL",
+                    createdById: fixture.user.id,
+                    reviewedById: null,
+                    merchantId: null
+                });
+
+                const auditLog =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId: fixture.user.id,
+                            action: "MERCHANT_ONBOARDING_SUBMITTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: body.id
+                        }
+                    });
+
+                expect(auditLog).not.toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: merchantName
+                        }
+                    });
+
+                expect(merchant).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email: ownerEmail
+                        }
+                    });
+
+                expect(owner).toBeNull();
+            }
+        );
+
+        it(
+            "rejects unauthenticated merchant onboarding submission",
+            async () => {
+                const merchantName =
+                    `${testPrefix} Unauthenticated Onboarding`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: merchantName,
+                                currency: "ETB",
+                                phone: "+251911000002",
+                                ownerEmail:
+                                    `${testPrefix}-unauthenticated-onboarding@example.com`
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(401);
+
+                const application =
+                    await prisma.merchantOnboardingApplication.findFirst({
+                        where: {
+                            name: merchantName
+                        }
+                    });
+
+                expect(application).toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: merchantName
+                        }
+                    });
+
+                expect(merchant).toBeNull();
+            }
+        );
+
+        it(
+            "rejects merchant OWNER access to platform onboarding",
+            async () => {
+                const merchant =
+                    await createMerchant(
+                        "onboarding-merchant-boundary"
+                    );
+
+                const owner =
+                    await prisma.merchantUser.create({
+                        data: {
+                            merchantId: merchant.id,
+                            email:
+                                `${testPrefix}-onboarding-boundary-owner@example.test`,
+                            passwordHash:
+                                await hashPassword(
+                                    "BoundaryOwnerPassword123!"
+                                ),
+                            displayName: "Boundary Owner",
+                            role: "OWNER",
+                            tokenVersion: 0
+                        }
+                    });
+
+                const merchantToken =
+                    createAuthToken({
+                        id: owner.id,
+                        merchantId: merchant.id,
+                        role: owner.role,
+                        tokenVersion: owner.tokenVersion
+                    });
+
+                const applicationName =
+                    `${testPrefix} Merchant Boundary Onboarding`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${merchantToken}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: applicationName,
+                                currency: "ETB",
+                                phone: "+251911000003",
+                                ownerEmail:
+                                    `${testPrefix}-boundary-applicant@example.test`
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+
+                const application =
+                    await prisma.merchantOnboardingApplication.findFirst({
+                        where: {
+                            name: applicationName
+                        }
+                    });
+
+                expect(application).toBeNull();
+
+                const provisionedMerchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: applicationName
+                        }
+                    });
+
+                expect(provisionedMerchant).toBeNull();
+            }
+        );
+
+        it(
+            "denies STAFF approval of merchant onboarding",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "onboarding-staff-approval",
+                        "STAFF"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Staff Approval Boundary`,
+                            currency: "ETB",
+                            phone: "+251911000004",
+                            ownerEmail:
+                                `${testPrefix}-staff-approval@example.test`,
+                            createdById: fixture.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+
+                const unchanged =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(unchanged.status).toBe(
+                    "PENDING_APPROVAL"
+                );
+                expect(unchanged.reviewedById).toBeNull();
+                expect(unchanged.merchantId).toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchant).toBeNull();
+            }
+        );
+
+        it(
+            "allows ADMIN to approve a pending merchant onboarding application",
+            async () => {
+                const staff =
+                    await createPlatformFixture(
+                        "onboarding-approval-creator",
+                        "STAFF"
+                    );
+
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-approval-reviewer",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Approved Onboarding`,
+                            currency: "ETB",
+                            phone: "+251911000005",
+                            ownerEmail:
+                                `${testPrefix}-approved-onboarding@example.test`,
+                            ownerDisplayName: "Approved Owner",
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(response.status).toBe(200);
+
+                const approved =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(approved.status).toBe("APPROVED");
+                expect(approved.reviewedById).toBe(admin.user.id);
+                expect(approved.reviewedAt).not.toBeNull();
+                expect(approved.merchantId).not.toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: {
+                            id: approved.merchantId!
+                        }
+                    });
+
+                expect(merchant).toMatchObject({
+                    name: application.name,
+                    currency: "ETB",
+                    phone: application.phone
+                });
+
+                const auditLog =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            actorPlatformUserId: admin.user.id,
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(auditLog).not.toBeNull();
+
+                const activations =
+                    await prisma.merchantOwnerActivation.findMany({
+                        where: {
+                            merchantId: merchant.id
+                        }
+                    });
+
+                expect(activations).toHaveLength(1);
+
+                const activation = activations[0]!;
+
+                const deliveries =
+                    await prisma.merchantInvitationDelivery.findMany({
+                        where: {
+                            activationId: activation.id
+                        }
+                    });
+
+                expect(deliveries).toHaveLength(1);
+
+                expect(deliveries[0]).toMatchObject({
+                    activationId: activation.id,
+                    recipientEmail: application.ownerEmail,
+                    status: "PENDING",
+                    attemptCount: 0
+                });
+
+                expect(deliveries[0]!.encryptedToken).toMatch(
+                    /^v1\.[^.]+\.[^.]+\.[^.]+$/
+                );
+
+                expect(deliveries[0]!.sentAt).toBeNull();
+                expect(deliveries[0]!.processingUntil).toBeNull();
+            }
+        );
+
+        it(
+            "prevents ADMIN from approving their own merchant onboarding application",
+            async () => {
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-self-approval",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Self Approval Blocked`,
+                            currency: "ETB",
+                            phone: "+251911000006",
+                            ownerEmail:
+                                `${testPrefix}-self-approval@example.test`,
+                            createdById: admin.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+
+                const unchanged =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(unchanged.status).toBe("PENDING_APPROVAL");
+                expect(unchanged.reviewedById).toBeNull();
+                expect(unchanged.reviewedAt).toBeNull();
+                expect(unchanged.merchantId).toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchant).toBeNull();
+
+                const activationCount =
+                    await prisma.merchantOwnerActivation.count({
+                        where: {
+                            ownerEmail: application.ownerEmail
+                        }
+                    });
+
+                expect(activationCount).toBe(0);
+
+                const approvalAudit =
+                    await prisma.platformAuditLog.findFirst({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudit).toBeNull();
+            }
+        );
+
+        it(
+            "prevents duplicate approval of a merchant onboarding application",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-creator",
+                        "STAFF"
+                    );
+
+                const firstAdmin =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-first-admin",
+                        "ADMIN"
+                    );
+
+                const secondAdmin =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-second-admin",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Duplicate Approval Blocked`,
+                            currency: "ETB",
+                            phone: "+251911000007",
+                            ownerEmail:
+                                `${testPrefix}-duplicate-approval@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const approvalUrl =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`;
+
+                const approveAs = (token: string) =>
+                    fetch(approvalUrl, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({})
+                    });
+
+                const firstResponse =
+                    await approveAs(firstAdmin.token);
+
+                expect(firstResponse.status).toBe(200);
+
+                const firstApproved =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(firstApproved.status).toBe("APPROVED");
+                expect(firstApproved.merchantId).not.toBeNull();
+                expect(firstApproved.reviewedById).toBe(
+                    firstAdmin.user.id
+                );
+
+                const secondResponse =
+                    await approveAs(secondAdmin.token);
+
+                expect(secondResponse.status).toBe(409);
+
+                const afterSecondAttempt =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(afterSecondAttempt.status).toBe("APPROVED");
+                expect(afterSecondAttempt.merchantId).toBe(
+                    firstApproved.merchantId
+                );
+                expect(afterSecondAttempt.reviewedById).toBe(
+                    firstAdmin.user.id
+                );
+                expect(afterSecondAttempt.reviewedAt).toEqual(
+                    firstApproved.reviewedAt
+                );
+
+                const merchantCount =
+                    await prisma.merchant.count({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchantCount).toBe(1);
+
+                const activationCount =
+                    await prisma.merchantOwnerActivation.count({
+                        where: {
+                            merchantId: firstApproved.merchantId!
+                        }
+                    });
+
+                expect(activationCount).toBe(1);
+
+                const deliveryCount =
+                    await prisma.merchantInvitationDelivery.count({
+                        where: {
+                            activation: {
+                                merchantId: firstApproved.merchantId!
+                            }
+                        }
+                    });
+
+                expect(deliveryCount).toBe(1);
+
+                const approvalAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudits).toHaveLength(1);
+                expect(approvalAudits[0]?.actorPlatformUserId).toBe(
+                    firstAdmin.user.id
+                );
+            }
+        );
+
+        it(
+            "returns 404 when approving a nonexistent merchant onboarding application",
+            async () => {
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-approval-missing",
+                        "ADMIN"
+                    );
+
+                const applicationId =
+                    "nonexistent-onboarding-application";
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${applicationId}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(response.status).toBe(404);
+
+                expect(await response.json()).toEqual({
+                    error: "Onboarding application not found"
+                });
+
+                const applicationCount =
+                    await prisma.merchantOnboardingApplication.count({
+                        where: {
+                            id: applicationId
+                        }
+                    });
+
+                expect(applicationCount).toBe(0);
+
+                const approvalAuditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: applicationId
+                        }
+                    });
+
+                expect(approvalAuditCount).toBe(0);
+            }
+        );
+
+        it(
+            "allows ADMIN to reject a pending merchant onboarding application",
+            async () => {
+                const staff =
+                    await createPlatformFixture(
+                        "onboarding-rejection-creator",
+                        "STAFF"
+                    );
+
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-rejection-reviewer",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Rejected Onboarding`,
+                            currency: "ETB",
+                            phone: "+251911000008",
+                            ownerEmail:
+                                `${testPrefix}-rejected-onboarding@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const reason =
+                    "Merchant application details require correction";
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(200);
+
+                const rejected =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(rejected.status).toBe("REJECTED");
+                expect(rejected.reviewedById).toBe(admin.user.id);
+                expect(rejected.reviewedAt).not.toBeNull();
+                expect(rejected.reviewReason).toBe(reason);
+                expect(rejected.merchantId).toBeNull();
+
+                const merchantCount =
+                    await prisma.merchant.count({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchantCount).toBe(0);
+
+                const activationCount =
+                    await prisma.merchantOwnerActivation.count({
+                        where: {
+                            ownerEmail: application.ownerEmail
+                        }
+                    });
+
+                expect(activationCount).toBe(0);
+
+                const auditLogs =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId: admin.user.id,
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(auditLogs).toHaveLength(1);
+                expect(auditLogs[0]?.metadata).toMatchObject({
+                    reason
+                });
+            }
+        );
+
+        it(
+            "denies STAFF rejection of merchant onboarding",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-staff-reject-creator",
+                        "STAFF"
+                    );
+
+                const reviewer =
+                    await createPlatformFixture(
+                        "onboarding-staff-reject-reviewer",
+                        "STAFF"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Staff Rejection Denied`,
+                            currency: "ETB",
+                            phone: "+251911000009",
+                            ownerEmail:
+                                `${testPrefix}-staff-reject@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason: "Rejected by unauthorized STAFF"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+
+                const unchanged =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(unchanged.status).toBe("PENDING_APPROVAL");
+                expect(unchanged.reviewedById).toBeNull();
+                expect(unchanged.reviewedAt).toBeNull();
+                expect(unchanged.reviewReason).toBeNull();
+                expect(unchanged.merchantId).toBeNull();
+
+                const rejectionAuditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(rejectionAuditCount).toBe(0);
+            }
+        );
+
+        it(
+            "rejects merchant onboarding rejection without a valid reason",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-reason-creator",
+                        "STAFF"
+                    );
+
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-reason-reviewer",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Rejection Reason Required`,
+                            currency: "ETB",
+                            phone: "+251911000010",
+                            ownerEmail:
+                                `${testPrefix}-reason-required@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`;
+
+                for (const body of [
+                    {},
+                    { reason: "" },
+                    { reason: "   " },
+                    { reason: null },
+                    { reason: 123 }
+                ]) {
+                    const response =
+                        await fetch(url, {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify(body)
+                        });
+
+                    expect(response.status).toBe(400);
+
+                    expect(await response.json()).toEqual({
+                        error:
+                            "Onboarding rejection reason is required"
+                    });
+                }
+
+                const unchanged =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(unchanged.status).toBe("PENDING_APPROVAL");
+                expect(unchanged.reviewedById).toBeNull();
+                expect(unchanged.reviewedAt).toBeNull();
+                expect(unchanged.reviewReason).toBeNull();
+                expect(unchanged.merchantId).toBeNull();
+
+                const rejectionAuditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(rejectionAuditCount).toBe(0);
+            }
+        );
+
+        it(
+            "prevents ADMIN from rejecting their own merchant onboarding application",
+            async () => {
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-self-rejection",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Self Rejection Blocked`,
+                            currency: "ETB",
+                            phone: "+251911000011",
+                            ownerEmail:
+                                `${testPrefix}-self-rejection@example.test`,
+                            createdById: admin.user.id
+                        }
+                    });
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${admin.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason: "Attempted self-rejection"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(403);
+
+                const unchanged =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(unchanged.status).toBe("PENDING_APPROVAL");
+                expect(unchanged.reviewedById).toBeNull();
+                expect(unchanged.reviewedAt).toBeNull();
+                expect(unchanged.reviewReason).toBeNull();
+                expect(unchanged.merchantId).toBeNull();
+
+                const merchantCount =
+                    await prisma.merchant.count({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchantCount).toBe(0);
+
+                const rejectionAuditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(rejectionAuditCount).toBe(0);
+            }
+        );
+
+        it(
+            "prevents duplicate rejection of a merchant onboarding application",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-reject-creator",
+                        "STAFF"
+                    );
+
+                const firstAdmin =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-reject-first",
+                        "ADMIN"
+                    );
+
+                const secondAdmin =
+                    await createPlatformFixture(
+                        "onboarding-duplicate-reject-second",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Duplicate Rejection Blocked`,
+                            currency: "ETB",
+                            phone: "+251911000012",
+                            ownerEmail:
+                                `${testPrefix}-duplicate-rejection@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`;
+
+                const rejectAs = (
+                    token: string,
+                    reason: string
+                ) =>
+                    fetch(url, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({ reason })
+                    });
+
+                const firstReason =
+                    "Application details are incomplete";
+
+                const firstResponse =
+                    await rejectAs(
+                        firstAdmin.token,
+                        firstReason
+                    );
+
+                expect(firstResponse.status).toBe(200);
+
+                const firstRejected =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(firstRejected.status).toBe("REJECTED");
+                expect(firstRejected.reviewedById).toBe(
+                    firstAdmin.user.id
+                );
+                expect(firstRejected.reviewReason).toBe(
+                    firstReason
+                );
+                expect(firstRejected.reviewedAt).not.toBeNull();
+
+                const secondResponse =
+                    await rejectAs(
+                        secondAdmin.token,
+                        "Attempt to overwrite rejection"
+                    );
+
+                expect(secondResponse.status).toBe(409);
+
+                const afterSecondAttempt =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: {
+                            id: application.id
+                        }
+                    });
+
+                expect(afterSecondAttempt.status).toBe("REJECTED");
+                expect(afterSecondAttempt.reviewedById).toBe(
+                    firstRejected.reviewedById
+                );
+                expect(afterSecondAttempt.reviewedAt).toEqual(
+                    firstRejected.reviewedAt
+                );
+                expect(afterSecondAttempt.reviewReason).toBe(
+                    firstReason
+                );
+                expect(afterSecondAttempt.merchantId).toBeNull();
+
+                const rejectionAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(rejectionAudits).toHaveLength(1);
+                expect(
+                    rejectionAudits[0]?.actorPlatformUserId
+                ).toBe(firstAdmin.user.id);
+
+                const merchantCount =
+                    await prisma.merchant.count({
+                        where: {
+                            name: application.name
+                        }
+                    });
+
+                expect(merchantCount).toBe(0);
+            }
+        );
+
+        it(
+            "prevents conflicting approval and rejection of merchant onboarding",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-conflict-creator",
+                        "STAFF"
+                    );
+
+                const admin =
+                    await createPlatformFixture(
+                        "onboarding-conflict-reviewer",
+                        "ADMIN"
+                    );
+
+                for (const initialAction of ["approve", "reject"] as const) {
+                    const application =
+                        await prisma.merchantOnboardingApplication.create({
+                            data: {
+                                name:
+                                    `${testPrefix} Conflict ${initialAction}`,
+                                currency: "ETB",
+                                phone: "+251911000013",
+                                ownerEmail:
+                                    `${testPrefix}-conflict-${initialAction}@example.test`,
+                                createdById: creator.user.id
+                            }
+                        });
+
+                    const requestReview = (
+                        action: "approve" | "reject"
+                    ) =>
+                        fetch(
+                            `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/${action}`,
+                            {
+                                method: "POST",
+                                headers: {
+                                    authorization: `Bearer ${admin.token}`,
+                                    "content-type": "application/json"
+                                },
+                                body: JSON.stringify({
+                                    reason: "Application review decision"
+                                })
+                            }
+                        );
+
+                    const firstResponse =
+                        await requestReview(initialAction);
+
+                    expect(firstResponse.status).toBe(200);
+
+                    const firstReviewed =
+                        await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                            where: { id: application.id }
+                        });
+
+                    const conflictingAction =
+                        initialAction === "approve"
+                            ? "reject"
+                            : "approve";
+
+                    const secondResponse =
+                        await requestReview(conflictingAction);
+
+                    expect(secondResponse.status).toBe(409);
+
+                    const unchanged =
+                        await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                            where: { id: application.id }
+                        });
+
+                    expect(unchanged).toMatchObject({
+                        status: firstReviewed.status,
+                        reviewedById: firstReviewed.reviewedById,
+                        reviewedAt: firstReviewed.reviewedAt,
+                        reviewReason: firstReviewed.reviewReason,
+                        merchantId: firstReviewed.merchantId
+                    });
+
+                    const approvalCount =
+                        await prisma.platformAuditLog.count({
+                            where: {
+                                action: "MERCHANT_ONBOARDING_APPROVED",
+                                entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                                entityId: application.id
+                            }
+                        });
+
+                    const rejectionCount =
+                        await prisma.platformAuditLog.count({
+                            where: {
+                                action: "MERCHANT_ONBOARDING_REJECTED",
+                                entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                                entityId: application.id
+                            }
+                        });
+
+                    expect(approvalCount).toBe(
+                        initialAction === "approve" ? 1 : 0
+                    );
+
+                    expect(rejectionCount).toBe(
+                        initialAction === "reject" ? 1 : 0
+                    );
+
+                    const merchantCount =
+                        await prisma.merchant.count({
+                            where: { name: application.name }
+                        });
+
+                    expect(merchantCount).toBe(
+                        initialAction === "approve" ? 1 : 0
+                    );
+
+                    const activationCount =
+                        await prisma.merchantOwnerActivation.count({
+                            where: {
+                                ownerEmail: application.ownerEmail
+                            }
+                        });
+
+                    expect(activationCount).toBe(
+                        initialAction === "approve" ? 1 : 0
+                    );
+                }
+            }
+        );
+
+        it(
+            "uses corrected application details when approving onboarding",
+            async () => {
+                const creator = await createPlatformFixture(
+                    "corrected-approval-creator",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "corrected-approval-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Original Approval`,
+                            currency: "ETB",
+                            phone: "+251911000030",
+                            ownerEmail:
+                                `${testPrefix}-original-approval@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const correctedName =
+                    `${testPrefix} Corrected Approval`;
+                const correctedPhone = "+251911000031";
+                const correctedEmail =
+                    `${testPrefix}-corrected-approval@example.test`;
+
+                const correction = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${creator.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            name: correctedName,
+                            phone: correctedPhone,
+                            ownerEmail: correctedEmail
+                        })
+                    }
+                );
+
+                expect(correction.status).toBe(200);
+
+                const approval = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({})
+                    }
+                );
+
+                expect(approval.status).toBe(200);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.status).toBe("APPROVED");
+                expect(stored.merchantId).not.toBeNull();
+
+                const merchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: { id: stored.merchantId! }
+                    });
+
+                expect(merchant.name).toBe(correctedName);
+                expect(merchant.phone).toBe(correctedPhone);
+
+                const activations =
+                    await prisma.merchantOwnerActivation.findMany({
+                        where: { merchantId: merchant.id }
+                    });
+
+                expect(activations).toHaveLength(1);
+                expect(activations[0]?.ownerEmail).toBe(correctedEmail);
+
+                const deliveries =
+                    await prisma.merchantInvitationDelivery.findMany({
+                        where: { activationId: activations[0]!.id }
+                    });
+
+                expect(deliveries).toHaveLength(1);
+                expect(deliveries[0]?.recipientEmail).toBe(correctedEmail);
+
+                const approvalAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudits).toHaveLength(1);
+                expect(
+                    (approvalAudits[0]?.metadata as {
+                        ownerEmail?: string
+                    })?.ownerEmail
+                ).toBe(correctedEmail);
+            }
+        );
+
+        it(
+            "keeps onboarding details consistent during concurrent correction and approval",
+            async () => {
+                const creator = await createPlatformFixture(
+                    "correction-race-creator",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "correction-race-admin",
+                    "ADMIN"
+                );
+
+                const originalName = `${testPrefix} Correction Race Original`;
+                const originalPhone = "+251911000040";
+                const originalEmail =
+                    `${testPrefix}-correction-race-original@example.test`;
+
+                const correctedName = `${testPrefix} Correction Race Updated`;
+                const correctedPhone = "+251911000041";
+                const correctedEmail =
+                    `${testPrefix}-correction-race-updated@example.test`;
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: originalName,
+                            currency: "ETB",
+                            phone: originalPhone,
+                            ownerEmail: originalEmail,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const baseUrl =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`;
+
+                const [correction, approval] = await Promise.all([
+                    fetch(baseUrl, {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${creator.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            name: correctedName,
+                            phone: correctedPhone,
+                            ownerEmail: correctedEmail
+                        })
+                    }),
+                    fetch(`${baseUrl}/approve`, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({})
+                    })
+                ]);
+
+                expect(approval.status).toBe(200);
+                expect([200, 409]).toContain(correction.status);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.status).toBe("APPROVED");
+                expect(stored.merchantId).not.toBeNull();
+
+                const expectedName =
+                    correction.status === 200 ? correctedName : originalName;
+                const expectedPhone =
+                    correction.status === 200 ? correctedPhone : originalPhone;
+                const expectedEmail =
+                    correction.status === 200 ? correctedEmail : originalEmail;
+
+                expect(stored.name).toBe(expectedName);
+                expect(stored.phone).toBe(expectedPhone);
+                expect(stored.ownerEmail).toBe(expectedEmail);
+
+                const merchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: { id: stored.merchantId! }
+                    });
+
+                expect(merchant.name).toBe(expectedName);
+                expect(merchant.phone).toBe(expectedPhone);
+
+                const activations =
+                    await prisma.merchantOwnerActivation.findMany({
+                        where: { merchantId: merchant.id }
+                    });
+
+                expect(activations).toHaveLength(1);
+                expect(activations[0]?.ownerEmail).toBe(expectedEmail);
+
+                const deliveries =
+                    await prisma.merchantInvitationDelivery.findMany({
+                        where: { activationId: activations[0]!.id }
+                    });
+
+                expect(deliveries).toHaveLength(1);
+                expect(deliveries[0]?.recipientEmail).toBe(expectedEmail);
+
+                const approvalAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudits).toHaveLength(1);
+                expect(
+                    (approvalAudits[0]?.metadata as {
+                        ownerEmail?: string
+                    })?.ownerEmail
+                ).toBe(expectedEmail);
+            }
+        );
+
+        it(
+            "allows only one concurrent merchant onboarding approval",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-race-creator",
+                        "STAFF"
+                    );
+
+                const firstAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-first",
+                        "ADMIN"
+                    );
+
+                const secondAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-second",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Concurrent Approval`,
+                            currency: "ETB",
+                            phone: "+251911000014",
+                            ownerEmail:
+                                `${testPrefix}-concurrent-approval@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/approve`;
+
+                const approveAs = (token: string) =>
+                    fetch(url, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({})
+                    });
+
+                const results =
+                    await Promise.allSettled([
+                        approveAs(firstAdmin.token),
+                        approveAs(secondAdmin.token)
+                    ]);
+
+                expect(
+                    results.every(
+                        (result) => result.status === "fulfilled"
+                    )
+                ).toBe(true);
+
+                const responses = results
+                    .filter(
+                        (result): result is PromiseFulfilledResult<Response> =>
+                            result.status === "fulfilled"
+                    )
+                    .map((result) => result.value);
+
+                const statuses =
+                    responses.map((response) => response.status).sort();
+
+                expect(statuses).toEqual([200, 409]);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.status).toBe("APPROVED");
+                expect(stored.merchantId).not.toBeNull();
+
+                expect(
+                    [firstAdmin.user.id, secondAdmin.user.id]
+                ).toContain(stored.reviewedById);
+
+                const merchants =
+                    await prisma.merchant.findMany({
+                        where: { name: application.name }
+                    });
+
+                expect(merchants).toHaveLength(1);
+                expect(stored.merchantId).toBe(merchants[0]?.id);
+
+                const activations =
+                    await prisma.merchantOwnerActivation.findMany({
+                        where: { merchantId: stored.merchantId! }
+                    });
+
+                expect(activations).toHaveLength(1);
+
+                const deliveries =
+                    await prisma.merchantInvitationDelivery.findMany({
+                        where: {
+                            activationId: activations[0]!.id
+                        }
+                    });
+
+                expect(deliveries).toHaveLength(1);
+
+                expect(deliveries[0]).toMatchObject({
+                    activationId: activations[0]!.id,
+                    recipientEmail: application.ownerEmail,
+                    status: "PENDING",
+                    attemptCount: 0
+                });
+
+                expect(deliveries[0]!.encryptedToken).toMatch(
+                    /^v1\.[^.]+\.[^.]+\.[^.]+$/
+                );
+
+                const approvalAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudits).toHaveLength(1);
+                expect(
+                    approvalAudits[0]?.actorPlatformUserId
+                ).toBe(stored.reviewedById);
+            }
+        );
+
+        it(
+            "allows only one concurrent conflicting onboarding review",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-race-conflict-creator",
+                        "STAFF"
+                    );
+
+                const approvingAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-conflict-approve",
+                        "ADMIN"
+                    );
+
+                const rejectingAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-conflict-reject",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Concurrent Review Conflict`,
+                            currency: "ETB",
+                            phone: "+251911000015",
+                            ownerEmail:
+                                `${testPrefix}-race-conflict@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const baseUrl =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`;
+
+                const results =
+                    await Promise.allSettled([
+                        fetch(`${baseUrl}/approve`, {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${approvingAdmin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }),
+                        fetch(`${baseUrl}/reject`, {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${rejectingAdmin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason: "Application requires correction"
+                            })
+                        })
+                    ]);
+
+                expect(
+                    results.every(
+                        (result) => result.status === "fulfilled"
+                    )
+                ).toBe(true);
+
+                const responses = results.map(
+                    (result) =>
+                        (result as PromiseFulfilledResult<Response>).value
+                );
+
+                expect(
+                    responses.map((response) => response.status).sort()
+                ).toEqual([200, 409]);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(["APPROVED", "REJECTED"]).toContain(
+                    stored.status
+                );
+
+                const approved =
+                    stored.status === "APPROVED";
+
+                expect(stored.reviewedById).toBe(
+                    approved
+                        ? approvingAdmin.user.id
+                        : rejectingAdmin.user.id
+                );
+
+                expect(stored.reviewedAt).not.toBeNull();
+
+                const merchants =
+                    await prisma.merchant.findMany({
+                        where: { name: application.name }
+                    });
+
+                expect(merchants).toHaveLength(approved ? 1 : 0);
+
+                expect(stored.merchantId).toBe(
+                    approved ? merchants[0]?.id : null
+                );
+
+                const activations =
+                    await prisma.merchantOwnerActivation.findMany({
+                        where: {
+                            ownerEmail: application.ownerEmail
+                        }
+                    });
+
+                expect(activations).toHaveLength(approved ? 1 : 0);
+
+                const approvalAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                const rejectionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(approvalAudits).toBe(approved ? 1 : 0);
+                expect(rejectionAudits).toBe(approved ? 0 : 1);
+                expect(approvalAudits + rejectionAudits).toBe(1);
+
+                expect(stored.reviewReason).toBe(
+                    approved
+                        ? null
+                        : "Application requires correction"
+                );
+            }
+        );
+
+        it(
+            "allows only one concurrent merchant onboarding rejection",
+            async () => {
+                const creator =
+                    await createPlatformFixture(
+                        "onboarding-race-reject-creator",
+                        "STAFF"
+                    );
+
+                const firstAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-reject-first",
+                        "ADMIN"
+                    );
+
+                const secondAdmin =
+                    await createPlatformFixture(
+                        "onboarding-race-reject-second",
+                        "ADMIN"
+                    );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name:
+                                `${testPrefix} Concurrent Rejection`,
+                            currency: "ETB",
+                            phone: "+251911000016",
+                            ownerEmail:
+                                `${testPrefix}-concurrent-rejection@example.test`,
+                            createdById: creator.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/reject`;
+
+                const firstReason = "Missing business documentation";
+                const secondReason = "Invalid merchant contact information";
+
+                const rejectAs = (token: string, reason: string) =>
+                    fetch(url, {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({ reason })
+                    });
+
+                const results =
+                    await Promise.allSettled([
+                        rejectAs(firstAdmin.token, firstReason),
+                        rejectAs(secondAdmin.token, secondReason)
+                    ]);
+
+                expect(
+                    results.every(
+                        (result) => result.status === "fulfilled"
+                    )
+                ).toBe(true);
+
+                const responses = results
+                    .filter(
+                        (result): result is PromiseFulfilledResult<Response> =>
+                            result.status === "fulfilled"
+                    )
+                    .map((result) => result.value);
+
+                expect(
+                    responses.map((response) => response.status).sort()
+                ).toEqual([200, 409]);
+
+                const winnerIndex =
+                    responses.findIndex((response) => response.status === 200);
+
+                const expectedReviewerId =
+                    winnerIndex === 0
+                        ? firstAdmin.user.id
+                        : secondAdmin.user.id;
+
+                const expectedReason =
+                    winnerIndex === 0
+                        ? firstReason
+                        : secondReason;
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.status).toBe("REJECTED");
+                expect(stored.reviewedById).toBe(expectedReviewerId);
+                expect(stored.reviewReason).toBe(expectedReason);
+                expect(stored.reviewedAt).not.toBeNull();
+                expect(stored.merchantId).toBeNull();
+
+                const rejectionAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_REJECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(rejectionAudits).toHaveLength(1);
+                expect(rejectionAudits[0]?.actorPlatformUserId).toBe(
+                    expectedReviewerId
+                );
+
+                const merchantCount =
+                    await prisma.merchant.count({
+                        where: { name: application.name }
+                    });
+
+                expect(merchantCount).toBe(0);
+
+                const activationCount =
+                    await prisma.merchantOwnerActivation.count({
+                        where: { ownerEmail: application.ownerEmail }
+                    });
+
+                expect(activationCount).toBe(0);
+            }
+        );
+
+        it(
+            "allows STAFF to correct a pending merchant onboarding application",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-correction-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Original Merchant`,
+                            currency: "ETB",
+                            phone: "+251911000017",
+                            ownerEmail: `${testPrefix}-original@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            name: `${testPrefix} Corrected Merchant`,
+                            phone: "+251911000018",
+                            ownerEmail: `${testPrefix}-corrected@example.test`,
+                            telegramUsername: "corrected_merchant"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(200);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "PENDING_APPROVAL",
+                    name: `${testPrefix} Corrected Merchant`,
+                    currency: "ETB",
+                    phone: "+251911000018",
+                    ownerEmail: `${testPrefix}-corrected@example.test`,
+                    telegramUsername: "corrected_merchant",
+                    createdById: staff.user.id,
+                    reviewedById: null,
+                    merchantId: null
+                });
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toHaveLength(1);
+
+                expect(correctionAudits[0]?.actorPlatformUserId).toBe(
+                    staff.user.id
+                );
+
+                expect(correctionAudits[0]?.metadata).toMatchObject({
+                    changedFields: expect.arrayContaining([
+                        "name",
+                        "phone",
+                        "ownerEmail",
+                        "telegramUsername"
+                    ]),
+                    before: {
+                        name: `${testPrefix} Original Merchant`,
+                        phone: "+251911000017",
+                        ownerEmail: `${testPrefix}-original@example.test`,
+                        telegramUsername: null
+                    },
+                    after: {
+                        name: `${testPrefix} Corrected Merchant`,
+                        phone: "+251911000018",
+                        ownerEmail: `${testPrefix}-corrected@example.test`,
+                        telegramUsername: "corrected_merchant"
+                    }
+                });
+
+                expect(
+                    await prisma.merchant.count({
+                        where: {
+                            name: `${testPrefix} Corrected Merchant`
+                        }
+                    })
+                ).toBe(0);
+            }
+        );
+
+        it(
+            "records accurate audit history for concurrent onboarding corrections",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "concurrent-correction-audit-staff",
+                    "STAFF"
+                );
+
+                const originalName = `${testPrefix} Audit Original`;
+                const firstName = `${testPrefix} Audit First`;
+                const secondName = `${testPrefix} Audit Second`;
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: originalName,
+                            currency: "ETB",
+                            phone: "+251911000060",
+                            ownerEmail:
+                                `${testPrefix}-concurrent-audit@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`;
+
+                const [firstResponse, secondResponse] =
+                    await Promise.all([
+                        fetch(url, {
+                            method: "PATCH",
+                            headers: {
+                                authorization: `Bearer ${staff.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: firstName
+                            })
+                        }),
+                        fetch(url, {
+                            method: "PATCH",
+                            headers: {
+                                authorization: `Bearer ${staff.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: secondName
+                            })
+                        })
+                    ]);
+
+                expect(firstResponse.status).toBe(200);
+                expect(secondResponse.status).toBe(200);
+
+                const audits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(audits).toHaveLength(2);
+
+                const transitions = audits.map((audit) => {
+                    const metadata = audit.metadata as {
+                        before: { name: string };
+                        after: { name: string };
+                    };
+
+                    return {
+                        before: metadata.before.name,
+                        after: metadata.after.name
+                    };
+                });
+
+                const firstTransition = transitions.find(
+                    (transition) => transition.before === originalName
+                );
+
+                expect(firstTransition).toBeDefined();
+
+                const secondTransition = transitions.find(
+                    (transition) =>
+                        transition.before === firstTransition?.after &&
+                        transition.after !== firstTransition?.after
+                );
+
+                expect(secondTransition).toBeDefined();
+
+                expect(
+                    new Set(transitions.map((transition) => transition.after))
+                ).toEqual(new Set([firstName, secondName]));
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.name).toBe(secondTransition?.after);
+                expect(stored.status).toBe("PENDING_APPROVAL");
+                expect(stored.merchantId).toBeNull();
+            }
+        );
+
+        it(
+            "prevents correction of finalized merchant onboarding applications",
+            async () => {
+                const creator = await createPlatformFixture(
+                    "onboarding-finalized-correction-creator",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-finalized-correction-admin",
+                    "ADMIN"
+                );
+
+                for (const finalStatus of ["APPROVED", "REJECTED"] as const) {
+                    const application =
+                        await prisma.merchantOnboardingApplication.create({
+                            data: {
+                                name: `${testPrefix} Finalized ${finalStatus}`,
+                                currency: "ETB",
+                                phone: "+251911000019",
+                                ownerEmail:
+                                    `${testPrefix}-finalized-${finalStatus.toLowerCase()}@example.test`,
+                                createdById: creator.user.id
+                            }
+                        });
+
+                    const reviewResponse = await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/${finalStatus === "APPROVED" ? "approve" : "reject"
+                        }`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization: `Bearer ${admin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason: "Application review completed"
+                            })
+                        }
+                    );
+
+                    expect(reviewResponse.status).toBe(200);
+
+                    const before =
+                        await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                            where: { id: application.id }
+                        });
+
+                    const correctionResponse = await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                        {
+                            method: "PATCH",
+                            headers: {
+                                authorization: `Bearer ${creator.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: `${testPrefix} Unauthorized Correction`,
+                                phone: "+251911999999"
+                            })
+                        }
+                    );
+
+                    expect(correctionResponse.status).toBe(409);
+
+                    const after =
+                        await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                            where: { id: application.id }
+                        });
+
+                    expect(after).toMatchObject({
+                        name: before.name,
+                        phone: before.phone,
+                        ownerEmail: before.ownerEmail,
+                        status: before.status,
+                        reviewedById: before.reviewedById,
+                        reviewedAt: before.reviewedAt,
+                        merchantId: before.merchantId
+                    });
+
+                    const correctionAudits =
+                        await prisma.platformAuditLog.count({
+                            where: {
+                                action: "MERCHANT_ONBOARDING_CORRECTED",
+                                entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                                entityId: application.id
+                            }
+                        });
+
+                    expect(correctionAudits).toBe(0);
+                }
+            }
+        );
+
+        it(
+            "rejects merchant OWNER access to onboarding correction",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-correction-auth-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Correction Authorization`,
+                            currency: "ETB",
+                            phone: "+251911000020",
+                            ownerEmail:
+                                `${testPrefix}-correction-auth@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const merchant = await createMerchant(
+                    "onboarding-correction-merchant-owner"
+                );
+
+                const owner = await prisma.merchantUser.create({
+                    data: {
+                        merchantId: merchant.id,
+                        email:
+                            `${testPrefix}-correction-boundary-owner@example.test`,
+                        passwordHash: await hashPassword(
+                            "BoundaryOwnerPassword123!"
+                        ),
+                        displayName: "Correction Boundary Owner",
+                        role: "OWNER",
+                        tokenVersion: 0
+                    }
+                });
+
+                const merchantToken = createAuthToken({
+                    id: owner.id,
+                    merchantId: merchant.id,
+                    role: owner.role,
+                    tokenVersion: owner.tokenVersion
+                });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${merchantToken}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            name: `${testPrefix} Unauthorized Merchant Edit`
+                        })
+                    }
+                );
+
+                expect([401, 403]).toContain(response.status);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.name).toBe(
+                    `${testPrefix} Correction Authorization`
+                );
+                expect(stored.status).toBe("PENDING_APPROVAL");
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toBe(0);
+            }
+        );
+
+        it(
+            "rejects non-ETB currency during merchant onboarding correction",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-currency-correction-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Currency Correction`,
+                            currency: "ETB",
+                            phone: "+251911000021",
+                            ownerEmail:
+                                `${testPrefix}-currency-correction@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            currency: "USD",
+                            name: `${testPrefix} Modified Currency Merchant`
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    name: `${testPrefix} Currency Correction`,
+                    currency: "ETB",
+                    status: "PENDING_APPROVAL",
+                    merchantId: null
+                });
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toBe(0);
+            }
+        );
+
+        it(
+            "rejects an empty primary phone during merchant onboarding correction",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-empty-phone-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Required Phone Correction`,
+                            currency: "ETB",
+                            phone: "+251911000022",
+                            ownerEmail:
+                                `${testPrefix}-required-phone@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            phone: "   "
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    name: `${testPrefix} Required Phone Correction`,
+                    phone: "+251911000022",
+                    currency: "ETB",
+                    status: "PENDING_APPROVAL",
+                    merchantId: null
+                });
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toBe(0);
+            }
+        );
+
+        it(
+            "rejects protected fields during merchant onboarding correction",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-protected-fields-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Protected Fields Correction`,
+                            currency: "ETB",
+                            phone: "+251911000023",
+                            ownerEmail:
+                                `${testPrefix}-protected-fields@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            name: `${testPrefix} Unauthorized Change`,
+                            status: "APPROVED",
+                            reviewedById: staff.user.id,
+                            merchantId: "unauthorized-merchant-id"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    name: `${testPrefix} Protected Fields Correction`,
+                    status: "PENDING_APPROVAL",
+                    reviewedById: null,
+                    reviewedAt: null,
+                    merchantId: null,
+                    createdById: staff.user.id
+                });
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toBe(0);
+            }
+        );
+
+        it(
+            "rejects an invalid owner email during merchant onboarding correction",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-invalid-email-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Owner Email Correction`,
+                            currency: "ETB",
+                            phone: "+251911000024",
+                            ownerEmail:
+                                `${testPrefix}-valid-owner@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}`,
+                    {
+                        method: "PATCH",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            ownerEmail: "invalid-email",
+                            name: `${testPrefix} Unauthorized Email Change`
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    name: `${testPrefix} Owner Email Correction`,
+                    ownerEmail:
+                        `${testPrefix}-valid-owner@example.test`,
+                    status: "PENDING_APPROVAL",
+                    merchantId: null
+                });
+
+                const correctionAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_CORRECTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(correctionAudits).toBe(0);
+            }
+        );
+
+        it(
+            "allows ADMIN to discard a pending merchant onboarding application",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-discard-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-discard-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Discard Application`,
+                            currency: "ETB",
+                            phone: "+251911000025",
+                            ownerEmail:
+                                `${testPrefix}-discard@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            reason: "Duplicate onboarding application"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(200);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "DISCARDED",
+                    reviewedById: admin.user.id,
+                    reviewReason: "Duplicate onboarding application",
+                    merchantId: null
+                });
+
+                expect(stored.reviewedAt).not.toBeNull();
+
+                const audits = await prisma.platformAuditLog.findMany({
+                    where: {
+                        action: "MERCHANT_ONBOARDING_DISCARDED",
+                        entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                        entityId: application.id
+                    }
+                });
+
+                expect(audits).toHaveLength(1);
+                expect(audits[0]?.actorPlatformUserId).toBe(
+                    admin.user.id
+                );
+
+                expect(
+                    await prisma.merchant.count({
+                        where: {
+                            name: `${testPrefix} Discard Application`
+                        }
+                    })
+                ).toBe(0);
+            }
+        );
+
+        it(
+            "denies STAFF permission to discard merchant onboarding",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-discard-denied-staff",
+                    "STAFF"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Staff Discard Denied`,
+                            currency: "ETB",
+                            phone: "+251911000026",
+                            ownerEmail:
+                                `${testPrefix}-staff-discard@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${staff.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            reason: "Attempted STAFF discard"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(403);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "PENDING_APPROVAL",
+                    reviewedById: null,
+                    reviewedAt: null,
+                    reviewReason: null,
+                    merchantId: null
+                });
+
+                const discardAudits =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_DISCARDED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(discardAudits).toBe(0);
+            }
+        );
+
+        it(
+            "prevents discarding finalized merchant onboarding applications",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-finalized-discard-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-finalized-discard-admin",
+                    "ADMIN"
+                );
+
+                for (const status of [
+                    "APPROVED",
+                    "REJECTED",
+                    "DISCARDED"
+                ] as const) {
+                    const application =
+                        await prisma.merchantOnboardingApplication.create({
+                            data: {
+                                name: `${testPrefix} Finalized Discard ${status}`,
+                                currency: "ETB",
+                                phone: "+251911000027",
+                                ownerEmail:
+                                    `${testPrefix}-finalized-discard-${status.toLowerCase()}@example.test`,
+                                createdById: staff.user.id,
+                                status,
+                                reviewedById: admin.user.id,
+                                reviewedAt: new Date(),
+                                reviewReason: "Previously finalized"
+                            }
+                        });
+
+                    const response = await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization: `Bearer ${admin.token}`,
+                                "content-type": "application/json"
+                            },
+                            body: JSON.stringify({
+                                reason: "Attempted second decision"
+                            })
+                        }
+                    );
+
+                    expect(response.status).toBe(409);
+
+                    const stored =
+                        await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                            where: { id: application.id }
+                        });
+
+                    expect(stored).toMatchObject({
+                        status,
+                        reviewedById: admin.user.id,
+                        reviewReason: "Previously finalized",
+                        merchantId: null
+                    });
+
+                    const discardAudits =
+                        await prisma.platformAuditLog.count({
+                            where: {
+                                action: "MERCHANT_ONBOARDING_DISCARDED",
+                                entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                                entityId: application.id
+                            }
+                        });
+
+                    expect(discardAudits).toBe(0);
+                }
+            }
+        );
+
+        it(
+            "prevents duplicate merchant onboarding discard",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-duplicate-discard-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-duplicate-discard-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Duplicate Discard`,
+                            currency: "ETB",
+                            phone: "+251911000028",
+                            ownerEmail:
+                                `${testPrefix}-duplicate-discard@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`;
+
+                const headers = {
+                    authorization: `Bearer ${admin.token}`,
+                    "content-type": "application/json"
+                };
+
+                const firstResponse = await fetch(url, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({
+                        reason: "Duplicate application"
+                    })
+                });
+
+                expect(firstResponse.status).toBe(200);
+
+                const secondResponse = await fetch(url, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({
+                        reason: "Second discard attempt"
+                    })
+                });
+
+                expect(secondResponse.status).toBe(409);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "DISCARDED",
+                    reviewedById: admin.user.id,
+                    reviewReason: "Duplicate application",
+                    merchantId: null
+                });
+
+                const audits = await prisma.platformAuditLog.findMany({
+                    where: {
+                        action: "MERCHANT_ONBOARDING_DISCARDED",
+                        entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                        entityId: application.id
+                    }
+                });
+
+                expect(audits).toHaveLength(1);
+                expect(audits[0]?.actorPlatformUserId).toBe(
+                    admin.user.id
+                );
+            }
+        );
+
+        it(
+            "allows only one concurrent merchant onboarding discard",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-concurrent-discard-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-concurrent-discard-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Concurrent Discard`,
+                            currency: "ETB",
+                            phone: "+251911000029",
+                            ownerEmail:
+                                `${testPrefix}-concurrent-discard@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const url =
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`;
+
+                const headers = {
+                    authorization: `Bearer ${admin.token}`,
+                    "content-type": "application/json"
+                };
+
+                const [first, second] = await Promise.all([
+                    fetch(url, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            reason: "Concurrent discard A"
+                        })
+                    }),
+                    fetch(url, {
+                        method: "POST",
+                        headers,
+                        body: JSON.stringify({
+                            reason: "Concurrent discard B"
+                        })
+                    })
+                ]);
+
+                expect(
+                    [first.status, second.status].sort()
+                ).toEqual([200, 409]);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored.status).toBe("DISCARDED");
+                expect(stored.reviewedById).toBe(admin.user.id);
+
+                expect([
+                    "Concurrent discard A",
+                    "Concurrent discard B"
+                ]).toContain(stored.reviewReason);
+
+                const audits = await prisma.platformAuditLog.findMany({
+                    where: {
+                        action: "MERCHANT_ONBOARDING_DISCARDED",
+                        entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                        entityId: application.id
+                    }
+                });
+
+                expect(audits).toHaveLength(1);
+                expect(audits[0]?.actorPlatformUserId).toBe(
+                    admin.user.id
+                );
+
+                expect(
+                    await prisma.merchant.count({
+                        where: {
+                            name: `${testPrefix} Concurrent Discard`
+                        }
+                    })
+                ).toBe(0);
+            }
+        );
+
+        it(
+            "rejects merchant onboarding discard without a reason",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-discard-no-reason-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-discard-no-reason-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Discard Without Reason`,
+                            currency: "ETB",
+                            phone: "+251911000030",
+                            ownerEmail:
+                                `${testPrefix}-discard-no-reason@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({})
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "PENDING_APPROVAL",
+                    reviewedById: null,
+                    reviewedAt: null,
+                    reviewReason: null,
+                    merchantId: null
+                });
+
+                const auditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_DISCARDED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(auditCount).toBe(0);
+            }
+        );
+
+        it(
+            "rejects merchant onboarding discard with a whitespace-only reason",
+            async () => {
+                const staff = await createPlatformFixture(
+                    "onboarding-discard-blank-staff",
+                    "STAFF"
+                );
+
+                const admin = await createPlatformFixture(
+                    "onboarding-discard-blank-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Discard Blank Reason`,
+                            currency: "ETB",
+                            phone: "+251911000031",
+                            ownerEmail:
+                                `${testPrefix}-discard-blank@example.test`,
+                            createdById: staff.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            reason: "   "
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(400);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "PENDING_APPROVAL",
+                    reviewedById: null,
+                    reviewedAt: null,
+                    reviewReason: null,
+                    merchantId: null
+                });
+
+                const auditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_DISCARDED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(auditCount).toBe(0);
+            }
+        );
+
+        it(
+            "prevents self-discard of merchant onboarding applications",
+            async () => {
+                const admin = await createPlatformFixture(
+                    "onboarding-self-discard-admin",
+                    "ADMIN"
+                );
+
+                const application =
+                    await prisma.merchantOnboardingApplication.create({
+                        data: {
+                            name: `${testPrefix} Self Discard`,
+                            currency: "ETB",
+                            phone: "+251911000032",
+                            ownerEmail:
+                                `${testPrefix}-self-discard@example.test`,
+                            createdById: admin.user.id
+                        }
+                    });
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${application.id}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            reason: "Attempted self-discard"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(403);
+
+                const stored =
+                    await prisma.merchantOnboardingApplication.findUniqueOrThrow({
+                        where: { id: application.id }
+                    });
+
+                expect(stored).toMatchObject({
+                    status: "PENDING_APPROVAL",
+                    reviewedById: null,
+                    reviewedAt: null,
+                    reviewReason: null,
+                    merchantId: null
+                });
+
+                const auditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_DISCARDED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: application.id
+                        }
+                    });
+
+                expect(auditCount).toBe(0);
+            }
+        );
+
+        it(
+            "returns 404 when discarding a nonexistent merchant onboarding application",
+            async () => {
+                const admin = await createPlatformFixture(
+                    "onboarding-discard-missing-admin",
+                    "ADMIN"
+                );
+
+                const missingId = "nonexistent-onboarding-application";
+
+                const response = await fetch(
+                    `${apiBaseUrl}/platform/merchant-onboarding/${missingId}/discard`,
+                    {
+                        method: "POST",
+                        headers: {
+                            authorization: `Bearer ${admin.token}`,
+                            "content-type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            reason: "Application not found"
+                        })
+                    }
+                );
+
+                expect(response.status).toBe(404);
+
+                const auditCount =
+                    await prisma.platformAuditLog.count({
+                        where: {
+                            action: "MERCHANT_ONBOARDING_DISCARDED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: missingId
+                        }
+                    });
+
+                expect(auditCount).toBe(0);
+            }
+        );
+
         it(
             "denies ADMIN access to merchant OWNER password recovery",
             async () => {
@@ -823,7 +4135,7 @@ describe(
                     updatedOwner.tokenVersion
                 ).toBe(
                     owner.tokenVersion +
-                        1
+                    1
                 );
 
                 expect(
@@ -2069,9 +5381,9 @@ describe(
                             id: string;
                             accountStatus: string;
                             accountSuspensionReason:
-                                string | null;
+                            string | null;
                             accountSuspendedAt:
-                                string | null;
+                            string | null;
                         };
                     };
 
@@ -2124,96 +5436,96 @@ describe(
                             id: string;
                             accountStatus: string;
                             accountSuspensionReason:
-                                string | null;
+                            string | null;
                             accountSuspendedAt:
-                                string | null;
+                            string | null;
                         };
                     };
 
-                    expect(
-                        reinstateBody.merchant
-                    ).toMatchObject({
-                        id:
-                            merchant.id,
-                        accountStatus:
-                            "ACTIVE",
-                        accountSuspensionReason:
-                            null,
-                        accountSuspendedAt:
-                            null
+                expect(
+                    reinstateBody.merchant
+                ).toMatchObject({
+                    id:
+                        merchant.id,
+                    accountStatus:
+                        "ACTIVE",
+                    accountSuspensionReason:
+                        null,
+                    accountSuspendedAt:
+                        null
+                });
+
+                const persistedMerchant =
+                    await prisma.merchant.findUnique({
+                        where: {
+                            id: merchant.id
+                        }
                     });
 
-                    const persistedMerchant =
-                        await prisma.merchant.findUnique({
-                            where: {
-                                id: merchant.id
-                            }
-                        });
+                expect(
+                    persistedMerchant
+                ).not.toBeNull();
 
-                    expect(
-                        persistedMerchant
-                    ).not.toBeNull();
+                expect(
+                    persistedMerchant
+                ).toMatchObject({
+                    accountStatus:
+                        "ACTIVE",
+                    accountSuspensionReason:
+                        null,
+                    accountSuspendedAt:
+                        null
+                });
 
-                    expect(
-                        persistedMerchant
-                    ).toMatchObject({
-                        accountStatus:
-                            "ACTIVE",
-                        accountSuspensionReason:
-                            null,
-                        accountSuspendedAt:
-                            null
+                const accountAudits =
+                    await prisma.platformAuditLog.findMany({
+                        where: {
+                            actorPlatformUserId:
+                                fixture.user.id,
+                            merchantId:
+                                merchant.id,
+                            action:
+                                "MERCHANT_ACCOUNT_STATUS_CHANGED",
+                            entityType:
+                                "MERCHANT",
+                            entityId:
+                                merchant.id
+                        },
+                        orderBy: {
+                            createdAt:
+                                "asc"
+                        }
                     });
 
-                    const accountAudits =
-                        await prisma.platformAuditLog.findMany({
-                            where: {
-                                actorPlatformUserId:
-                                    fixture.user.id,
-                                merchantId:
-                                    merchant.id,
-                                action:
-                                    "MERCHANT_ACCOUNT_STATUS_CHANGED",
-                                entityType:
-                                    "MERCHANT",
-                                entityId:
-                                    merchant.id
-                            },
-                            orderBy: {
-                                createdAt:
-                                    "asc"
-                            }
-                        });
+                expect(
+                    accountAudits
+                ).toHaveLength(
+                    2
+                );
 
-                    expect(
-                        accountAudits
-                    ).toHaveLength(
-                        2
-                    );
+                expect(
+                    accountAudits[0]?.metadata
+                ).toMatchObject({
+                    previousStatus:
+                        "ACTIVE",
+                    nextStatus:
+                        "SUSPENDED",
+                    reason:
+                        "Suspicious account activity"
+                });
 
-                    expect(
-                        accountAudits[0]?.metadata
-                    ).toMatchObject({
-                        previousStatus:
-                            "ACTIVE",
-                        nextStatus:
-                            "SUSPENDED",
-                        reason:
-                            "Suspicious account activity"
-                    });
-
-                    expect(
-                        accountAudits[1]?.metadata
-                    ).toMatchObject({
-                        previousStatus:
-                            "SUSPENDED",
-                        nextStatus:
-                            "ACTIVE",
-                        reason:
-                            "Platform review completed"
-                    });
-                }
-            );
+                expect(
+                    accountAudits[1]?.metadata
+                ).toMatchObject({
+                    previousStatus:
+                        "SUSPENDED",
+                    nextStatus:
+                        "ACTIVE",
+                    reason:
+                        "Platform review completed"
+                });
+            }
+        );
 
         it(
             "rejects merchant account suspension without a reason",
@@ -3090,37 +6402,37 @@ describe(
                         }
                     });
 
-                    expect(
-                        invoicedCommission!.status
-                    ).toBe(
-                        "INVOICED"
-                    );
+                expect(
+                    invoicedCommission!.status
+                ).toBe(
+                    "INVOICED"
+                );
 
-                    const commissionInvoiceItem =
-                        await prisma.merchantInvoiceItem.findUnique({
-                            where: {
-                                commissionId:
-                                    financialFixture.commission.id
-                            }
-                        });
+                const commissionInvoiceItem =
+                    await prisma.merchantInvoiceItem.findUnique({
+                        where: {
+                            commissionId:
+                                financialFixture.commission.id
+                        }
+                    });
 
-                    expect(
-                        commissionInvoiceItem
-                    ).not.toBeNull();
+                expect(
+                    commissionInvoiceItem
+                ).not.toBeNull();
 
-                    expect(
-                        commissionInvoiceItem!.invoiceId
-                    ).toBe(
-                        generatedInvoice!.id
-                    );
+                expect(
+                    commissionInvoiceItem!.invoiceId
+                ).toBe(
+                    generatedInvoice!.id
+                );
 
-                    expect(
-                        commissionInvoiceItem!.merchantId
-                    ).toBe(
-                        financialFixture.merchant.id
-                    );
+                expect(
+                    commissionInvoiceItem!.merchantId
+                ).toBe(
+                    financialFixture.merchant.id
+                );
 
-                    const generationAudit =
+                const generationAudit =
                     await prisma.platformAuditLog.findFirst({
                         where: {
                             actorPlatformUserId:
@@ -5144,7 +8456,7 @@ describe(
                             totalAmount: string;
                             currency: string;
                             status:
-                                MerchantInvoiceStatus;
+                            MerchantInvoiceStatus;
                             paidAt: string | null;
                             merchant: {
                                 id: string;
@@ -5491,7 +8803,7 @@ describe(
                             totalAmount: string;
                             currency: string;
                             status:
-                                MerchantInvoiceStatus;
+                            MerchantInvoiceStatus;
                             dueAt: string | null;
                             merchant: {
                                 id: string;
@@ -6214,6 +9526,65 @@ describe(
         );
 
         it(
+            "prevents direct merchant provisioning outside approved onboarding",
+            async () => {
+                const fixture =
+                    await createPlatformFixture(
+                        "direct-provisioning-block",
+                        "ADMIN"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Direct Provisioning Block`;
+
+                const ownerEmail =
+                    `${testPrefix}-direct-provisioning@example.com`;
+
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchants`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: merchantName,
+                                currency: "ETB",
+                                phone: "+251911000004",
+                                ownerEmail,
+                                ownerPassword:
+                                    "LegacyPassword123!"
+                            })
+                        }
+                    );
+
+                expect(response.status).toBe(404);
+
+                const merchant =
+                    await prisma.merchant.findFirst({
+                        where: {
+                            name: merchantName
+                        }
+                    });
+
+                expect(merchant).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email: ownerEmail
+                        }
+                    });
+
+                expect(owner).toBeNull();
+            }
+        );
+
+        it(
             "allows a platform user to create a merchant with its initial owner atomically",
             async () => {
                 const fixture =
@@ -6221,12 +9592,18 @@ describe(
                         "merchant-onboarding"
                     );
 
+                const reviewer =
+                    await createPlatformFixture(
+                        "merchant-onboarding-independent-reviewer",
+                        "ADMIN"
+                    );
+
                 const ownerEmail =
                     `${testPrefix}-merchant-owner@example.com`;
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6243,8 +9620,6 @@ describe(
                                 address: "Addis Ababa",
                                 ownerEmail:
                                     ownerEmail.toUpperCase(),
-                                ownerPassword:
-                                    "merchant-owner-password",
                                 ownerDisplayName:
                                     "Merchant Owner"
                             })
@@ -6253,22 +9628,123 @@ describe(
 
                 expect(response.status).toBe(201);
 
-                const body =
+                const applicationBody =
                     await response.json() as {
-                        merchant: {
-                            id: string;
-                            name: string;
-                            currency: string;
-                            accountStatus: string;
-                        };
-                        owner: {
-                            id: string;
-                            merchantId: string;
-                            email: string;
-                            displayName: string | null;
-                            role: string;
-                        };
+                        id: string;
+                        status: string;
                     };
+
+                expect(applicationBody.id).toBeTruthy();
+
+                expect(applicationBody.status)
+                    .toBe("PENDING_APPROVAL");
+
+                const approvalResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${applicationBody.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(approvalResponse.status).toBe(200);
+
+                const approvalBody =
+                    await approvalResponse.json() as {
+                        applicationId: string;
+                        merchantId: string;
+                        status: string;
+                    };
+
+                expect(approvalBody).toMatchObject({
+                    applicationId: applicationBody.id,
+                    status: "APPROVED"
+                });
+
+                expect(approvalBody.merchantId).toBeTruthy();
+
+                const invitation =
+                    await prisma.merchantInvitationDelivery.findFirst({
+                        where: {
+                            activation: {
+                                merchantId: approvalBody.merchantId
+                            }
+                        },
+                        include: {
+                            activation: true
+                        }
+                    });
+
+                expect(invitation).not.toBeNull();
+
+                expect(invitation?.status).toBe("PENDING");
+
+                expect(invitation?.encryptedToken)
+                    .not.toBeNull();
+
+                const activationToken =
+                    decryptMerchantInvitation(
+                        invitation!.encryptedToken!
+                    );
+
+                const ownerPassword =
+                    "merchant-owner-password";
+
+                const activationResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/activate-owner`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                token: activationToken,
+                                password: ownerPassword
+                            })
+                        }
+                    );
+
+                expect(activationResponse.status).toBe(200);
+
+                const activatedOwner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email: ownerEmail
+                        }
+                    });
+
+                expect(activatedOwner).not.toBeNull();
+
+                expect(activatedOwner).toMatchObject({
+                    merchantId: approvalBody.merchantId,
+                    email: ownerEmail,
+                    displayName: "Merchant Owner",
+                    role: "OWNER"
+                });
+
+                expect(activatedOwner!.passwordHash)
+                    .not.toBe(ownerPassword);
+
+                const createdMerchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: {
+                            id: approvalBody.merchantId
+                        }
+                    });
+
+                const body = {
+                    merchant: createdMerchant,
+                    owner: activatedOwner!
+                };
 
                 expect(body.merchant).toMatchObject({
                     name:
@@ -6321,7 +9797,21 @@ describe(
                 ).toBeNull();
 
                 expect(
-                    JSON.stringify(body)
+                    JSON.stringify(applicationBody)
+                ).not.toContain(
+                    "passwordHash"
+                );
+
+                expect(
+                    JSON.stringify(approvalBody)
+                ).not.toContain(
+                    "passwordHash"
+                );
+
+                expect(
+                    JSON.stringify(
+                        await activationResponse.clone().json()
+                    )
                 ).not.toContain(
                     "passwordHash"
                 );
@@ -6330,15 +9820,15 @@ describe(
                     await prisma.platformAuditLog.findFirst({
                         where: {
                             actorPlatformUserId:
-                                fixture.user.id,
+                                reviewer.user.id,
                             merchantId:
                                 body.merchant.id,
                             action:
-                                "MERCHANT_CREATED",
+                                "MERCHANT_ONBOARDING_APPROVED",
                             entityType:
-                                "MERCHANT",
+                                "MERCHANT_ONBOARDING_APPLICATION",
                             entityId:
-                                body.merchant.id
+                                applicationBody.id
                         }
                     });
 
@@ -6352,22 +9842,28 @@ describe(
             "rejects a duplicate owner email without leaving a merchant behind",
             async () => {
                 const fixture =
-                await createPlatformFixture(
-                    "merchant-onboarding-duplicate"
-                );
+                    await createPlatformFixture(
+                        "merchant-onboarding-duplicate"
+                    );
 
-            const existingMerchant =
-                await createMerchant(
-                    "merchant-onboarding-duplicate-existing"
-                );
+                const reviewer =
+                    await createPlatformFixture(
+                        "merchant-onboarding-duplicate-reviewer",
+                        "ADMIN"
+                    );
 
-            const ownerEmail =
-                `${testPrefix}-duplicate-owner@example.com`;
+                const existingMerchant =
+                    await createMerchant(
+                        "merchant-onboarding-duplicate-existing"
+                    );
 
-            await prisma.merchantUser.create({
-                data: {
-                    merchantId:
-                        existingMerchant.id,
+                const ownerEmail =
+                    `${testPrefix}-duplicate-owner@example.com`;
+
+                await prisma.merchantUser.create({
+                    data: {
+                        merchantId:
+                            existingMerchant.id,
                         email:
                             ownerEmail,
                         passwordHash:
@@ -6382,7 +9878,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6394,38 +9890,143 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000002",
                                 ownerEmail:
                                     ownerEmail.toUpperCase(),
-                                ownerPassword:
-                                    "merchant-owner-password",
                                 ownerDisplayName:
                                     "Duplicate Owner"
                             })
                         }
                     );
 
-                expect(response.status).toBe(409);
+                expect(response.status).toBe(201);
 
-                const body =
+                const applicationBody =
                     await response.json() as {
-                        error: string;
+                        id: string;
+                        status: string;
                     };
 
-                expect(body.error).toBe(
-                    "An account with that email already exists"
-                );
+                expect(applicationBody.id).toBeTruthy();
 
-                const orphanMerchant =
-                    await prisma.merchant.findFirst({
+                expect(applicationBody.status)
+                    .toBe("PENDING_APPROVAL");
+
+                const approvalResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${applicationBody.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(approvalResponse.status).toBe(200);
+
+                const approvalBody =
+                    await approvalResponse.json() as {
+                        applicationId: string;
+                        merchantId: string;
+                        status: string;
+                    };
+
+                expect(approvalBody).toMatchObject({
+                    applicationId: applicationBody.id,
+                    status: "APPROVED"
+                });
+
+                expect(approvalBody.merchantId).toBeTruthy();
+
+                const invitation =
+                    await prisma.merchantInvitationDelivery.findFirst({
                         where: {
-                            name:
-                                merchantName
+                            activation: {
+                                merchantId: approvalBody.merchantId
+                            }
+                        },
+                        include: {
+                            activation: true
                         }
                     });
 
-                expect(
-                    orphanMerchant
-                ).toBeNull();
+                expect(invitation).not.toBeNull();
+
+                expect(invitation?.status).toBe("PENDING");
+
+                expect(invitation?.encryptedToken)
+                    .not.toBeNull();
+
+                const activationToken =
+                    decryptMerchantInvitation(
+                        invitation!.encryptedToken!
+                    );
+
+                const activationResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/activate-owner`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                token: activationToken,
+                                password:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(activationResponse.status).toBe(400);
+
+                const activationBody =
+                    await activationResponse.json() as {
+                        error: string;
+                    };
+
+                expect(activationBody.error).toBe(
+                    "Invalid or unavailable activation invitation"
+                );
+
+                const activationAfterFailure =
+                    await prisma.merchantOwnerActivation.findUniqueOrThrow({
+                        where: {
+                            id: invitation!.activationId
+                        }
+                    });
+
+                expect(activationAfterFailure.consumedAt)
+                    .toBeNull();
+
+                const approvedMerchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: {
+                            id: approvalBody.merchantId
+                        }
+                    });
+
+                expect(approvedMerchant.name)
+                    .toBe(merchantName);
+
+                const newMerchantOwnerCount =
+                    await prisma.merchantUser.count({
+                        where: {
+                            merchantId: approvalBody.merchantId,
+                            role: "OWNER"
+                        }
+                    });
+
+                expect(newMerchantOwnerCount).toBe(0);
 
                 const ownersWithEmail =
                     await prisma.merchantUser.count({
@@ -6442,25 +10043,14 @@ describe(
                 const onboardingAudit =
                     await prisma.platformAuditLog.findFirst({
                         where: {
-                            actorPlatformUserId:
-                                fixture.user.id,
-                            action:
-                                "MERCHANT_CREATED",
-                            entityType:
-                                "MERCHANT",
-                            metadata: {
-                                path: [
-                                    "ownerEmail"
-                                ],
-                                equals:
-                                    ownerEmail
-                            }
+                            actorPlatformUserId: reviewer.user.id,
+                            action: "MERCHANT_ONBOARDING_APPROVED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
+                            entityId: applicationBody.id
                         }
                     });
 
-                expect(
-                    onboardingAudit
-                ).toBeNull();
+                expect(onboardingAudit).not.toBeNull();
             }
         );
 
@@ -6484,7 +10074,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6496,10 +10086,12 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000003",
                                 ownerEmail:
-                                    `${testPrefix}-unauthorized-owner@example.com`,
-                                ownerPassword:
-                                    "merchant-owner-password"
+                                    `${testPrefix}-unauthorized-owner@example.com`
                             })
                         }
                     );
@@ -6535,10 +10127,8 @@ describe(
                 const onboardingAudit =
                     await prisma.platformAuditLog.findFirst({
                         where: {
-                            action:
-                                "MERCHANT_CREATED",
-                            entityType:
-                                "MERCHANT",
+                            action: "MERCHANT_ONBOARDING_SUBMITTED",
+                            entityType: "MERCHANT_ONBOARDING_APPLICATION",
                             metadata: {
                                 path: [
                                     "ownerEmail"
@@ -6566,7 +10156,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6576,9 +10166,11 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
-                                ownerEmail,
-                                ownerPassword:
-                                    "merchant-owner-password"
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000004",
+                                ownerEmail
                             })
                         }
                     );
@@ -6626,7 +10218,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6638,10 +10230,12 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000005",
                                 ownerEmail:
-                                    "owner@invalid",
-                                ownerPassword:
-                                    "merchant-owner-password"
+                                    "owner@invalid"
                             })
                         }
                     );
@@ -6688,11 +10282,17 @@ describe(
         );
 
         it(
-            "rejects a short initial owner password without creating a merchant",
+            "rejects a short owner activation password without creating an owner account",
             async () => {
                 const fixture =
                     await createPlatformFixture(
                         "merchant-onboarding-short-password"
+                    );
+
+                const reviewer =
+                    await createPlatformFixture(
+                        "merchant-onboarding-short-password-reviewer",
+                        "ADMIN"
                     );
 
                 const merchantName =
@@ -6703,7 +10303,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6715,39 +10315,129 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
-                                ownerEmail,
-                                ownerPassword:
-                                    "short"
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000006",
+                                ownerEmail
                             })
                         }
                     );
 
-                expect(
-                    response.status
-                ).toBe(400);
+                expect(response.status).toBe(201);
 
-                const body =
+                const applicationBody =
                     await response.json() as {
-                        error: string;
+                        id: string;
+                        status: string;
                     };
 
-                expect(
-                    body.error
-                ).toBe(
-                    "Owner password must be at least 8 characters"
-                );
+                expect(applicationBody.id).toBeTruthy();
 
-                const merchant =
-                    await prisma.merchant.findFirst({
+                expect(applicationBody.status)
+                    .toBe("PENDING_APPROVAL");
+
+                const approvalResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${applicationBody.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({})
+                        }
+                    );
+
+                expect(approvalResponse.status).toBe(200);
+
+                const approvalBody =
+                    await approvalResponse.json() as {
+                        applicationId: string;
+                        merchantId: string;
+                        status: string;
+                    };
+
+                expect(approvalBody).toMatchObject({
+                    applicationId: applicationBody.id,
+                    status: "APPROVED"
+                });
+
+                expect(approvalBody.merchantId).toBeTruthy();
+
+                const invitation =
+                    await prisma.merchantInvitationDelivery.findFirst({
                         where: {
-                            name:
-                                merchantName
+                            activation: {
+                                merchantId: approvalBody.merchantId
+                            }
+                        },
+                        include: {
+                            activation: true
                         }
                     });
 
-                expect(
-                    merchant
-                ).toBeNull();
+                expect(invitation).not.toBeNull();
+
+                expect(invitation?.status).toBe("PENDING");
+
+                expect(invitation?.encryptedToken)
+                    .not.toBeNull();
+
+                const activationToken =
+                    decryptMerchantInvitation(
+                        invitation!.encryptedToken!
+                    );
+
+                const activationResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/activate-owner`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                token: activationToken,
+                                password: "short"
+                            })
+                        }
+                    );
+
+                expect(activationResponse.status).toBe(400);
+
+                const activationBody =
+                    await activationResponse.json() as {
+                        error: string;
+                    };
+
+                expect(activationBody.error).toBe(
+                    "Valid activation token and password are required"
+                );
+
+                const activationAfterFailure =
+                    await prisma.merchantOwnerActivation.findUniqueOrThrow({
+                        where: {
+                            id: invitation!.activationId
+                        }
+                    });
+
+                expect(activationAfterFailure.consumedAt)
+                    .toBeNull();
+
+                const approvedMerchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: {
+                            id: approvalBody.merchantId
+                        }
+                    });
+
+                expect(approvedMerchant.name)
+                    .toBe(merchantName);
 
                 const owner =
                     await prisma.merchantUser.findUnique({
@@ -6779,7 +10469,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6793,9 +10483,9 @@ describe(
                                     merchantName,
                                 currency:
                                     "INVALID",
-                                ownerEmail,
-                                ownerPassword:
-                                    "merchant-owner-password"
+                                phone:
+                                    "+251911000007",
+                                ownerEmail
                             })
                         }
                     );
@@ -6812,7 +10502,7 @@ describe(
                 expect(
                     body.error
                 ).toBe(
-                    "Merchant currency must be exactly 3 characters"
+                    "Merchant currency must be ETB"
                 );
 
                 const merchant =
@@ -6848,7 +10538,7 @@ describe(
                 value:
                     "1".repeat(51),
                 expectedError:
-                    "phone must be at most 50 characters"
+                    "phone is required and must be at most 50 characters"
             },
             {
                 field:
@@ -6886,7 +10576,7 @@ describe(
 
                 const response =
                     await fetch(
-                        `${apiBaseUrl}/platform/merchants`,
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
                         {
                             method: "POST",
                             headers: {
@@ -6898,9 +10588,11 @@ describe(
                             body: JSON.stringify({
                                 name:
                                     merchantName,
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000008",
                                 ownerEmail,
-                                ownerPassword:
-                                    "merchant-owner-password",
                                 [field]:
                                     value
                             })
@@ -6951,221 +10643,421 @@ describe(
         it(
             "ignores privileged onboarding fields and enforces safe merchant and owner defaults",
             async () => {
-              const fixture =
-                await createPlatformFixture(
-                  "merchant-onboarding-safe-defaults"
-                );
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding-safe-defaults"
+                    );
 
-              const merchantName =
-                `${testPrefix} Safe Defaults Merchant`;
+                const reviewer =
+                    await createPlatformFixture(
+                        "merchant-onboarding-safe-defaults-reviewer",
+                        "ADMIN"
+                    );
 
-              const ownerEmail =
-                `${testPrefix}-safe-defaults-owner@example.com`;
+                const merchantName =
+                    `${testPrefix} Safe Defaults Merchant`;
 
-              const response =
-                await fetch(
-                  `${apiBaseUrl}/platform/merchants`,
-                  {
-                    method: "POST",
-                    headers: {
-                      authorization:
-                        `Bearer ${fixture.token}`,
-                      "content-type":
-                        "application/json"
-                    },
-                    body: JSON.stringify({
-                      name:
-                        merchantName,
-                      ownerEmail,
-                      ownerPassword:
-                        "merchant-owner-password",
+                const ownerEmail =
+                    `${testPrefix}-safe-defaults-owner@example.com`;
 
-                      // These must never control
-                      // onboarding security state.
-                      role:
-                        "STAFF",
-                      ownerRole:
-                        "ADMIN",
-                      accountStatus:
-                        "SUSPENDED",
-                      accountSuspensionReason:
-                        "caller-controlled",
-                      accountSuspendedAt:
-                        new Date().toISOString()
-                    })
-                  }
-                );
+                const response =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name:
+                                    merchantName,
+                                currency:
+                                    "ETB",
+                                phone:
+                                    "+251911000009",
+                                ownerEmail,
 
-              expect(
-                response.status
-              ).toBe(201);
+                                // These must never control
+                                // onboarding security state.
+                                role:
+                                    "STAFF",
+                                ownerRole:
+                                    "ADMIN",
+                                accountStatus:
+                                    "SUSPENDED",
+                                accountSuspensionReason:
+                                    "caller-controlled",
+                                accountSuspendedAt:
+                                    new Date().toISOString()
+                            })
+                        }
+                    );
 
-              const body =
-                await response.json() as {
-                  merchant: {
-                    id: string;
-                  };
-                  owner: {
-                    id: string;
-                    role: string;
-                  };
-                };
+                expect(
+                    response.status
+                ).toBe(201);
 
-              expect(
-                body.owner.role
-              ).toBe("OWNER");
+                const body =
+                    await response.json() as {
+                        id: string;
+                        status: string;
+                    };
 
-              const merchant =
-                await prisma.merchant.findUniqueOrThrow({
-                  where: {
-                    id:
-                      body.merchant.id
-                  }
+                expect(
+                    body.id
+                ).toEqual(expect.any(String));
+
+                expect(
+                    body.status
+                ).toBe("PENDING_APPROVAL");
+
+                const approvalResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${body.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            }
+                        }
+                    );
+
+                expect(
+                    approvalResponse.status
+                ).toBe(200);
+
+                const approvalBody =
+                    await approvalResponse.json() as {
+                        applicationId: string;
+                        merchantId: string;
+                        status: string;
+                    };
+
+                expect(
+                    approvalBody.applicationId
+                ).toBe(body.id);
+
+                expect(
+                    approvalBody.status
+                ).toBe("APPROVED");
+
+                const merchant =
+                    await prisma.merchant.findUniqueOrThrow({
+                        where: {
+                            id:
+                                approvalBody.merchantId
+                        }
+                    });
+
+                expect(
+                    merchant.accountStatus
+                ).toBe("ACTIVE");
+
+                expect(
+                    merchant.accountSuspensionReason
+                ).toBeNull();
+
+                expect(
+                    merchant.accountSuspendedAt
+                ).toBeNull();
+
+                const owner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(
+                    owner
+                ).toBeNull();
+
+                const invitation =
+                    await prisma.merchantInvitationDelivery.findFirst({
+                        where: {
+                            activation: {
+                                merchantId:
+                                    approvalBody.merchantId
+                            },
+                            status: "PENDING"
+                        },
+                        include: {
+                            activation: true
+                        }
+                    });
+
+                expect(invitation).not.toBeNull();
+
+                expect(invitation?.encryptedToken)
+                    .not.toBeNull();
+
+                const activationToken =
+                    decryptMerchantInvitation(
+                        invitation!.encryptedToken!
+                    );
+
+                const activationResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/activate-owner`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                token: activationToken,
+                                password:
+                                    "merchant-owner-password"
+                            })
+                        }
+                    );
+
+                expect(
+                    activationResponse.status
+                ).toBe(200);
+
+                const activatedOwner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email:
+                                ownerEmail
+                        }
+                    });
+
+                expect(activatedOwner).not.toBeNull();
+
+                expect(activatedOwner).toMatchObject({
+                    merchantId:
+                        approvalBody.merchantId,
+                    email:
+                        ownerEmail,
+                    role:
+                        "OWNER"
                 });
-
-              expect(
-                merchant.accountStatus
-              ).toBe("ACTIVE");
-
-              expect(
-                merchant.accountSuspensionReason
-              ).toBeNull();
-
-              expect(
-                merchant.accountSuspendedAt
-              ).toBeNull();
-
-              const owner =
-                await prisma.merchantUser.findUniqueOrThrow({
-                  where: {
-                    id:
-                      body.owner.id
-                  }
-                });
-
-              expect(
-                owner.role
-              ).toBe("OWNER");
             }
-          );
+        );
 
-          it(
+        it(
             "creates an initial merchant owner that can authenticate through the merchant login flow",
             async () => {
-              const fixture =
-                await createPlatformFixture(
-                  "merchant-onboarding-owner-login"
+                const fixture =
+                    await createPlatformFixture(
+                        "merchant-onboarding-owner-login"
+                    );
+
+                const reviewer =
+                    await createPlatformFixture(
+                        "merchant-onboarding-owner-login-reviewer",
+                        "ADMIN"
+                    );
+
+                const merchantName =
+                    `${testPrefix} Owner Login Merchant`;
+
+                const ownerEmail =
+                    `${testPrefix}-owner-login@example.com`;
+
+                const ownerPassword =
+                    "merchant-owner-password";
+
+                const createResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${fixture.token}`,
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                name: merchantName,
+                                currency: "ETB",
+                                phone: "+251911000010",
+                                ownerEmail:
+                                    ownerEmail.toUpperCase(),
+                                ownerDisplayName:
+                                    "Initial Owner"
+                            })
+                        }
+                    );
+
+                expect(
+                    createResponse.status
+                ).toBe(201);
+
+                const createBody =
+                    await createResponse.json() as {
+                        id: string;
+                        status: string;
+                    };
+
+                expect(createBody.status).toBe(
+                    "PENDING_APPROVAL"
                 );
 
-              const merchantName =
-                `${testPrefix} Owner Login Merchant`;
-
-              const ownerEmail =
-                `${testPrefix}-owner-login@example.com`;
-
-              const ownerPassword =
-                "merchant-owner-password";
-
-              const createResponse =
-                await fetch(
-                  `${apiBaseUrl}/platform/merchants`,
-                  {
-                    method: "POST",
-                    headers: {
-                      authorization:
-                        `Bearer ${fixture.token}`,
-                      "content-type":
-                        "application/json"
-                    },
-                    body: JSON.stringify({
-                      name:
-                        merchantName,
-                      ownerEmail:
-                        ownerEmail.toUpperCase(),
-                      ownerPassword,
-                      ownerDisplayName:
-                        "Initial Owner"
-                    })
-                  }
+                expect(createBody.id).toEqual(
+                    expect.any(String)
                 );
 
-              expect(
-                createResponse.status
-              ).toBe(201);
+                const approvalResponse =
+                    await fetch(
+                        `${apiBaseUrl}/platform/merchant-onboarding/${createBody.id}/approve`,
+                        {
+                            method: "POST",
+                            headers: {
+                                authorization:
+                                    `Bearer ${reviewer.token}`,
+                                "content-type":
+                                    "application/json"
+                            }
+                        }
+                    );
 
-              const createBody =
-                await createResponse.json() as {
-                  merchant: {
-                    id: string;
-                  };
-                  owner: {
-                    id: string;
-                    merchantId: string;
-                    email: string;
-                    displayName: string | null;
-                    role: string;
-                  };
-                };
+                expect(approvalResponse.status).toBe(200);
 
-              const loginResponse =
-                await fetch(
-                  `${apiBaseUrl}/auth/login`,
-                  {
-                    method: "POST",
-                    headers: {
-                      "content-type":
-                        "application/json"
-                    },
-                    body: JSON.stringify({
-                      email:
+                const approvalBody =
+                    await approvalResponse.json() as {
+                        applicationId: string;
+                        merchantId: string;
+                        status: string;
+                    };
+
+                expect(approvalBody).toMatchObject({
+                    applicationId: createBody.id,
+                    status: "APPROVED"
+                });
+
+                expect(approvalBody.merchantId).toEqual(
+                    expect.any(String)
+                );
+
+                const invitation =
+                    await prisma.merchantInvitationDelivery.findFirst({
+                        where: {
+                            activation: {
+                                merchantId:
+                                    approvalBody.merchantId
+                            },
+                            status: "PENDING"
+                        },
+                        include: {
+                            activation: true
+                        }
+                    });
+
+                expect(invitation).not.toBeNull();
+
+                expect(invitation?.encryptedToken)
+                    .not.toBeNull();
+
+                const activationToken =
+                    decryptMerchantInvitation(
+                        invitation!.encryptedToken!
+                    );
+
+                const activationResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/activate-owner`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                token: activationToken,
+                                password: ownerPassword
+                            })
+                        }
+                    );
+
+                expect(activationResponse.status).toBe(200);
+
+                const activatedOwner =
+                    await prisma.merchantUser.findUnique({
+                        where: {
+                            email: ownerEmail
+                        }
+                    });
+
+                expect(activatedOwner).not.toBeNull();
+
+                expect(activatedOwner).toMatchObject({
+                    merchantId: approvalBody.merchantId,
+                    email: ownerEmail,
+                    displayName: "Initial Owner",
+                    role: "OWNER"
+                });
+
+                const loginResponse =
+                    await fetch(
+                        `${apiBaseUrl}/auth/login`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "content-type":
+                                    "application/json"
+                            },
+                            body: JSON.stringify({
+                                email:
+                                    ownerEmail,
+                                password:
+                                    ownerPassword
+                            })
+                        }
+                    );
+
+                expect(
+                    loginResponse.status
+                ).toBe(200);
+
+                const loginBody =
+                    await loginResponse.json() as {
+                        token: string;
+                        user: {
+                            id: string;
+                            merchantId: string;
+                            email: string;
+                            displayName: string | null;
+                            role: string;
+                        };
+                    };
+
+                expect(
+                    loginBody.token
+                ).toEqual(
+                    expect.any(String)
+                );
+
+                expect(
+                    loginBody.token.length
+                ).toBeGreaterThan(0);
+
+                expect(
+                    loginBody.user
+                ).toEqual({
+                    id:
+                        activatedOwner!.id,
+                    merchantId:
+                        approvalBody.merchantId,
+                    email:
                         ownerEmail,
-                      password:
-                        ownerPassword
-                    })
-                  }
-                );
-
-              expect(
-                loginResponse.status
-              ).toBe(200);
-
-              const loginBody =
-                await loginResponse.json() as {
-                  token: string;
-                  user: {
-                    id: string;
-                    merchantId: string;
-                    email: string;
-                    displayName: string | null;
-                    role: string;
-                  };
-                };
-
-              expect(
-                loginBody.token
-              ).toEqual(
-                expect.any(String)
-              );
-
-              expect(
-                loginBody.token.length
-              ).toBeGreaterThan(0);
-
-              expect(
-                loginBody.user
-              ).toEqual({
-                id:
-                  createBody.owner.id,
-                merchantId:
-                  createBody.merchant.id,
-                email:
-                  ownerEmail,
-                displayName:
-                  "Initial Owner",
-                role:
-                  "OWNER"
-              });
+                    displayName:
+                        "Initial Owner",
+                    role:
+                        "OWNER"
+                });
             }
-          );
+        );
     }
 );
