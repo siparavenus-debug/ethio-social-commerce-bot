@@ -3,9 +3,13 @@ import {
     prisma
   } from "@ethio-commerce/database";
 
-  import {
-    env
-  } from "../config/env.js";
+  import dotenv from "dotenv";
+  import path from "node:path";
+
+  dotenv.config({
+    path: path.resolve(process.cwd(), ".env"),
+    override: false
+  });
 
   import {
     cleanupExpiredMerchantInvitations
@@ -22,10 +26,14 @@ import {
       "PROCESSING MERCHANT ACTIVATION INVITATIONS"
     );
 
-    const apiKey = env.resendApiKey;
-    const fromEmail = env.resendFromEmail;
-    const activationBaseUrl =
-      env.merchantActivationBaseUrl;
+  const apiKey =
+    process.env.RESEND_API_KEY?.trim();
+
+  const fromEmail =
+    process.env.RESEND_FROM_EMAIL?.trim();
+
+  const activationBaseUrl =
+    process.env.MERCHANT_ACTIVATION_BASE_URL?.trim();
 
     if (
       !apiKey ||

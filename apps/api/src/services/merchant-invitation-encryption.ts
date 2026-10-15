@@ -6,18 +6,30 @@ import {
     randomBytes
   } from "node:crypto";
 
-  import { env } from "../config/env.js";
+  import dotenv from "dotenv";
+  import path from "node:path";
+
+  dotenv.config({
+    path: path.resolve(process.cwd(), ".env"),
+    override: false
+  });
 
   const ENCRYPTION_VERSION = "v1";
   const ALGORITHM = "aes-256-gcm";
   const IV_LENGTH = 12;
 
   function getEncryptionKey(): Buffer {
+    const encryptionKey =
+      process.env.MERCHANT_INVITATION_ENCRYPTION_KEY?.trim();
+
+    if (!encryptionKey || encryptionKey.length < 32) {
+      throw new Error(
+        "MERCHANT_INVITATION_ENCRYPTION_KEY must be configured and contain at least 32 characters."
+      );
+    }
+
     return createHash("sha256")
-      .update(
-        env.merchantInvitationEncryptionKey,
-        "utf8"
-      )
+      .update(encryptionKey, "utf8")
       .digest();
   }
 
