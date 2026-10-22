@@ -3653,34 +3653,33 @@ export default function App() {
       return;
     }
 
-    if (
-      !canReviewPayments &&
-      activeTab === "payments"
-    ) {
-      setActiveTab("orders");
-    }
-
-    if (
-      !canViewBilling &&
-      activeTab === "billing"
-    ) {
-      setActiveTab("orders");
-    }
-
-    if (
-      !canManageUsers &&
-      activeTab === "users"
-    ) {
-      setActiveTab("orders");
-    }
-
     void refreshDashboard();
+  }, [
+    auth?.token,
+    authValidated
+  ]);
+
+  useEffect(() => {
+    if (!auth?.token || !authValidated) {
+      return;
+    }
+
+    if (
+      (!canReviewPayments && activeTab === "payments") ||
+      (!canViewBilling && activeTab === "billing") ||
+      (!canManageUsers && activeTab === "users") ||
+      (!canManageTelegram && activeTab === "telegram")
+    ) {
+      setActiveTab("orders");
+    }
   }, [
     auth?.token,
     authValidated,
     canReviewPayments,
     canViewBilling,
-    canManageUsers
+    canManageUsers,
+    canManageTelegram,
+    activeTab
   ]);
 
   const reviewCount =
@@ -4255,7 +4254,7 @@ export default function App() {
         )}
 
         {activeTab ===
-          "payments" ? (
+          "payments" && canReviewPayments ? (
           <section
             style={styles.section}
           >
@@ -7292,7 +7291,7 @@ export default function App() {
               </div>
             )}
           </section>
-        ) : activeTab === "billing" ? (
+        ) : activeTab === "billing" && canViewBilling ? (
           <section
             style={styles.section}
           >
@@ -8509,7 +8508,7 @@ export default function App() {
               </>
             )}
           </section>
-        ) : activeTab === "telegram" ? (
+        ) : activeTab === "telegram" && canManageTelegram ? (
           <section
             style={styles.section}
           >
@@ -8725,7 +8724,7 @@ export default function App() {
               </div>
             )}
           </section>
-        ) : (
+        ) : activeTab === "users" && canManageUsers ? (
           <section
             style={styles.section}
           >
@@ -9164,7 +9163,7 @@ export default function App() {
               </div>
             )}
           </section>
-        )}
+        ) : null}
       </main>
 
       {changingPassword && (

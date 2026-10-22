@@ -19,6 +19,30 @@ describe("OWNER merchant user management UI contract", () => {
     );
   });
 
+  it("guards restricted tab content during rendering", () => {
+    expect(appSource).toMatch(
+      /\{activeTab ===\s*"payments"\s*&&\s*canReviewPayments\s*\?\s*\(/
+    );
+    expect(appSource).toMatch(
+      /activeTab ===\s*"billing"\s*&&\s*canViewBilling\s*\?\s*\(/
+    );
+    expect(appSource).toMatch(
+      /activeTab ===\s*"users"\s*&&\s*canManageUsers\s*\?\s*\(/
+    );
+  });
+  it("guards Telegram content and redirects unauthorized access", () => {
+    expect(appSource).toMatch(
+      /activeTab ===\s*"telegram"\s*&&\s*canManageTelegram\s*\?\s*\(/
+    );
+
+    expect(appSource).toMatch(
+      /!canManageTelegram\s*&&\s*activeTab === "telegram"[\s\S]*?setActiveTab\("orders"\)/
+    );
+
+    expect(appSource).toMatch(
+      /authValidated,\s*canReviewPayments,\s*canViewBilling,\s*canManageUsers,\s*canManageTelegram,\s*activeTab/
+    );
+  });
   it("uses the merchant-scoped users endpoint", () => {
     expect(appSource).toContain(
       '`/merchants/${merchantId}/users`'
