@@ -163,7 +163,7 @@ export async function createPlatformPlan(
                 );
             }
 
-            let plan;
+            let plan: Awaited<ReturnType<typeof tx.subscriptionPlan.create>>;
 
             try {
                 plan =

@@ -112,6 +112,54 @@ describe("category image management UI contract", () => {
     );
   });
 
+  it("dismisses category image preview only on backdrop clicks", () => {
+    const modal = appSource.match(
+      /{categoryImagePreview && \([\s\S]*?{categoryImageRemoval && \(/
+    )?.[0];
+
+    expect(modal).toBeDefined();
+    expect(modal).toContain(
+      'aria-label="Close category image preview backdrop"'
+    );
+    expect(modal).toContain(
+      'type="button"'
+    );
+    expect(modal).not.toContain(
+      "event.stopPropagation()"
+    );
+    expect(appSource).toContain(
+      'event.key === "Escape"'
+    );
+  });
+
+  it("dismisses category image removal only on backdrop clicks", () => {
+    const modal = appSource.match(
+      /{categoryImageRemoval && \([\s\S]*?\n      \)\}/
+    )?.[0];
+
+    expect(modal).toBeDefined();
+    expect(modal).toContain(
+      'aria-label="Close category image removal backdrop"'
+    );
+    expect(modal).toContain(
+      'type="button"'
+    );
+    expect(modal).toContain(
+      "disabled={actionId !== null}"
+    );
+    expect(modal).toContain(
+      "if (actionId === null)"
+    );
+    expect(modal).not.toContain(
+      "event.stopPropagation()"
+    );
+    expect(modal).toContain(
+      "disabled={actionId !== null}"
+    );
+    expect(modal).toContain(
+      "void removeCategoryImage("
+    );
+  });
   it("opens product images in the shared full-screen preview", () => {
     expect(appSource).toContain(
       "product.images.map("

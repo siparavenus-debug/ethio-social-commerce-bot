@@ -591,7 +591,7 @@ router.post(
         };
       }
 
-      let settlement;
+      let settlement: Awaited<ReturnType<typeof submitMerchantSettlement>>;
 
       try {
         settlement =

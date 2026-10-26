@@ -133,7 +133,7 @@ export async function initializeMerchantSubscription(
           ? plan.monthlyPrice
           : plan.annualPrice;
 
-      let subscription;
+      let subscription: Awaited<ReturnType<typeof tx.merchantSubscription.create>>;
 
       try {
         subscription =

@@ -82,6 +82,28 @@ describe("merchant self-service password change UI contract", () => {
     );
   });
 
+  it("dismisses the password modal only on backdrop clicks", () => {
+    const modal = appSource.match(
+      /{changingPassword && \([\s\S]*?{categoryImagePreview && \(/
+    )?.[0];
+
+    expect(modal).toBeDefined();
+    expect(modal).toContain(
+      'aria-label="Close password dialog"'
+    );
+    expect(modal).toContain(
+      'type="button"'
+    );
+    expect(modal).toContain(
+      "disabled={changingPasswordLoading}"
+    );
+    expect(modal).toContain(
+      "!changingPasswordLoading"
+    );
+    expect(modal).not.toContain(
+      "event.stopPropagation()"
+    );
+  });
   it("does not persist self-service passwords in browser storage", () => {
     expect(appSource).not.toContain(
       'localStorage.setItem("currentPassword"'

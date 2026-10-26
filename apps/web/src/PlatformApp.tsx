@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import {
   platformFetch,
@@ -269,6 +269,7 @@ function Table({ rows, columns, actions }: { rows: Row[]; columns: string[]; act
 
 function ActionForm({ action, busy, submit, close }: { action: Action; busy: boolean; submit: (body: unknown) => Promise<void>; close: () => void }) {
   const [error, setError] = useState("");
+  const formId = useId();
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
     const data = new FormData(event.currentTarget);
@@ -293,7 +294,7 @@ function ActionForm({ action, busy, submit, close }: { action: Action; busy: boo
       await submit(action.transform ? action.transform(values) : values);
     } catch (e) { setError(e instanceof Error ? e.message : "Action failed"); }
   }
-  return <div className="pa-modal-backdrop" onMouseDown={close}><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title} onMouseDown={e => e.stopPropagation()}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submitting…" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
+  return <div className="pa-modal-backdrop" onMouseDown={close}><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title} onMouseDown={e => e.stopPropagation()}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name} htmlFor={`${formId}-${f.name}`}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select id={`${formId}-${f.name}`} name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea id={`${formId}-${f.name}`} name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input id={`${formId}-${f.name}`} name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submitting…" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
 }
 
 export default function PlatformApp() {
@@ -404,6 +405,8 @@ export default function PlatformApp() {
       return;
     }
 
+    const generation = session.current;
+
     const evidenceWindow =
       window.open("", "_blank");
 
@@ -424,6 +427,11 @@ export default function PlatformApp() {
           token
         );
 
+      if (generation !== session.current) {
+        evidenceWindow?.close();
+        return;
+      }
+
       if (!response.ok) {
         const data =
           await response
@@ -439,6 +447,11 @@ export default function PlatformApp() {
 
       const blob =
         await response.blob();
+
+      if (generation !== session.current) {
+        evidenceWindow?.close();
+        return;
+      }
 
       const objectUrl =
         URL.createObjectURL(blob);
@@ -473,13 +486,48 @@ export default function PlatformApp() {
       );
     } catch (e) {
       evidenceWindow?.close();
-      fail(e);
+
+      if (generation === session.current) {
+        fail(e);
+      }
     }
   }
   useEffect(() => {
     if (!token) return;
-    const controller = new AbortController(); setChecking(true);
-    platformRequest<{ user: User }>("/auth/me", token, "GET", undefined, controller.signal).then(data => { setUser(data.user); setChecking(false); }).catch(e => { if (!controller.signal.aborted) { fail(e); setChecking(false); } });
+    const controller = new AbortController();
+    const generation = session.current;
+
+    setChecking(true);
+
+    platformRequest<{ user: User }>(
+      "/auth/me",
+      token,
+      "GET",
+      undefined,
+      controller.signal
+    )
+      .then(data => {
+        if (
+          controller.signal.aborted ||
+          generation !== session.current
+        ) {
+          return;
+        }
+
+        setUser(data.user);
+        setChecking(false);
+      })
+      .catch(e => {
+        if (
+          controller.signal.aborted ||
+          generation !== session.current
+        ) {
+          return;
+        }
+
+        fail(e);
+        setChecking(false);
+      });
     return () => controller.abort();
   }, [token, revision]);
   useEffect(() => {
@@ -765,13 +813,47 @@ export default function PlatformApp() {
     overdueCustomEnd,
     revision
   ]);
+  const loginInFlight = useRef(false);
+
   async function login(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); const data = new FormData(event.currentTarget); setBusy(true); setError("");
+    event.preventDefault();
+
+    if (loginInFlight.current) {
+      return;
+    }
+
+    loginInFlight.current = true;
+
+    const data = new FormData(event.currentTarget);
+
+    setBusy(true);
+    setError("");
+
     try {
-      const result = await platformRequest<{ token: string }>("/auth/login", "", "POST", { email: data.get("email"), password: data.get("password") });
-      try { sessionStorage.setItem(PLATFORM_SESSION_KEY, result.token); } catch { /* Allow an in-memory session when storage is unavailable. */ }
+      const result = await platformRequest<{ token: string }>(
+        "/auth/login",
+        "",
+        "POST",
+        {
+          email: data.get("email"),
+          password: data.get("password")
+        }
+      );
+
+      try {
+        sessionStorage.setItem(PLATFORM_SESSION_KEY, result.token);
+      } catch {
+        /* Allow an in-memory session when storage is unavailable. */
+      }
+
+      session.current++;
       setToken(result.token);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) {
+      fail(e);
+    } finally {
+      loginInFlight.current = false;
+      setBusy(false);
+    }
   }
   async function changePassword(
     event: FormEvent<HTMLFormElement>
@@ -782,6 +864,8 @@ export default function PlatformApp() {
       new FormData(
         event.currentTarget
       );
+
+    const generation = session.current;
 
     setBusy(true);
     setError("");
@@ -803,11 +887,17 @@ export default function PlatformApp() {
         }
       );
 
-      logout();
+      if (generation === session.current) {
+        logout();
+      }
     } catch (e) {
-      fail(e);
+      if (generation === session.current) {
+        fail(e);
+      }
     } finally {
-      setBusy(false);
+      if (generation === session.current) {
+        setBusy(false);
+      }
     }
   }
   async function submit(body: unknown) {
@@ -952,7 +1042,7 @@ export default function PlatformApp() {
     });
   }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
-  if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button>{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
+  if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button type="submit">{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button type="button" onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
   return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons">
     <button
       type="button"
@@ -1079,6 +1169,7 @@ export default function PlatformApp() {
         ...(user.role !== "STAFF" ? ["Audit" as View] : [])
       ] as View[]).map(v => (
         <button
+          type="button"
           key={v}
           aria-current={view === v ? "page" : undefined}
           disabled={busy}
@@ -1094,7 +1185,7 @@ export default function PlatformApp() {
       ))}
     </nav>
     <main>
-      {view === "Merchants" && selected ? <div className="pa-detail-header"><button className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
+      {view === "Merchants" && selected ? <div className="pa-detail-header"><button type="button" className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
       {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
       {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
         {view === "Merchants" && !selected && <>
@@ -1138,7 +1229,7 @@ export default function PlatformApp() {
               }
             }
             return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
-          }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
+          }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button type="button" disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
         {view === "Merchant Onboarding" && (
   <section className="pa-card">
   <div className="pa-buttons">
@@ -1225,7 +1316,7 @@ export default function PlatformApp() {
   </section>
 )}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
           merchant.subscription &&
-          !!transitions[merchant.subscription.status]?.length && <button disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
+          !!transitions[merchant.subscription.status]?.length && <button type="button" disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button type="button" disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
 
           <section className="pa-card">
             <div className="pa-section-heading">
@@ -1239,6 +1330,7 @@ export default function PlatformApp() {
               {user.role !== "STAFF" &&
                 merchant.accountStatus === "ACTIVE" && (
                   <button
+                    type="button"
                     disabled={busy}
                     onClick={() =>
                       setAction({
@@ -1262,6 +1354,7 @@ export default function PlatformApp() {
               {user.role !== "STAFF" &&
                 merchant.accountStatus === "SUSPENDED" && (
                   <button
+                    type="button"
                     disabled={busy}
                     onClick={() =>
                       setAction({
@@ -1312,7 +1405,7 @@ export default function PlatformApp() {
             </div>
           </section>
 
-          <section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
+          <section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button type="button" key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
             r.hasReceiptEvidence === true ||
             (
               typeof r.receiptUrl === "string" &&
@@ -1332,7 +1425,7 @@ export default function PlatformApp() {
               >
                 View receipt
               </button>
-            )}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
+            )}{r.status === "REVIEW_REQUIRED" && ["verify", "reject"].map(v => <button type="button" key={v} disabled={busy} onClick={() => setAction({ title: `${label(v)} settlement ${r.id}`, path: `${merchantPath}/billing/settlements/${encodeURIComponent(r.id)}/${v}`, method: "POST", fields: [field("reviewNote", "Review note", "text", true)], note: `${label(v)} evidence for ${r.amount} ${r.currency}, invoice ${r.invoiceId}. Verification can mark the associated OPEN invoice paid; the server enforces eligibility.` })}>{label(v)}</button>)}</>}</>} /></section></section>}
         {view === "Billing Work" && (
           <>
             <section className="pa-card">
@@ -1568,10 +1661,10 @@ export default function PlatformApp() {
           </>
         )}{view === "Plans" && <>
           {user.role === "OWNER" && (
-            <button disabled={busy} onClick={() => planAction()}>
+            <button type="button" disabled={busy} onClick={() => planAction()}>
               Create plan
             </button>
-          )}<Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => user.role === "OWNER" ? <><button disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></> : null} /></>}
+          )}<Table rows={plans} columns={["name", "code", "monthlyPrice", "annualPrice", "currency", "commissionRate", "isActive"]} actions={r => user.role === "OWNER" ? <><button type="button" disabled={busy} onClick={() => planAction(r as Plan)}>Edit</button><button type="button" disabled={busy} onClick={() => setAction({ title: `${r.isActive ? "Deactivate" : "Activate"} ${r.name}`, path: `/plans/${encodeURIComponent(r.id)}/active-state`, method: "PATCH", fields: [], transform: () => ({ isActive: !r.isActive }) })}>{r.isActive ? "Deactivate" : "Activate"}</button></> : null} /></>}
         {view === "Revenue" && (
           <>
             <section className="pa-card">

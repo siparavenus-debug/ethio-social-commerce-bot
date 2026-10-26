@@ -931,6 +931,76 @@ describe(
     );
 
     it(
+      "rejects another merchant's invoice and cleans up uploaded receipt",
+      async () => {
+        const merchantA =
+          await createFixture(
+            "foreign-invoice-a"
+          );
+
+        const merchantB =
+          await createFixture(
+            "foreign-invoice-b"
+          );
+
+        const response =
+          await postSettlementReceipt(
+            merchantB.merchant.id,
+            merchantB.token,
+            createSettlementForm(
+              merchantA.invoice.id,
+              "FOREIGN-INVOICE"
+            )
+          );
+
+        expect(response.status).toBe(404);
+
+        expect(
+          storageMocks.uploadSettlementReceipt
+        ).toHaveBeenCalledTimes(1);
+
+        const uploadedKey =
+          storageMocks.uploadSettlementReceipt
+            .mock.calls[0][0];
+
+        expect(
+          storageMocks.deleteSettlementReceipt
+        ).toHaveBeenCalledTimes(1);
+
+        expect(
+          storageMocks.deleteSettlementReceipt
+        ).toHaveBeenCalledWith(
+          uploadedKey
+        );
+
+        expect(
+          await prisma.merchantSettlement.count({
+            where: {
+              merchantId: {
+                in: [
+                  merchantA.merchant.id,
+                  merchantB.merchant.id
+                ]
+              }
+            }
+          })
+        ).toBe(0);
+
+        const invoice =
+          await prisma.merchantInvoice.findUniqueOrThrow({
+            where: {
+              id: merchantA.invoice.id
+            }
+          });
+
+        expect(invoice.status).toBe(
+          MerchantInvoiceStatus.OPEN
+        );
+
+        expect(invoice.paidAt).toBeNull();
+      }
+    );
+    it(
       "blocks cross-merchant receipt submission before storage",
       async () => {
         const owner =
@@ -1215,6 +1285,63 @@ describe(
         expect(
           response.status
         ).toBe(403);
+
+        expect(
+          storageMocks.getSettlementReceipt
+        ).not.toHaveBeenCalled();
+      }
+    );
+
+    it(
+      "returns 404 when an OWNER requests another merchant's settlement evidence",
+      async () => {
+        const merchantA =
+          await createFixture(
+            "read-ownership-a"
+          );
+
+        const merchantB =
+          await createFixture(
+            "read-ownership-b"
+          );
+
+        const submitResponse =
+          await postSettlementReceipt(
+            merchantA.merchant.id,
+            merchantA.token,
+            createSettlementForm(
+              merchantA.invoice.id,
+              "READ-OWNERSHIP-MISMATCH"
+            )
+          );
+
+        expect(
+          submitResponse.status
+        ).toBe(201);
+
+        const settlement =
+          await prisma.merchantSettlement.findFirstOrThrow({
+            where: {
+              merchantId:
+                merchantA.merchant.id,
+              invoiceId:
+                merchantA.invoice.id
+            }
+          });
+
+        storageMocks.getSettlementReceipt
+          .mockClear();
+
+        const response =
+          await getSettlementEvidence(
+            merchantB.merchant.id,
+            settlement.id,
+            merchantB.token
+          );
+
+        expect(
+          response.status
+        ).toBe(404);
 
         expect(
           storageMocks.getSettlementReceipt

@@ -184,7 +184,7 @@ import {
         const telegramBotId =
           String(botIdentity.id);
 
-          let provisioningIntegration;
+          let provisioningIntegration: Awaited<ReturnType<typeof prisma.merchantTelegramIntegration.create>>;
 
           try {
             provisioningIntegration =
@@ -259,7 +259,7 @@ import {
             throw webhookError;
           }
 
-        let integration;
+        let integration: Awaited<ReturnType<typeof prisma.merchantTelegramIntegration.update>>;
 
         try {
           integration =
@@ -580,7 +580,7 @@ import {
           );
         }
 
-        let integration;
+        let integration: Awaited<ReturnType<typeof prisma.merchantTelegramIntegration.update>>;
 
         try {
           integration =

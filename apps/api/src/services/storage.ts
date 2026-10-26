@@ -6,6 +6,8 @@ import {
   S3Client
 } from "@aws-sdk/client-s3";
 
+import type { GetObjectCommandOutput } from "@aws-sdk/client-s3";
+
 import { env } from "../config/env.js";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
@@ -250,7 +252,7 @@ export async function getSettlementReceipt(
 
   const client = getR2Client();
 
-  let response;
+  let response: GetObjectCommandOutput;
 
   try {
     response =

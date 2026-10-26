@@ -1,8 +1,11 @@
-import {
+import { useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
+  useRef,
   useState
 } from "react";
+import { createSessionGuard } from "./session-guard.js";
 
 type AuthUser = {
   id: string;
@@ -349,6 +352,18 @@ export default function App() {
     () => !auth?.token
   );
 
+  const sessionGuardRef = useRef(
+    createSessionGuard()
+  );
+  const initialSessionActivatedRef = useRef(false);
+  if (!initialSessionActivatedRef.current) {
+    if (auth?.token) {
+      sessionGuardRef.current.activate(auth.token);
+    }
+    initialSessionActivatedRef.current = true;
+  }
+
+  const sessionGuard = sessionGuardRef.current;
   const role = auth?.user.role;
   const merchantId = auth?.user.merchantId;
   const canManageProducts = role === "OWNER" || role === "ADMIN";
@@ -377,6 +392,7 @@ export default function App() {
     loginLoading,
     setLoginLoading
   ] = useState(false);
+  const loginInFlightRef = useRef(false);
 
   const [
     activeTab,
@@ -837,18 +853,18 @@ export default function App() {
     setRestockNote
   ] = useState("");
 
-  function saveAuth(
-    value: LoginResponse
-  ) {
+  const saveAuth = useCallback((value: LoginResponse) => {
     localStorage.setItem(
       AUTH_STORAGE_KEY,
       JSON.stringify(value)
     );
 
     setAuth(value);
-  }
+  }, []);
 
-  function logout() {
+  const logout = useCallback(() => {
+    sessionGuard.invalidate();
+
     localStorage.removeItem(
       AUTH_STORAGE_KEY
     );
@@ -884,7 +900,20 @@ export default function App() {
 
     setProductFormOpen(false);
     setEditingProductId(null);
+    setProductName("");
+    setProductDescription("");
+    setProductPrice("");
+    setProductCurrency("ETB");
+    setProductStock("0");
+    setProductStatus("DRAFT");
+    setProductCategoryId("");
+    setCategoryName("");
     setImageProductId(null);
+    setImageFile(null);
+    setCategoryImageCategoryId(null);
+    setCategoryImageFile(null);
+    setCategoryImagePreview(null);
+    setCategoryImageRemoval(null);
 
     setError("");
     setSuccess("");
@@ -899,51 +928,14 @@ export default function App() {
     );
     setRejectingPaymentId(null);
     setRestockingProductId(null);
-  }
+  }, [sessionGuard]);
 
-  async function validateStoredAuth() {
-    if (!auth?.token) {
-      setAuthValidated(true);
+
+  async function login() {
+    if (loginInFlightRef.current) {
       return;
     }
 
-    try {
-      const response =
-        await fetch(
-          `${API_BASE_URL}/auth/me`,
-          {
-            headers: {
-              Authorization:
-                `Bearer ${auth.token}`
-            }
-          }
-        );
-
-      const data =
-        await response
-          .json()
-          .catch(() => null);
-
-      if (
-        !response.ok ||
-        !data?.user
-      ) {
-        logout();
-        return;
-      }
-
-      saveAuth({
-        token: auth.token,
-        user: data.user
-      });
-
-      setAuthValidated(true);
-    } catch {
-      logout();
-    }
-  }
-
-  async function login() {
     const email =
       loginEmail.trim();
 
@@ -960,6 +952,8 @@ export default function App() {
       );
       return;
     }
+
+    loginInFlightRef.current = true;
 
     try {
       setLoginLoading(true);
@@ -1006,6 +1000,7 @@ export default function App() {
         );
       }
 
+      sessionGuard.activate(data.token);
       saveAuth(data);
 
       setLoginPassword("");
@@ -1019,6 +1014,7 @@ export default function App() {
           : "Login failed"
       );
     } finally {
+      loginInFlightRef.current = false;
       setLoginLoading(false);
     }
   }
@@ -1056,6 +1052,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setChangingPasswordLoading(true);
       setError("");
@@ -1073,8 +1071,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -1085,13 +1087,17 @@ export default function App() {
 
       logout();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to change password"
       );
     } finally {
-      setChangingPasswordLoading(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setChangingPasswordLoading(false);
+      }
     }
   }
 
@@ -1136,6 +1142,12 @@ export default function App() {
       );
     }
 
+    const requestSession = sessionGuard.capture();
+
+    if (!sessionGuard.isCurrent(requestSession)) {
+      throw new Error("Session changed. Please try again.");
+    }
+
     const response =
       await fetch(
         `${API_BASE_URL}${path}`,
@@ -1144,6 +1156,10 @@ export default function App() {
           headers
         }
       );
+
+    if (!sessionGuard.isCurrent(requestSession)) {
+      throw new Error("Session changed. Please try again.");
+    }
 
     if (
       response.status === 401
@@ -1177,6 +1193,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     const evidenceWindow =
       window.open("", "_blank");
 
@@ -1192,11 +1210,21 @@ export default function App() {
           `/merchants/${merchantId}/billing/settlements/${settlement.id}/evidence`
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) {
+        evidenceWindow?.close();
+        return;
+      }
+
       if (!response.ok) {
         const data =
           await response
             .json()
             .catch(() => null);
+
+        if (!sessionGuard.isCurrent(requestSession)) {
+          evidenceWindow?.close();
+          return;
+        }
 
         throw new Error(
           data?.error ||
@@ -1206,6 +1234,11 @@ export default function App() {
 
       const blob =
         await response.blob();
+
+      if (!sessionGuard.isCurrent(requestSession)) {
+        evidenceWindow?.close();
+        return;
+      }
 
       const objectUrl =
         URL.createObjectURL(
@@ -1249,6 +1282,8 @@ export default function App() {
     } catch (err) {
       evidenceWindow?.close();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
@@ -1263,6 +1298,8 @@ export default function App() {
       setLoadingReviews(false);
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setLoadingReviews(true);
@@ -1288,6 +1325,8 @@ export default function App() {
       const data =
         await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setReviews(
         Array.isArray(data)
           ? data
@@ -1298,13 +1337,16 @@ export default function App() {
             : []
       );
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
       setError(
         err instanceof Error
           ? err.message
           : "Failed to load payment reviews"
       );
     } finally {
-      setLoadingReviews(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingReviews(false);
+      }
     }
   }
 
@@ -1312,6 +1354,8 @@ export default function App() {
     if (!auth?.token || !merchantId) {
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setLoadingOrders(true);
@@ -1337,6 +1381,8 @@ export default function App() {
       const data =
         await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setOrders(
         Array.isArray(data)
           ? data
@@ -1347,13 +1393,16 @@ export default function App() {
             : []
       );
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
       setError(
         err instanceof Error
           ? err.message
           : "Failed to load orders"
       );
     } finally {
-      setLoadingOrders(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingOrders(false);
+      }
     }
   }
 
@@ -1361,6 +1410,8 @@ export default function App() {
     if (!auth?.token || !merchantId) {
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setLoadingProducts(true);
@@ -1386,6 +1437,8 @@ export default function App() {
       const data =
         await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setProducts(
         Array.isArray(data)
           ? data
@@ -1396,18 +1449,23 @@ export default function App() {
             : []
       );
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
       setError(
         err instanceof Error
           ? err.message
           : "Failed to load products"
       );
     } finally {
-      setLoadingProducts(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingProducts(false);
+      }
     }
   }
 
   async function loadCategories() {
     if (!auth?.token || !merchantId) return;
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setLoadingCategories(true);
@@ -1423,17 +1481,22 @@ export default function App() {
         );
       }
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setCategories(
         Array.isArray(data) ? data : []
       );
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
       setError(
         err instanceof Error
           ? err.message
           : "Failed to load categories"
       );
     } finally {
-      setLoadingCategories(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingCategories(false);
+      }
     }
   }
 
@@ -1509,6 +1572,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     const currentId =
       editingProductId || "new-product";
 
@@ -1537,6 +1602,8 @@ export default function App() {
 
       const data = await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error || "Failed to save product"
@@ -1556,13 +1623,17 @@ export default function App() {
         loadCategories()
       ]);
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to save product"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1583,6 +1654,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId("new-category");
       setError("");
@@ -1598,6 +1671,8 @@ export default function App() {
 
       const data = await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error || "Failed to create category"
@@ -1610,13 +1685,17 @@ export default function App() {
       );
       await loadCategories();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to create category"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1632,6 +1711,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(categoryId);
       setError("");
@@ -1642,6 +1723,8 @@ export default function App() {
         { method: "DELETE" }
       );
       const data = await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -1655,13 +1738,17 @@ export default function App() {
         loadProducts()
       ]);
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to delete category"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1675,6 +1762,8 @@ export default function App() {
       setError("Please select an image file.");
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setActionId(`image-${productId}`);
@@ -1694,6 +1783,8 @@ export default function App() {
 
       const data = await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -1706,13 +1797,17 @@ export default function App() {
       setSuccess("Product image uploaded successfully.");
       await loadProducts();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to upload product image"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1732,6 +1827,8 @@ export default function App() {
       );
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setActionId(
@@ -1760,6 +1857,8 @@ export default function App() {
       const data =
         await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -1776,13 +1875,17 @@ export default function App() {
 
       await loadCategories();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to upload category image"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1796,6 +1899,8 @@ export default function App() {
       );
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setActionId(
@@ -1818,6 +1923,8 @@ export default function App() {
 
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -1845,13 +1952,17 @@ export default function App() {
 
       await loadCategories();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to remove category image"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1864,6 +1975,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(`primary-${imageId}`);
       setError("");
@@ -1875,6 +1988,8 @@ export default function App() {
       );
       const data = await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -1885,13 +2000,17 @@ export default function App() {
       setSuccess("Primary product image updated.");
       await loadProducts();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to set primary image"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1908,6 +2027,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(`delete-image-${imageId}`);
       setError("");
@@ -1919,6 +2040,8 @@ export default function App() {
       );
       const data = await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -1929,13 +2052,17 @@ export default function App() {
       setSuccess("Product image deleted.");
       await loadProducts();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to delete product image"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -1956,6 +2083,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(productId);
       setError("");
@@ -1966,6 +2095,8 @@ export default function App() {
         { method: "DELETE" }
       );
       const data = await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -1979,13 +2110,17 @@ export default function App() {
         loadCategories()
       ]);
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to delete product"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -2000,6 +2135,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setLoadingTelegram(true);
       setError("");
@@ -2011,6 +2148,8 @@ export default function App() {
       const data = await response
         .json()
         .catch(() => null);
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (response.status === 404) {
         setTelegramIntegration(null);
@@ -2028,6 +2167,8 @@ export default function App() {
         data as TelegramIntegration
       );
     } catch (loadError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setTelegramIntegration(null);
 
       setError(
@@ -2036,7 +2177,9 @@ export default function App() {
           : "Failed to load Telegram integration"
       );
     } finally {
-      setLoadingTelegram(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingTelegram(false);
+      }
     }
   }
 
@@ -2058,6 +2201,8 @@ export default function App() {
       );
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setSavingTelegram(true);
@@ -2082,6 +2227,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2099,13 +2246,17 @@ export default function App() {
         "Telegram bot connected successfully."
       );
     } catch (connectError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         connectError instanceof Error
           ? connectError.message
           : "Failed to connect Telegram bot"
       );
     } finally {
-      setSavingTelegram(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingTelegram(false);
+      }
     }
   }
 
@@ -2118,6 +2269,8 @@ export default function App() {
     ) {
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setSavingTelegram(true);
@@ -2142,6 +2295,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2157,13 +2312,17 @@ export default function App() {
         "Telegram bot disabled."
       );
     } catch (disableError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         disableError instanceof Error
           ? disableError.message
           : "Failed to disable Telegram bot"
       );
     } finally {
-      setSavingTelegram(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingTelegram(false);
+      }
     }
   }
 
@@ -2176,6 +2335,8 @@ export default function App() {
     ) {
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setSavingTelegram(true);
@@ -2200,6 +2361,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2215,13 +2378,17 @@ export default function App() {
         "Telegram bot enabled."
       );
     } catch (enableError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         enableError instanceof Error
           ? enableError.message
           : "Failed to enable Telegram bot"
       );
     } finally {
-      setSavingTelegram(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingTelegram(false);
+      }
     }
   }
 
@@ -2244,6 +2411,8 @@ export default function App() {
       );
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setSavingTelegram(true);
@@ -2268,6 +2437,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2285,13 +2456,17 @@ export default function App() {
         "Telegram bot token replaced successfully."
       );
     } catch (replaceError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         replaceError instanceof Error
           ? replaceError.message
           : "Failed to replace Telegram bot token"
       );
     } finally {
-      setSavingTelegram(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingTelegram(false);
+      }
     }
   }
 
@@ -2308,6 +2483,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setLoadingProfile(true);
       setError("");
@@ -2319,6 +2496,8 @@ export default function App() {
       const data = await response
         .json()
         .catch(() => null);
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -2341,6 +2520,8 @@ export default function App() {
         profile.address ?? ""
       );
     } catch (loadError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setMerchantProfile(null);
 
       setError(
@@ -2349,7 +2530,9 @@ export default function App() {
           : "Failed to load merchant profile"
       );
     } finally {
-      setLoadingProfile(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingProfile(false);
+      }
     }
   }
 
@@ -2393,6 +2576,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setSavingProfile(true);
       setError("");
@@ -2413,6 +2598,8 @@ export default function App() {
       const data = await response
         .json()
         .catch(() => null);
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -2439,13 +2626,17 @@ export default function App() {
         "Merchant profile updated."
       );
     } catch (saveError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         saveError instanceof Error
           ? saveError.message
           : "Failed to update merchant profile"
       );
     } finally {
-      setSavingProfile(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingProfile(false);
+      }
     }
   }
 
@@ -2460,6 +2651,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setLoadingUsers(true);
       setError("");
@@ -2471,6 +2664,8 @@ export default function App() {
       const data = await response
         .json()
         .catch(() => null);
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -2485,6 +2680,8 @@ export default function App() {
           : []
       );
     } catch (loadError) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       console.error(
         "Failed to load merchant users:",
         loadError
@@ -2498,7 +2695,9 @@ export default function App() {
           : "Failed to load merchant users"
       );
     } finally {
-      setLoadingUsers(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingUsers(false);
+      }
     }
   }
 
@@ -2545,6 +2744,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setCreatingUser(true);
       setError("");
@@ -2569,6 +2770,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2587,13 +2790,17 @@ export default function App() {
 
       await loadUsers();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to create user"
       );
     } finally {
-      setCreatingUser(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setCreatingUser(false);
+      }
     }
   }
 
@@ -2657,6 +2864,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setSavingUser(true);
       setError("");
@@ -2689,6 +2898,8 @@ export default function App() {
         .json()
         .catch(() => null);
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -2706,13 +2917,17 @@ export default function App() {
 
       await loadUsers();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to update user"
       );
     } finally {
-      setSavingUser(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSavingUser(false);
+      }
     }
   }
 
@@ -2745,6 +2960,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setDeletingUserId(
         merchantUser.id
@@ -2759,10 +2976,14 @@ export default function App() {
         }
       );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         const data = await response
           .json()
           .catch(() => null);
+
+        if (!sessionGuard.isCurrent(requestSession)) return;
 
         throw new Error(
           data?.error ||
@@ -2783,13 +3004,17 @@ export default function App() {
 
       await loadUsers();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to delete user"
       );
     } finally {
-      setDeletingUserId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setDeletingUserId(null);
+      }
     }
   }
 
@@ -2806,6 +3031,8 @@ export default function App() {
       setLoadingBilling(false);
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setLoadingBilling(true);
@@ -2850,6 +3077,8 @@ export default function App() {
           () => null
         )
       ]);
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!summaryResponse.ok) {
         throw new Error(
@@ -2907,6 +3136,8 @@ export default function App() {
           : []
       );
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setBillingSummary(null);
       setBillingCommissions([]);
       setBillingInvoices([]);
@@ -2918,7 +3149,9 @@ export default function App() {
           : "Failed to load billing information"
       );
     } finally {
-      setLoadingBilling(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setLoadingBilling(false);
+      }
     }
   }
 
@@ -2986,6 +3219,8 @@ export default function App() {
       );
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setSubmittingSettlement(true);
       setError("");
@@ -3045,6 +3280,8 @@ export default function App() {
       const data =
         await response.json();
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       if (!response.ok) {
         throw new Error(
           data?.error ||
@@ -3068,13 +3305,17 @@ export default function App() {
 
       await loadBilling();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to submit settlement"
       );
     } finally {
-      setSubmittingSettlement(false);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setSubmittingSettlement(false);
+      }
     }
   }
 
@@ -3107,6 +3348,8 @@ export default function App() {
       return;
     }
 
+    const generation = sessionGuard.capture();
+
     try {
       setActionId(paymentId);
       setError("");
@@ -3124,8 +3367,16 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(generation)) {
+        return;
+      }
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(generation)) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
@@ -3144,16 +3395,19 @@ export default function App() {
         loadProducts()
       ]);
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to verify payment"
-      );
+      if (sessionGuard.isCurrent(generation)) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to verify payment"
+        );
+      }
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(generation)) {
+        setActionId(null);
+      }
     }
   }
-
   function openRejectForm(
     paymentId: string
   ) {
@@ -3199,6 +3453,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(paymentId);
       setError("");
@@ -3216,8 +3472,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -3240,19 +3500,25 @@ export default function App() {
         loadOrders()
       ]);
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to reject payment"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
   async function updateOrderStatus(
     orderId: string
   ) {
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(orderId);
       setError("");
@@ -3269,8 +3535,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -3285,13 +3555,17 @@ export default function App() {
 
       await loadOrders();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to update order status"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -3307,6 +3581,8 @@ export default function App() {
       );
       return;
     }
+
+    const requestSession = sessionGuard.capture();
 
     try {
       setActionId(orderId);
@@ -3324,8 +3600,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -3347,6 +3627,8 @@ export default function App() {
 
       await loadOrders();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
@@ -3356,13 +3638,17 @@ export default function App() {
         ""
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
   async function resendDeliveryConfirmationCode(
     orderId: string
   ) {
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(
         `delivery-resend-${orderId}`
@@ -3378,8 +3664,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -3398,13 +3688,17 @@ export default function App() {
 
       await loadOrders();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to send a new delivery confirmation code"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -3496,6 +3790,8 @@ export default function App() {
       return;
     }
 
+    const requestSession = sessionGuard.capture();
+
     try {
       setActionId(productId);
       setError("");
@@ -3516,8 +3812,12 @@ export default function App() {
           }
         );
 
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       const data =
         await response.json();
+
+      if (!sessionGuard.isCurrent(requestSession)) return;
 
       if (!response.ok) {
         throw new Error(
@@ -3547,13 +3847,17 @@ export default function App() {
 
       await loadProducts();
     } catch (err) {
+      if (!sessionGuard.isCurrent(requestSession)) return;
+
       setError(
         err instanceof Error
           ? err.message
           : "Failed to restock product"
       );
     } finally {
-      setActionId(null);
+      if (sessionGuard.isCurrent(requestSession)) {
+        setActionId(null);
+      }
     }
   }
 
@@ -3625,7 +3929,9 @@ export default function App() {
   }, [reviews, reviewSort]);
 
   useEffect(() => {
-    if (!auth?.token) {
+    const token = auth?.token;
+
+    if (!token) {
       setAuthValidated(true);
       return;
     }
@@ -3634,12 +3940,61 @@ export default function App() {
       return;
     }
 
+    const validatedToken: string = token;
+    let cancelled = false;
+
+    async function validateStoredAuth() {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/auth/me`,
+          {
+            headers: {
+              Authorization: `Bearer ${validatedToken}`
+            }
+          }
+        );
+
+        const data = await response
+          .json()
+          .catch(() => null);
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!response.ok || !data?.user) {
+          logout();
+          return;
+        }
+
+        saveAuth({
+          token: validatedToken,
+          user: data.user
+        });
+
+        setAuthValidated(true);
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        logout();
+      }
+    }
+
     void validateStoredAuth();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     auth?.token,
-    authValidated
+    authValidated, saveAuth, logout
   ]);
 
+  const refreshDashboardOnEffect = useEffectEvent(() => {
+    void refreshDashboard();
+  });
   useEffect(() => {
     if (!auth?.token) {
       setLoadingReviews(false);
@@ -3653,22 +4008,40 @@ export default function App() {
       return;
     }
 
-    void refreshDashboard();
+    refreshDashboardOnEffect();
   }, [
     auth?.token,
     authValidated
   ]);
-
   useEffect(() => {
     if (!auth?.token || !authValidated) {
       return;
     }
 
     if (
-      (!canReviewPayments && activeTab === "payments") ||
-      (!canViewBilling && activeTab === "billing") ||
-      (!canManageUsers && activeTab === "users") ||
-      (!canManageTelegram && activeTab === "telegram")
+      !canReviewPayments &&
+      activeTab === "payments"
+    ) {
+      setActiveTab("orders");
+    }
+
+    if (
+      !canViewBilling &&
+      activeTab === "billing"
+    ) {
+      setActiveTab("orders");
+    }
+
+    if (
+      !canManageUsers &&
+      activeTab === "users"
+    ) {
+      setActiveTab("orders");
+    }
+
+    if (
+      !canManageTelegram &&
+      activeTab === "telegram"
     ) {
       setActiveTab("orders");
     }
@@ -3765,12 +4138,14 @@ export default function App() {
               style={
                 styles.formLabel
               }
+              htmlFor="merchant-login-email"
             >
               Email
             </label>
 
             <input
               type="email"
+              id="merchant-login-email"
               value={loginEmail}
               onChange={(event) =>
                 setLoginEmail(
@@ -3789,12 +4164,14 @@ export default function App() {
               style={
                 styles.formLabel
               }
+              htmlFor="merchant-login-password"
             >
               Password
             </label>
 
             <input
               type="password"
+              id="merchant-login-password"
               value={loginPassword}
               onChange={(event) =>
                 setLoginPassword(
@@ -5876,10 +6253,10 @@ export default function App() {
                       }}
                     >
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-name">
                           Name
                         </label>
-                        <input
+                        <input id="product-name"
                           value={productName}
                           maxLength={200}
                           onChange={(event) =>
@@ -5894,10 +6271,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-category">
                           Category
                         </label>
-                        <select
+                        <select id="product-category"
                           value={productCategoryId}
                           onChange={(event) =>
                             setProductCategoryId(
@@ -5924,10 +6301,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-price">
                           Price
                         </label>
-                        <input
+                        <input id="product-price"
                           type="number"
                           min="0"
                           step="0.01"
@@ -5944,10 +6321,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-currency">
                           Currency
                         </label>
-                        <input
+                        <input id="product-currency"
                           value={productCurrency}
                           maxLength={3}
                           onChange={(event) =>
@@ -5961,10 +6338,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-stock">
                           Stock
                         </label>
-                        <input
+                        <input id="product-stock"
                           type="number"
                           min="0"
                           step="1"
@@ -5980,10 +6357,10 @@ export default function App() {
                       </div>
 
                       <div>
-                        <label style={styles.formLabel}>
+                        <label style={styles.formLabel} htmlFor="product-status">
                           Status
                         </label>
-                        <select
+                        <select id="product-status"
                           value={productStatus}
                           onChange={(event) =>
                             setProductStatus(
@@ -6006,10 +6383,10 @@ export default function App() {
                       </div>
                     </div>
 
-                    <label style={styles.formLabel}>
+                    <label style={styles.formLabel} htmlFor="product-description">
                       Description
                     </label>
-                    <textarea
+                    <textarea id="product-description"
                       value={productDescription}
                       maxLength={5000}
                       rows={4}
@@ -6933,11 +7310,9 @@ export default function App() {
                               }}
                             >
                               <div>
-                                <label style={styles.formLabel}>
-                                  Image file
-                                </label>
+                                <label style={styles.formLabel} htmlFor="product-image-file">Image file</label>
                                 <input
-                                  type="file"
+                                  type="file" id="product-image-file"
                                   accept="image/jpeg,image/png,image/webp"
                                   onChange={(event) =>
                                     setImageFile(
@@ -7019,12 +7394,10 @@ export default function App() {
                                 style={
                                   styles.formLabel
                                 }
-                              >
-                                Quantity to add
-                              </label>
+                               htmlFor="restock-quantity">Quantity to add</label>
 
                               <input
-                                type="number"
+                                type="number" id="restock-quantity"
                                 min="1"
                                 max="100000"
                                 step="1"
@@ -7093,18 +7466,16 @@ export default function App() {
                                 style={
                                   styles.formLabel
                                 }
-                              >
-                                Note{" "}
+                               htmlFor="restock-note">Note{" "}
                                 <span
                                   style={
                                     styles.optionalLabel
                                   }
                                 >
                                   (optional)
-                                </span>
-                              </label>
+                                </span></label>
 
-                              <textarea
+                              <textarea id="restock-note"
                                 value={
                                   restockNote
                                 }
@@ -8379,12 +8750,12 @@ export default function App() {
                     }}
                   >
                     <label
-                      style={styles.formLabel}
+                      style={styles.formLabel} htmlFor="profile-phone"
                     >
                       Phone
                     </label>
 
-                    <input
+                    <input id="profile-phone"
                       type="tel"
                       value={profilePhone}
                       onChange={(event) =>
@@ -8397,7 +8768,7 @@ export default function App() {
                     />
 
                     <label
-                      style={styles.formLabel}
+                      style={styles.formLabel} htmlFor="profile-alternate-phone"
                     >
                       Alternate phone
                       <span
@@ -8410,7 +8781,7 @@ export default function App() {
                       </span>
                     </label>
 
-                    <input
+                    <input id="profile-alternate-phone"
                       type="tel"
                       value={
                         profileAlternatePhone
@@ -8425,7 +8796,7 @@ export default function App() {
                     />
 
                     <label
-                      style={styles.formLabel}
+                      style={styles.formLabel} htmlFor="profile-address"
                     >
                       Address
                       <span
@@ -8438,7 +8809,7 @@ export default function App() {
                       </span>
                     </label>
 
-                    <textarea
+                    <textarea id="profile-address"
                       value={profileAddress}
                       onChange={(event) =>
                         setProfileAddress(
@@ -8597,14 +8968,12 @@ export default function App() {
                     marginTop: "24px"
                   }}
                 >
-                  <label
+                  <label htmlFor="telegram-replace-bot-token"
                     style={styles.formLabel}
-                  >
-                    Replace bot token
-                  </label>
+                  >Replace bot token</label>
 
                   <input
-                    type="password"
+                    type="password" id="telegram-replace-bot-token"
                     value={telegramBotToken}
                     onChange={(event) =>
                       setTelegramBotToken(
@@ -8687,14 +9056,12 @@ export default function App() {
                   automatically.
                 </p>
 
-                <label
+                <label htmlFor="telegram-connect-bot-token"
                   style={styles.formLabel}
-                >
-                  Bot token
-                </label>
+                >Bot token</label>
 
                 <input
-                  type="password"
+                  type="password" id="telegram-connect-bot-token"
                   value={telegramBotToken}
                   onChange={(event) =>
                     setTelegramBotToken(
@@ -8793,11 +9160,11 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                  >
+                   htmlFor="new-user-display-name">
                     Display name
                   </label>
 
-                  <input
+                  <input id="new-user-display-name"
                     type="text"
                     value={newUserDisplayName}
                     onChange={(event) =>
@@ -8814,11 +9181,11 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                  >
+                   htmlFor="new-user-email">
                     Email
                   </label>
 
-                  <input
+                  <input id="new-user-email"
                     type="email"
                     value={newUserEmail}
                     onChange={(event) =>
@@ -8835,11 +9202,11 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                  >
+                   htmlFor="new-user-password">
                     Password
                   </label>
 
-                  <input
+                  <input id="new-user-password"
                     type="password"
                     value={newUserPassword}
                     onChange={(event) =>
@@ -8856,11 +9223,11 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                  >
+                   htmlFor="new-user-role">
                     Role
                   </label>
 
-                  <select
+                  <select id="new-user-role"
                     value={newUserRole}
                     onChange={(event) =>
                       setNewUserRole(
@@ -8953,11 +9320,11 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                              >
+                               htmlFor="edit-user-display-name">
                                 Display name
                               </label>
 
-                              <input
+                              <input id="edit-user-display-name"
                                 type="text"
                                 value={editUserDisplayName}
                                 onChange={(event) =>
@@ -8974,11 +9341,11 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                              >
+                               htmlFor="edit-user-role">
                                 Role
                               </label>
 
-                              <select
+                              <select id="edit-user-role"
                                 value={editUserRole}
                                 onChange={(event) =>
                                   setEditUserRole(
@@ -9003,11 +9370,11 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                              >
+                               htmlFor="edit-user-password">
                                 New password
                               </label>
 
-                              <input
+                              <input id="edit-user-password"
                                 type="password"
                                 value={editUserPassword}
                                 onChange={(event) =>
@@ -9171,13 +9538,7 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           aria-label="Change password"
-          onClick={() => {
-            if (
-              !changingPasswordLoading
-            ) {
-              setChangingPassword(false);
-            }
-          }}
+
           style={{
             position: "fixed",
             inset: 0,
@@ -9190,6 +9551,26 @@ export default function App() {
             padding: "24px"
           }}
         >
+          <button
+            type="button"
+            aria-label="Close password dialog"
+            disabled={changingPasswordLoading}
+            onClick={() => {
+              if (!changingPasswordLoading) {
+                setChangingPassword(false);
+              }
+            }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              border: 0,
+              padding: 0,
+              background: "transparent",
+              cursor: changingPasswordLoading ? "default" : "pointer"
+            }}
+          />
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -9217,10 +9598,8 @@ export default function App() {
                 )
               );
             }}
-            onClick={(event) =>
-              event.stopPropagation()
-            }
             style={{
+              position: "relative",
               width: "min(100%, 440px)",
               borderRadius: "12px",
               background: "#ffffff",
@@ -9251,10 +9630,10 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-            >
+             htmlFor="change-password-current">
               Current password
             </label>
-            <input
+            <input id="change-password-current"
               name="currentPassword"
               type="password"
               autoComplete="current-password"
@@ -9267,10 +9646,10 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-            >
+             htmlFor="change-password-new">
               New password
             </label>
-            <input
+            <input id="change-password-new"
               name="newPassword"
               type="password"
               autoComplete="new-password"
@@ -9284,10 +9663,10 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-            >
+             htmlFor="change-password-confirm">
               Confirm new password
             </label>
-            <input
+            <input id="change-password-confirm"
               name="confirmPassword"
               type="password"
               autoComplete="new-password"
@@ -9342,9 +9721,7 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           aria-label="Category image preview"
-          onClick={() =>
-            setCategoryImagePreview(null)
-          }
+
           style={{
             position: "fixed",
             inset: 0,
@@ -9357,10 +9734,22 @@ export default function App() {
             padding: "24px"
           }}
         >
+          <button
+            type="button"
+            aria-label="Close category image preview backdrop"
+            onClick={() => setCategoryImagePreview(null)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              border: 0,
+              padding: 0,
+              background: "transparent",
+              cursor: "pointer"
+            }}
+          />
           <div
-            onClick={(event) =>
-              event.stopPropagation()
-            }
             style={{
               position: "relative",
               width: "min(100%, 1100px)",
@@ -9422,9 +9811,7 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           aria-label="Confirm category image removal"
-          onClick={() =>
-            setCategoryImageRemoval(null)
-          }
+
           style={{
             position: "fixed",
             inset: 0,
@@ -9437,11 +9824,29 @@ export default function App() {
             padding: "24px"
           }}
         >
-          <div
-            onClick={(event) =>
-              event.stopPropagation()
-            }
+          <button
+            type="button"
+            aria-label="Close category image removal backdrop"
+            disabled={actionId !== null}
+            onClick={() => {
+              if (actionId === null) {
+                setCategoryImageRemoval(null);
+              }
+            }}
             style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              border: 0,
+              padding: 0,
+              background: "transparent",
+              cursor: actionId === null ? "pointer" : "default"
+            }}
+          />
+          <div
+            style={{
+              position: "relative",
               width: "min(100%, 440px)",
               borderRadius: "12px",
               background: "#ffffff",

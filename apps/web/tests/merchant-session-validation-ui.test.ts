@@ -1,4 +1,4 @@
-﻿import { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const appSource = readFileSync(
@@ -7,6 +7,60 @@ const appSource = readFileSync(
 );
 
 describe("merchant authenticated session validation UI contract", () => {
+  it("keeps dashboard tab authorization separate from data initialization", () => {
+    const normalizedSource = appSource.replace(/\s+/g, " ");
+
+    const effects = normalizedSource.matchAll(
+      /useEffect\(\(\) => \{(?:(?!useEffect\().)*?\}, \[[^\]]*\]\);/g
+    );
+
+    const effectBodies = [...effects].map((match) => match[0]);
+
+    const authorizationEffect = effectBodies.find((effect) =>
+      effect.includes('!canReviewPayments && activeTab === "payments"')
+    );
+
+    const initializationEffect = effectBodies.find((effect) =>
+      effect.includes("refreshDashboardOnEffect();")
+    );
+
+    expect(authorizationEffect).toBeDefined();
+    expect(initializationEffect).toBeDefined();
+
+    expect(authorizationEffect).not.toBe(initializationEffect);
+    expect(authorizationEffect).toContain("activeTab");
+    expect(initializationEffect).not.toContain("activeTab");
+  });
+  it("redirects unauthorized dashboard tabs to orders", () => {
+    const normalizedSource = appSource.replace(/\s+/g, " ");
+
+    for (const [permission, tab] of [
+      ["canReviewPayments", "payments"],
+      ["canViewBilling", "billing"],
+      ["canManageUsers", "users"]
+    ]) {
+      expect(normalizedSource).toContain(
+        `!${permission} && activeTab === "${tab}"`
+      );
+    }
+
+    expect(normalizedSource).toContain(
+      'setActiveTab("orders");'
+    );
+  });
+  it("guards stored-session validation against stale effect responses", () => {
+    const normalizedSource = appSource.replace(/\s+/g, " ");
+
+    expect(normalizedSource).toContain(
+      "let cancelled = false;"
+    );
+    expect(normalizedSource).toContain(
+      "if (cancelled) { return; }"
+    );
+    expect(normalizedSource).toContain(
+      "cancelled = true;"
+    );
+  });
   it("revalidates a stored merchant session against the authenticated identity endpoint", () => {
     expect(appSource).toContain(
       "async function validateStoredAuth()"
@@ -15,7 +69,7 @@ describe("merchant authenticated session validation UI contract", () => {
       "`${API_BASE_URL}/auth/me`"
     );
     expect(appSource).toContain(
-      "`Bearer ${auth.token}`"
+      "Authorization: `Bearer ${validatedToken}`"
     );
     expect(appSource).toContain(
       "saveAuth({"
@@ -52,9 +106,13 @@ describe("merchant authenticated session validation UI contract", () => {
 
     const dashboardRefresh =
       normalizedSource.indexOf(
-        "void refreshDashboard();",
+        "refreshDashboardOnEffect();",
         validationGuard
       );
+
+    expect(normalizedSource).toContain(
+      "const refreshDashboardOnEffect = useEffectEvent(() => { void refreshDashboard(); });"
+    );
 
     expect(validationGuard).toBeGreaterThan(
       -1
@@ -86,7 +144,7 @@ describe("merchant authenticated session validation UI contract", () => {
       "saveAuth({"
     );
     expect(validationSource).toContain(
-      "token: auth.token"
+      "token: validatedToken"
     );
     expect(validationSource).toContain(
       "user: data.user"
