@@ -954,4 +954,160 @@ describe("platform session isolation UI", () => {
 
     await screen.findByText("Administrator A");
   });
+
+  it("does not replace Administrator B's merchant records with Administrator A's delayed response", async () => {
+    let resolveOldMerchants!: (response: Response) => void;
+
+    const oldMerchants = new Promise<Response>(resolve => {
+      resolveOldMerchants = resolve;
+    });
+
+    let oldRequestStarted = false;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        const url = String(input);
+        const authorization = new Headers(
+          init?.headers
+        ).get("Authorization");
+
+        if (url.endsWith("/platform/auth/login")) {
+          const body = JSON.parse(String(init?.body));
+
+          return new Response(JSON.stringify({
+            token: body.email === "a@example.com"
+              ? "token-a"
+              : "token-b"
+          }), { status: 200 });
+        }
+
+        if (url.endsWith("/platform/auth/me")) {
+          const isA = authorization === "Bearer token-a";
+
+          return new Response(JSON.stringify({
+            user: {
+              id: isA ? "admin-a" : "admin-b",
+              email: isA ? "a@example.com" : "b@example.com",
+              displayName: isA
+                ? "Administrator A"
+                : "Administrator B",
+              role: "ADMIN"
+            }
+          }), { status: 200 });
+        }
+
+        if (url.endsWith("/platform/merchants")) {
+          if (authorization === "Bearer token-a") {
+            oldRequestStarted = true;
+            return oldMerchants;
+          }
+
+          return new Response(JSON.stringify({
+            merchants: [{
+              id: "merchant-b",
+              name: "Merchant B",
+              currency: "ETB"
+            }]
+          }), { status: 200 });
+        }
+
+        if (url.endsWith("/platform/plans")) {
+          return new Response(
+            JSON.stringify({ plans: [] }),
+            { status: 200 }
+          );
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      }
+    );
+
+    render(<PlatformApp />);
+
+    async function signIn(email: string) {
+      fireEvent.change(screen.getByLabelText("Email"), {
+        target: { value: email }
+      });
+
+      fireEvent.change(screen.getByLabelText("Password"), {
+        target: { value: "test-password" }
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Sign in" })
+      );
+
+      await screen.findByText(
+        email === "a@example.com"
+          ? "Administrator A"
+          : "Administrator B"
+      );
+    }
+
+    await signIn("a@example.com");
+
+    await waitFor(() => {
+      expect(oldRequestStarted).toBe(true);
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign out" })
+    );
+
+    await signIn("b@example.com");
+
+    await screen.findByText("Merchant B");
+
+    await act(async () => {
+      resolveOldMerchants(
+        new Response(JSON.stringify({
+          merchants: [{
+            id: "merchant-a",
+            name: "Merchant A",
+            currency: "ETB"
+          }]
+        }), { status: 200 })
+      );
+
+      await oldMerchants;
+    });
+
+    expect(screen.getByText("Merchant B")).toBeTruthy();
+    expect(screen.queryByText("Merchant A")).toBeNull();
+
+    expect(
+      sessionStorage.getItem(
+        "ethio-commerce-platform-token"
+      )
+    ).toBe("token-b");
+  });
+
+  it("keeps the password dialog open on inside clicks and closes it via an accessible backdrop", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/platform/auth/me")) {
+        return new Response(JSON.stringify({ user: { id: "admin-a", email: "a@example.com", displayName: "Administrator A", role: "SUPER_ADMIN" } }), { status: 200 });
+      }
+      if (url.endsWith("/platform/merchants")) {
+        return new Response(JSON.stringify({ merchants: [] }), { status: 200 });
+      }
+      if (url.endsWith("/platform/plans")) {
+        return new Response(JSON.stringify({ plans: [] }), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    sessionStorage.setItem("ethio-commerce-platform-token", "token-a");
+    render(<PlatformApp />);
+    await screen.findByText("Administrator A");
+
+    fireEvent.click(screen.getByRole("button", { name: "Change password" }));
+    const dialog = screen.getByRole("dialog", { name: "Change password" });
+    fireEvent.mouseDown(dialog);
+    expect(screen.getByRole("dialog", { name: "Change password" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close password dialog backdrop" }));
+    expect(screen.queryByRole("dialog", { name: "Change password" })).toBeNull();
+  });
+
 });

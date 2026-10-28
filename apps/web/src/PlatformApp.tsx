@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import {
   platformFetch,
@@ -257,8 +257,19 @@ function billingWorkRows(
   });
 }
 
+function ModalBackdrop({ close, label }: { close: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      className="pa-modal-backdrop-button"
+      aria-label={label}
+      onClick={close}
+    />
+  );
+}
+
 function RecordModal({ row, close }: { row: Row; close: () => void }) {
-  return <div className="pa-modal-backdrop" onMouseDown={close}><section className="pa-modal pa-record-modal" role="dialog" aria-modal="true" onMouseDown={e => e.stopPropagation()}><div className="pa-modal-head"><div><p className="pa-eyebrow">FULL RECORD</p><h2>{String(row.name || row.invoiceNumber || row.id)}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><dl className="pa-record-grid">{Object.entries(row).map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{typeof v === "object" && v !== null ? <pre>{JSON.stringify(v, null, 2)}</pre> : display(v)}</dd></div>)}</dl></section></div>;
+  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close record dialog backdrop" /><section className="pa-modal pa-record-modal" role="dialog" aria-modal="true"><div className="pa-modal-head"><div><p className="pa-eyebrow">FULL RECORD</p><h2>{String(row.name || row.invoiceNumber || row.id)}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><dl className="pa-record-grid">{Object.entries(row).map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{typeof v === "object" && v !== null ? <pre>{JSON.stringify(v, null, 2)}</pre> : display(v)}</dd></div>)}</dl></section></div>;
 }
 
 function Table({ rows, columns, actions }: { rows: Row[]; columns: string[]; actions?: (row: Row) => ReactNode }) {
@@ -294,7 +305,7 @@ function ActionForm({ action, busy, submit, close }: { action: Action; busy: boo
       await submit(action.transform ? action.transform(values) : values);
     } catch (e) { setError(e instanceof Error ? e.message : "Action failed"); }
   }
-  return <div className="pa-modal-backdrop" onMouseDown={close}><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title} onMouseDown={e => e.stopPropagation()}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name} htmlFor={`${formId}-${f.name}`}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select id={`${formId}-${f.name}`} name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea id={`${formId}-${f.name}`} name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input id={`${formId}-${f.name}`} name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submitting…" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
+  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close action dialog backdrop" /><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name} htmlFor={`${formId}-${f.name}`}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select id={`${formId}-${f.name}`} name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea id={`${formId}-${f.name}`} name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input id={`${formId}-${f.name}`} name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submitting…" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
 }
 
 export default function PlatformApp() {
@@ -358,14 +369,14 @@ export default function PlatformApp() {
   const [revision, setRevision] = useState(0);
   const [action, setAction] = useState<Action | null>(null);
   const session = useRef(0);
-  function logout() {
+  const logout = useCallback(() => {
     session.current++; try { sessionStorage.removeItem(PLATFORM_SESSION_KEY); } catch { /* Memory session still clears. */ }
     setToken(""); setUser(null); setChecking(false); setRows([]); setMerchants([]); setOnboardingApplications([]); setPlans([]); setMerchant(null); setSelected(""); setAction(null); setNotice(""); setBusy(false);
-  }
-  function fail(e: unknown) {
+  }, []);
+  const fail = useCallback((e: unknown) => {
     if (e instanceof PlatformApiError && e.status === 401) logout();
     setError(e instanceof Error ? e.message : "Unable to connect to the API.");
-  }
+  }, [logout]);
   async function openSettlementEvidence(
     settlement: Row
   ) {
@@ -493,6 +504,8 @@ export default function PlatformApp() {
     }
   }
   useEffect(() => {
+    // Refresh requests intentionally depend on revision.
+    void revision;
     if (!token) return;
     const controller = new AbortController();
     const generation = session.current;
@@ -529,8 +542,10 @@ export default function PlatformApp() {
         setChecking(false);
       });
     return () => controller.abort();
-  }, [token, revision]);
+  }, [token, revision, fail]);
   useEffect(() => {
+    // Refresh requests intentionally depend on revision.
+    void revision;
     if (!user || !token) return;
     const controller = new AbortController();
     setLoading(true); setError(""); setRows([]); setOnboardingApplications([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
@@ -811,7 +826,8 @@ export default function PlatformApp() {
     overdueYear,
     overdueCustomStart,
     overdueCustomEnd,
-    revision
+    revision,
+    fail
   ]);
   const loginInFlight = useRef(false);
 
@@ -1066,20 +1082,16 @@ export default function PlatformApp() {
   </div></div></header>
 
     {changingPassword && (
-      <div
-        className="pa-modal-backdrop"
-        onMouseDown={() =>
-          setChangingPassword(false)
-        }
-      >
+      <div className="pa-modal-backdrop">
+        <ModalBackdrop
+          close={() => setChangingPassword(false)}
+          label="Close password dialog backdrop"
+        />
         <section
           className="pa-modal pa-action-modal"
           role="dialog"
           aria-modal="true"
           aria-label="Change password"
-          onMouseDown={event =>
-            event.stopPropagation()
-          }
         >
           <div className="pa-modal-head">
             <div>
@@ -1316,7 +1328,7 @@ export default function PlatformApp() {
   </section>
 )}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
           merchant.subscription &&
-          !!transitions[merchant.subscription.status]?.length && <button type="button" disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: transitions[merchant.subscription!.status] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button type="button" disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
+          !!transitions[merchant.subscription.status]?.length && <button type="button" disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: merchant.subscription ? transitions[merchant.subscription.status] : [] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button type="button" disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
 
           <section className="pa-card">
             <div className="pa-section-heading">
