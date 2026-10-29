@@ -1,30 +1,40 @@
-﻿
 import { defineConfig } from "vitest/config";
 
-const isolatedBootstrapTests = [
-  "**/platform-bootstrap.test.ts",
-  "**/platform-bootstrap-concurrency.test.ts"
-];
+const suite = process.env.API_TEST_SUITE;
+
+const bootstrapTest = "**/platform-bootstrap.test.ts";
+const concurrencyTest =
+  "**/platform-bootstrap-concurrency.test.ts";
 
 const explicitlySelectedBootstrapTest =
   process.argv.some((arg) =>
-    isolatedBootstrapTests.some((pattern) =>
-      arg.endsWith(pattern.replace("**/", ""))
-    )
+    arg.endsWith("platform-bootstrap.test.ts")
   );
 
 export default defineConfig({
   test: {
-    setupFiles: ["./tests/setup.ts"],
+    globalSetup: ["./tests/global-setup.ts"],
+    setupFiles: ["./tests/setup.mts"],
+
+    ...(suite === "bootstrap-concurrency"
+      ? {
+          include: [concurrencyTest]
+        }
+      : {}),
+
     exclude: [
       "dist/**",
       "node_modules/**",
-      ...(
-        explicitlySelectedBootstrapTest
-          ? []
-          : isolatedBootstrapTests
-      )
+      ...(suite === "bootstrap-concurrency"
+        ? [bootstrapTest]
+        : [
+            concurrencyTest,
+            ...(explicitlySelectedBootstrapTest
+              ? []
+              : [bootstrapTest])
+          ])
     ],
+
     fileParallelism: false
   }
 });
