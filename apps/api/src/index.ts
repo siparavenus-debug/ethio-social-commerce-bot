@@ -140,6 +140,16 @@ async function start() {
   app.get(
     "/health",
     (_req, res) => {
+      if (
+        env.nodeEnv === "test" &&
+        process.env.TEST_API_INSTANCE_TOKEN
+      ) {
+        res.setHeader(
+          "X-Test-API-Instance",
+          process.env.TEST_API_INSTANCE_TOKEN
+        );
+      }
+
       res.json({
         status: "ok",
         service: "api"

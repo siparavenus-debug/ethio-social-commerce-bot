@@ -24,7 +24,7 @@ import {
 } from "../src/services/delivery-security.js";
 
 const API_BASE_URL =
-  "http://localhost:3000";
+  "http://127.0.0.1:3100";
 
 const testPrefix =
   "d16-order-route";
