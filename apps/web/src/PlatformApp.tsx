@@ -67,6 +67,7 @@ type MerchantOnboardingApplication = Row & {
 type View =
   | "Merchants"
   | "Merchant Onboarding"
+  | "Invitation Deliveries"
   | "Billing Work"
   | "Plans"
   | "Overdue"
@@ -321,6 +322,10 @@ export default function PlatformApp() {
   ] = useState(false);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<View>("Merchants");
+  const [
+    invitationDeliveryStatus,
+    setInvitationDeliveryStatus
+  ] = useState("REVIEW_REQUIRED");
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [onboardingApplications, setOnboardingApplications] =
     useState<MerchantOnboardingApplication[]>([]);
@@ -576,6 +581,20 @@ export default function PlatformApp() {
           if (!controller.signal.aborted) {
             setOnboardingApplications(result.applications);
           }
+        } else if (view === "Invitation Deliveries") {
+          const result = await platformRequest<{
+            deliveries: Row[];
+          }>(
+            `/merchant-invitations/deliveries?status=${encodeURIComponent(
+              invitationDeliveryStatus
+            )}`,
+            token,
+            "GET",
+            undefined,
+            controller.signal
+          );
+
+          data = result.deliveries;
         } else if (view === "Billing Work") {
         const billingWorkRoutes: Record<
           BillingWorkTab,
@@ -815,6 +834,7 @@ export default function PlatformApp() {
     view,
     selected,
     ledger,
+    invitationDeliveryStatus,
     billingWorkTab,
     revenuePeriodMode,
     revenueMonth,
@@ -1172,6 +1192,7 @@ export default function PlatformApp() {
   {([
     "Merchants",
     "Merchant Onboarding",
+    "Invitation Deliveries",
     "Billing Work",
         ...(user.role === "OWNER" ? ["Operators" as View] : []),
         ...(user.role !== "STAFF"
@@ -1325,6 +1346,82 @@ export default function PlatformApp() {
     );
   }}
 />
+  </section>
+)}{view === "Invitation Deliveries" && (
+  <section className="pa-card">
+    <div className="pa-section-heading">
+      <div>
+        <h3>Merchant Invitation Deliveries</h3>
+        <p>
+          Inspect invitation email delivery records.
+          Provider acceptance does not confirm recipient delivery.
+        </p>
+      </div>
+    </div>
+
+    <div className="pa-buttons">
+      <label>
+        Delivery status
+        <select
+          value={invitationDeliveryStatus}
+          onChange={event =>
+            setInvitationDeliveryStatus(event.target.value)
+          }
+        >
+          {[
+            "REVIEW_REQUIRED",
+            "PENDING",
+            "PROCESSING",
+            "SENDING",
+            "SENT",
+            "FAILED"
+          ].map(status => (
+            <option key={status} value={status}>
+              {status.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+
+    <p className="pa-subtle">
+      Showing up to 50 matching records, oldest updated first.
+      This view is read-only.
+    </p>
+    <Table
+      rows={rows.map(row => {
+        const activation = row.activation;
+
+        const merchant =
+          activation &&
+          typeof activation === "object" &&
+          "merchant" in activation
+            ? activation.merchant
+            : null;
+
+        const merchantName =
+          merchant &&
+          typeof merchant === "object" &&
+          "name" in merchant &&
+          typeof merchant.name === "string"
+            ? merchant.name
+            : "—";
+
+        return {
+          ...row,
+          merchantName
+        };
+      })}
+      columns={[
+        "merchantName",
+        "recipientEmail",
+        "status",
+        "attemptCount",
+        "lastError",
+        "updatedAt",
+        "nextAttemptAt"
+      ]}
+    />
   </section>
 )}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
           merchant.subscription &&
