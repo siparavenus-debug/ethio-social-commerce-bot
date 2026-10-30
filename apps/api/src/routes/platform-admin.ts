@@ -7,6 +7,7 @@ import {
   MerchantAccountStatus,
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
+  MerchantInvitationDeliveryStatus,
   MerchantSubscriptionStatus,
   Prisma,
   SubscriptionBillingInterval,
@@ -150,6 +151,98 @@ router.get(
       res.status(500).json({
         error:
           "Failed to load platform audit log"
+      });
+    }
+  }
+);
+
+
+
+const INVITATION_DELIVERY_STATUSES =
+  Object.values(MerchantInvitationDeliveryStatus);
+
+router.get(
+  "/merchant-invitations/deliveries",
+  requirePlatformRole(
+    "OWNER",
+    "ADMIN",
+    "STAFF"
+  ),
+  async (req, res) => {
+    const rawStatus = req.query.status;
+
+    const status =
+      rawStatus === undefined
+        ? MerchantInvitationDeliveryStatus.REVIEW_REQUIRED
+        : rawStatus;
+
+    if (
+      typeof status !== "string" ||
+      !INVITATION_DELIVERY_STATUSES.includes(
+        status as MerchantInvitationDeliveryStatus
+      )
+    ) {
+      res.status(400).json({
+        error: "Invalid invitation delivery status"
+      });
+      return;
+    }
+
+    const validatedStatus =
+      status as MerchantInvitationDeliveryStatus;
+
+
+
+    try {
+      const deliveries =
+        await prisma.merchantInvitationDelivery.findMany({
+          where: {
+            status: validatedStatus
+          },
+          select: {
+            id: true,
+            activationId: true,
+            status: true,
+            recipientEmail: true,
+            attemptCount: true,
+            nextAttemptAt: true,
+            processingUntil: true,
+            sentAt: true,
+            providerMessageId: true,
+            lastError: true,
+            createdAt: true,
+            updatedAt: true,
+            activation: {
+              select: {
+                merchantId: true,
+                expiresAt: true,
+                consumedAt: true,
+                merchant: {
+                  select: {
+                    id: true,
+                    name: true
+                  }
+                }
+              }
+            }
+          },
+          orderBy: [
+            {
+              updatedAt: "asc"
+            },
+            {
+              id: "asc"
+            }
+          ],
+          take: 50
+        });
+
+      res.json({
+        deliveries
+      });
+    } catch {
+      res.status(500).json({
+        error: "Failed to load invitation deliveries"
       });
     }
   }

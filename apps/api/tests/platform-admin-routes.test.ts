@@ -11059,5 +11059,664 @@ describe(
                 });
             }
         );
+
+        describe(
+            "merchant invitation delivery listing",
+            () => {
+                it(
+                    "lists only REVIEW_REQUIRED deliveries by default without exposing secrets",
+                    async () => {
+                        const platform =
+                            await createPlatformFixture(
+                                "invitation-review-list",
+                                "ADMIN"
+                            );
+
+                        const merchant =
+                            await createMerchant(
+                                "invitation-review-list"
+                            );
+
+                        const reviewActivation =
+                            await prisma.merchantOwnerActivation.create({
+                                data: {
+                                    merchantId: merchant.id,
+                                    ownerEmail:
+                                        `${testPrefix}-review@example.test`,
+                                    tokenHash:
+                                        "invitation-review-token-hash",
+                                    expiresAt:
+                                        new Date(
+                                            Date.now() + 3600000
+                                        )
+                                }
+                            });
+
+                        const pendingActivation =
+                            await prisma.merchantOwnerActivation.create({
+                                data: {
+                                    merchantId: merchant.id,
+                                    ownerEmail:
+                                        `${testPrefix}-pending@example.test`,
+                                    tokenHash:
+                                        "invitation-pending-token-hash",
+                                    expiresAt:
+                                        new Date(
+                                            Date.now() + 3600000
+                                        )
+                                }
+                            });
+
+                        const reviewDelivery =
+                            await prisma.merchantInvitationDelivery.create({
+                                data: {
+                                    activationId: reviewActivation.id,
+                                    recipientEmail:
+                                        reviewActivation.ownerEmail,
+                                    status: "REVIEW_REQUIRED",
+                                    encryptedToken:
+                                        "secret-encrypted-token"
+                                }
+                            });
+
+                        await prisma.merchantInvitationDelivery.create({
+                            data: {
+                                activationId: pendingActivation.id,
+                                recipientEmail:
+                                    pendingActivation.ownerEmail,
+                                status: "PENDING",
+                                encryptedToken:
+                                    "another-secret-token"
+                            }
+                        });
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: Array<{
+                                    id: string;
+                                    status: string;
+                                    recipientEmail: string;
+                                    activation: {
+                                        merchantId: string;
+                                    };
+                                }>;
+                            };
+
+                        expect(body.deliveries).toEqual(
+                            expect.arrayContaining([
+                                expect.objectContaining({
+                                    id: reviewDelivery.id,
+                                    status: "REVIEW_REQUIRED",
+                                    recipientEmail:
+                                        reviewActivation.ownerEmail,
+                                    activation:
+                                        expect.objectContaining({
+                                            merchantId: merchant.id
+                                        })
+                                })
+                            ])
+                        );
+
+                        expect(
+                            body.deliveries.every(
+                                (delivery) =>
+                                    delivery.status ===
+                                    "REVIEW_REQUIRED"
+                            )
+                        ).toBe(true);
+
+                        const responseText =
+                            JSON.stringify(body);
+
+                        expect(responseText).not.toContain(
+                            "secret-encrypted-token"
+                        );
+
+                        expect(responseText).not.toContain(
+                            "invitation-review-token-hash"
+                        );
+
+                        expect(responseText).not.toContain(
+                            "another-secret-token"
+                        );
+
+                        expect(responseText).not.toContain(
+                            '"encryptedToken"'
+                        );
+
+                        expect(responseText).not.toContain(
+                            '"tokenHash"'
+                        );
+                    }
+                );
+
+                it.each([
+                    "OWNER",
+                    "ADMIN",
+                    "STAFF"
+                ] as const)(
+                    "allows platform %s to list invitation deliveries",
+                    async (role) => {
+                        const platform =
+                            await createPlatformFixture(
+                                `invitation-access-${role.toLowerCase()}`,
+                                role
+                            );
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: unknown[];
+                            };
+
+                        expect(
+                            Array.isArray(body.deliveries)
+                        ).toBe(true);
+                    }
+                );
+
+                it(
+                    "rejects unauthenticated invitation delivery listing",
+                    async () => {
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`
+                            );
+
+                        expect(response.status).toBe(401);
+                    }
+                );
+
+                it(
+                    "rejects merchant OWNER invitation delivery listing",
+                    async () => {
+                        const merchant =
+                            await createMerchant(
+                                "invitation-access-merchant"
+                            );
+
+                        const owner =
+                            await prisma.merchantUser.create({
+                                data: {
+                                    merchantId: merchant.id,
+                                    email:
+                                        `${testPrefix}-invitation-access-owner@example.test`,
+                                    passwordHash:
+                                        await hashPassword(
+                                            "BoundaryOwnerPassword123!"
+                                        ),
+                                    displayName:
+                                        "Merchant Boundary Owner",
+                                    role: "OWNER",
+                                    tokenVersion: 0
+                                }
+                            });
+
+                        const merchantToken =
+                            createAuthToken({
+                                id: owner.id,
+                                merchantId: merchant.id,
+                                role: owner.role,
+                                tokenVersion: owner.tokenVersion
+                            });
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${merchantToken}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(403);
+                    }
+                );
+
+                it(
+                    "filters invitation deliveries by an explicitly requested status",
+                    async () => {
+                        const platform =
+                            await createPlatformFixture(
+                                "invitation-filter-valid",
+                                "ADMIN"
+                            );
+
+                        const merchant =
+                            await createMerchant(
+                                "invitation-filter-valid"
+                            );
+
+                        const activation =
+                            await prisma.merchantOwnerActivation.create({
+                                data: {
+                                    merchantId: merchant.id,
+                                    ownerEmail:
+                                        `${testPrefix}-filter-valid@example.test`,
+                                    tokenHash:
+                                        "invitation-filter-valid-hash",
+                                    expiresAt:
+                                        new Date(Date.now() + 3600000)
+                                }
+                            });
+
+                        const delivery =
+                            await prisma.merchantInvitationDelivery.create({
+                                data: {
+                                    activationId: activation.id,
+                                    recipientEmail:
+                                        activation.ownerEmail,
+                                    status: "SENT",
+                                    sentAt: new Date(),
+                                    providerMessageId:
+                                        "resend-test-message"
+                                }
+                            });
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries?status=SENT`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: Array<{
+                                    id: string;
+                                    status: string;
+                                    providerMessageId: string | null;
+                                }>;
+                            };
+
+                        expect(body.deliveries).toEqual(
+                            expect.arrayContaining([
+                                expect.objectContaining({
+                                    id: delivery.id,
+                                    status: "SENT",
+                                    providerMessageId:
+                                        "resend-test-message"
+                                })
+                            ])
+                        );
+
+                        expect(
+                            body.deliveries.every(
+                                (item) => item.status === "SENT"
+                            )
+                        ).toBe(true);
+                    }
+                );
+
+                it.each([
+                    "UNKNOWN",
+                    "",
+                    "sent",
+                    "REVIEW_REQUIRED,FAILED"
+                ])(
+                    "rejects invalid invitation delivery status %j",
+                    async (status) => {
+                        const platform =
+                            await createPlatformFixture(
+                                `invitation-filter-invalid-${status.length}-${status.charCodeAt(0) || 0}`,
+                                "ADMIN"
+                            );
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries?status=${encodeURIComponent(status)}`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(400);
+
+                        expect(await response.json()).toEqual({
+                            error: "Invalid invitation delivery status"
+                        });
+                    }
+                );
+
+                it(
+                    "orders invitation deliveries by updatedAt and then id",
+                    async () => {
+                        const platform =
+                            await createPlatformFixture(
+                                "invitation-ordering",
+                                "ADMIN"
+                            );
+
+                        const merchant =
+                            await createMerchant(
+                                "invitation-ordering"
+                            );
+
+                        const records = [
+                            {
+                                suffix: "middle",
+                                updatedAt: new Date(
+                                    "2026-01-02T00:00:00.000Z"
+                                )
+                            },
+                            {
+                                suffix: "oldest",
+                                updatedAt: new Date(
+                                    "2026-01-01T00:00:00.000Z"
+                                )
+                            },
+                            {
+                                suffix: "newest",
+                                updatedAt: new Date(
+                                    "2026-01-03T00:00:00.000Z"
+                                )
+                            },
+                            {
+                                suffix: "newest-tie",
+                                updatedAt: new Date(
+                                    "2026-01-03T00:00:00.000Z"
+                                )
+                            }
+                        ];
+
+                        const createdIds: Record<string, string> = {};
+
+                        for (const record of records) {
+                            const activation =
+                                await prisma.merchantOwnerActivation.create({
+                                    data: {
+                                        merchantId: merchant.id,
+                                        ownerEmail:
+                                            `${testPrefix}-ordering-${record.suffix}@example.test`,
+                                        tokenHash:
+                                            `invitation-ordering-${record.suffix}-hash`,
+                                        expiresAt:
+                                            new Date(
+                                                Date.now() + 3600000
+                                            )
+                                    }
+                                });
+
+                            const delivery =
+                                await prisma.merchantInvitationDelivery.create({
+                                    data: {
+                                        activationId: activation.id,
+                                        recipientEmail:
+                                            activation.ownerEmail,
+                                        status: "REVIEW_REQUIRED",
+                                        updatedAt:
+                                            record.updatedAt
+                                    }
+                                });
+
+                            createdIds[record.suffix] = delivery.id;
+                        }
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: Array<{
+                                    id: string;
+                                    updatedAt: string;
+                                }>;
+                            };
+
+                        const returnedIds =
+                            body.deliveries
+                                .filter((delivery) =>
+                                    Object.values(createdIds).includes(
+                                        delivery.id
+                                    )
+                                )
+                                .map((delivery) => delivery.id);
+
+                        const tiedIds = [
+                            createdIds.newest,
+                            createdIds["newest-tie"]
+                        ].sort();
+
+                        expect(returnedIds).toEqual([
+                            createdIds.oldest,
+                            createdIds.middle,
+                            ...tiedIds
+                        ]);
+
+                        const orderingKeys =
+                            body.deliveries.map((delivery) => ({
+                                updatedAt: delivery.updatedAt,
+                                id: delivery.id
+                            }));
+
+                        expect(orderingKeys).toEqual(
+                            [...orderingKeys].sort((a, b) =>
+                                a.updatedAt.localeCompare(b.updatedAt) ||
+                                a.id.localeCompare(b.id)
+                            )
+                        );
+                    }
+                );
+
+                it(
+                    "limits invitation delivery listings to 50 records",
+                    async () => {
+                        const platform =
+                            await createPlatformFixture(
+                                "invitation-limit",
+                                "ADMIN"
+                            );
+
+                        const merchant =
+                            await createMerchant(
+                                "invitation-limit"
+                            );
+
+                        const activationData =
+                            Array.from(
+                                { length: 51 },
+                                (_, index) => ({
+                                    merchantId: merchant.id,
+                                    ownerEmail:
+                                        `${testPrefix}-limit-${index}@example.test`,
+                                    tokenHash:
+                                        `invitation-limit-hash-${index}`,
+                                    expiresAt:
+                                        new Date(
+                                            Date.now() + 3600000
+                                        )
+                                })
+                            );
+
+                        const activations =
+                            await Promise.all(
+                                activationData.map((data) =>
+                                    prisma.merchantOwnerActivation.create({
+                                        data
+                                    })
+                                )
+                            );
+
+                        await prisma.merchantInvitationDelivery.createMany({
+                            data: activations.map((activation) => ({
+                                activationId: activation.id,
+                                recipientEmail:
+                                    activation.ownerEmail,
+                                status: "REVIEW_REQUIRED"
+                            }))
+                        });
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: Array<{
+                                    id: string;
+                                    status: string;
+                                }>;
+                            };
+
+                        expect(body.deliveries).toHaveLength(50);
+
+                        expect(
+                            body.deliveries.every(
+                                (delivery) =>
+                                    delivery.status ===
+                                    "REVIEW_REQUIRED"
+                            )
+                        ).toBe(true);
+                    }
+                );
+
+                it(
+                    "does not modify invitation delivery records when listing them",
+                    async () => {
+                        const platform =
+                            await createPlatformFixture(
+                                "invitation-read-only",
+                                "ADMIN"
+                            );
+
+                        const merchant =
+                            await createMerchant(
+                                "invitation-read-only"
+                            );
+
+                        const activation =
+                            await prisma.merchantOwnerActivation.create({
+                                data: {
+                                    merchantId: merchant.id,
+                                    ownerEmail:
+                                        `${testPrefix}-read-only@example.test`,
+                                    tokenHash:
+                                        "invitation-read-only-token-hash",
+                                    expiresAt:
+                                        new Date(
+                                            Date.now() + 3600000
+                                        )
+                                }
+                            });
+
+                        const delivery =
+                            await prisma.merchantInvitationDelivery.create({
+                                data: {
+                                    activationId: activation.id,
+                                    recipientEmail:
+                                        activation.ownerEmail,
+                                    status: "REVIEW_REQUIRED",
+                                    attemptCount: 2,
+                                    nextAttemptAt:
+                                        new Date(
+                                            "2026-10-01T10:00:00.000Z"
+                                        ),
+                                    processingUntil: null,
+                                    providerMessageId: null,
+                                    lastError:
+                                        "Ambiguous provider outcome"
+                                }
+                            });
+
+                        const before =
+                            await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+                                where: {
+                                    id: delivery.id
+                                }
+                            });
+
+                        const response =
+                            await fetch(
+                                `${apiBaseUrl}/platform/merchant-invitations/deliveries`,
+                                {
+                                    headers: {
+                                        authorization:
+                                            `Bearer ${platform.token}`
+                                    }
+                                }
+                            );
+
+                        expect(response.status).toBe(200);
+
+                        const body =
+                            await response.json() as {
+                                deliveries: Array<{
+                                    id: string;
+                                }>;
+                            };
+
+                        expect(
+                            body.deliveries.some(
+                                (item) => item.id === delivery.id
+                            )
+                        ).toBe(true);
+
+                        const after =
+                            await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+                                where: {
+                                    id: delivery.id
+                                }
+                            });
+
+                        expect(after).toEqual(before);
+                    }
+                );
+            }
+        );
     }
 );
