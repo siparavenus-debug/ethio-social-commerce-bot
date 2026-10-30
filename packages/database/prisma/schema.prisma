@@ -147,8 +147,10 @@ enum MerchantSettlementProvider {
 enum MerchantInvitationDeliveryStatus {
   PENDING
   PROCESSING
+  SENDING
   SENT
   FAILED
+  REVIEW_REQUIRED
 }
 
 model Merchant {
@@ -234,6 +236,7 @@ model MerchantInvitationDelivery {
   nextAttemptAt    DateTime                         @default(now())
   processingUntil  DateTime?
   sentAt           DateTime?
+  providerMessageId String?
   lastError        String?
   createdAt        DateTime                         @default(now())
   updatedAt        DateTime                         @updatedAt

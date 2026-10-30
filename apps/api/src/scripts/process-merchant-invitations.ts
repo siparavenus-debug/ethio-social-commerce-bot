@@ -12,7 +12,8 @@ import {
   });
 
   import {
-    cleanupExpiredMerchantInvitations
+    cleanupExpiredMerchantInvitations,
+    reconcileStaleMerchantInvitationSending
   } from "../services/merchant-invitation-delivery.js";
 
   import {
@@ -50,6 +51,13 @@ import {
 
     console.log(
       `Expired or consumed invitations cleaned: ${expiredCount}`
+    );
+
+    const reviewRequiredCount =
+      await reconcileStaleMerchantInvitationSending();
+
+    console.log(
+      `Stale invitation deliveries moved to manual review: ${reviewRequiredCount}`
     );
 
     let processedCount = 0;

@@ -58,41 +58,116 @@ WHERE (
   });
 }
 
+export async function beginMerchantInvitationSending(
+  input: {
+    deliveryId: string;
+    attemptCount: number;
+  }
+): Promise<boolean> {
+  if (
+    !Number.isSafeInteger(input.attemptCount) ||
+    input.attemptCount < 1
+  ) {
+    return false;
+  }
+
+  const now = new Date();
+
+  const result =
+    await prisma.merchantInvitationDelivery.updateMany({
+      where: {
+        id: input.deliveryId,
+        status: "PROCESSING",
+        attemptCount: input.attemptCount,
+        processingUntil: {
+          gt: now
+        },
+        encryptedToken: {
+          not: null
+        },
+        activation: {
+          expiresAt: {
+            gt: now
+          },
+          consumedAt: null
+        }
+      },
+      data: {
+        status: "SENDING"
+      }
+    });
+
+  return result.count === 1;
+}
+
 
 export async function completeMerchantInvitationDelivery(
-    input: {
-      deliveryId: string;
-      attemptCount: number;
-    }
-  ): Promise<boolean> {
-    if (
-      !Number.isSafeInteger(input.attemptCount) ||
-      input.attemptCount < 1
-    ) {
-      return false;
-    }
-
-    const result =
-      await prisma.merchantInvitationDelivery.updateMany({
-        where: {
-          id: input.deliveryId,
-          status: "PROCESSING",
-          attemptCount: input.attemptCount,
-          processingUntil: {
-            gt: new Date()
-          }
-        },
-        data: {
-          status: "SENT",
-          sentAt: new Date(),
-          processingUntil: null,
-          encryptedToken: null,
-          lastError: null
-        }
-      });
-
-    return result.count === 1;
+  input: {
+    deliveryId: string;
+    attemptCount: number;
+    providerMessageId: string;
   }
+): Promise<boolean> {
+  if (
+    !Number.isSafeInteger(input.attemptCount) ||
+    input.attemptCount < 1 ||
+    !input.providerMessageId?.trim()
+  ) {
+    return false;
+  }
+
+  const result =
+    await prisma.merchantInvitationDelivery.updateMany({
+      where: {
+        id: input.deliveryId,
+        status: {
+          in: ["SENDING", "REVIEW_REQUIRED"]
+        },
+        attemptCount: input.attemptCount
+      },
+      data: {
+        status: "SENT",
+        sentAt: new Date(),
+        providerMessageId: input.providerMessageId,
+        processingUntil: null,
+        encryptedToken: null,
+        lastError: null
+      }
+    });
+
+  return result.count === 1;
+}
+
+export async function requireMerchantInvitationDeliveryReview(
+  input: {
+    deliveryId: string;
+    attemptCount: number;
+  }
+): Promise<boolean> {
+  if (
+    !Number.isSafeInteger(input.attemptCount) ||
+    input.attemptCount < 1
+  ) {
+    return false;
+  }
+
+  const result =
+    await prisma.merchantInvitationDelivery.updateMany({
+      where: {
+        id: input.deliveryId,
+        status: "SENDING",
+        attemptCount: input.attemptCount
+      },
+      data: {
+        status: "REVIEW_REQUIRED",
+        processingUntil: null,
+        lastError:
+          "Merchant invitation email outcome requires manual review"
+      }
+    });
+
+  return result.count === 1;
+}
 
 
   const MAX_DELIVERY_ATTEMPTS = 5;
@@ -157,6 +232,21 @@ export async function completeMerchantInvitationDelivery(
 export async function cleanupExpiredMerchantInvitations(): Promise<number> {
     const now = new Date();
 
+    const missingTokenResult =
+      await prisma.merchantInvitationDelivery.updateMany({
+        where: {
+          status: {
+            in: ["PENDING", "PROCESSING"]
+          },
+          encryptedToken: null
+        },
+        data: {
+          status: "FAILED",
+          processingUntil: null,
+          lastError: "Merchant invitation token is invalid"
+        }
+      });
+
     const result =
       await prisma.merchantInvitationDelivery.updateMany({
         where: {
@@ -189,8 +279,31 @@ export async function cleanupExpiredMerchantInvitations(): Promise<number> {
         }
       });
 
-    return result.count;
+    return missingTokenResult.count + result.count;
   }
+
+  export async function reconcileStaleMerchantInvitationSending():
+  Promise<number> {
+  const now = new Date();
+
+  const result =
+    await prisma.merchantInvitationDelivery.updateMany({
+      where: {
+        status: "SENDING",
+        processingUntil: {
+          lte: now
+        }
+      },
+      data: {
+        status: "REVIEW_REQUIRED",
+        processingUntil: null,
+        lastError:
+          "Merchant invitation sending outcome requires manual review"
+      }
+    });
+
+  return result.count;
+}
 
 
   export async function isMerchantInvitationReadyToSend(

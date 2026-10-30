@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
+  reconcile: vi.fn(),
   processNext: vi.fn(),
   disconnect: vi.fn()
 }));
@@ -15,7 +16,8 @@ vi.mock("@ethio-commerce/database", () => ({
 vi.mock(
   "../src/services/merchant-invitation-delivery.js",
   () => ({
-    cleanupExpiredMerchantInvitations: mocks.cleanup
+    cleanupExpiredMerchantInvitations: mocks.cleanup,
+    reconcileStaleMerchantInvitationSending: mocks.reconcile
   })
 );
 
@@ -29,6 +31,7 @@ vi.mock(
 describe("merchant invitation worker configuration", () => {
   it("initializes without unrelated API secrets", async () => {
     mocks.cleanup.mockResolvedValue(0);
+    mocks.reconcile.mockResolvedValue(0);
     mocks.processNext.mockResolvedValue(false);
     mocks.disconnect.mockResolvedValue(undefined);
 
@@ -57,6 +60,7 @@ describe("merchant invitation worker configuration", () => {
       });
 
       expect(mocks.cleanup).toHaveBeenCalledOnce();
+      expect(mocks.reconcile).toHaveBeenCalledOnce();
       expect(mocks.processNext).toHaveBeenCalledOnce();
       expect(mocks.processNext).toHaveBeenCalledWith({
         apiKey: "test-resend-key",

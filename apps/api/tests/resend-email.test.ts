@@ -185,6 +185,17 @@ it("rejects malformed provider responses without reporting success", async () =>
             "content-type": "application/json"
           }
         }
+      ),
+      new Response(
+        JSON.stringify({
+          id: "   "
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
       )
     ];
 

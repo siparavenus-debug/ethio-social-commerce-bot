@@ -1,10 +1,12 @@
 import {
-    claimMerchantInvitationDelivery,
-    completeMerchantInvitationDelivery,
-    failMerchantInvitationDelivery,
-    isMerchantInvitationReadyToSend,
-    permanentlyFailMerchantInvitationDelivery
-  } from "./merchant-invitation-delivery.js";
+  beginMerchantInvitationSending,
+  claimMerchantInvitationDelivery,
+  completeMerchantInvitationDelivery,
+  failMerchantInvitationDelivery,
+  isMerchantInvitationReadyToSend,
+  permanentlyFailMerchantInvitationDelivery,
+  requireMerchantInvitationDeliveryReview
+} from "./merchant-invitation-delivery.js";
 
 
   import {
@@ -48,6 +50,8 @@ import {
     if (!delivery) {
       return false;
     }
+
+    let sendingStarted = false;
 
     try {
       const ready =
@@ -96,21 +100,50 @@ import {
         return true;
       }
 
-      await sendMerchantActivationEmail({
-        apiKey: config.apiKey,
-        fromEmail: config.fromEmail,
-        recipientEmail: delivery.recipientEmail,
-        activationUrl: activationUrl.toString(),
-        deliveryId: delivery.id
-      });
+      sendingStarted =
+        await beginMerchantInvitationSending({
+          deliveryId: delivery.id,
+          attemptCount: delivery.attemptCount
+        });
 
-      await completeMerchantInvitationDelivery({
-        deliveryId: delivery.id,
-        attemptCount: delivery.attemptCount
-      });
+      if (!sendingStarted) {
+        return true;
+      }
+
+      const emailResult =
+        await sendMerchantActivationEmail({
+          apiKey: config.apiKey,
+          fromEmail: config.fromEmail,
+          recipientEmail: delivery.recipientEmail,
+          activationUrl: activationUrl.toString(),
+          deliveryId: delivery.id
+        });
+
+      const completed =
+        await completeMerchantInvitationDelivery({
+          deliveryId: delivery.id,
+          attemptCount: delivery.attemptCount,
+          providerMessageId: emailResult.providerMessageId
+        });
+
+      if (!completed) {
+        await requireMerchantInvitationDeliveryReview({
+          deliveryId: delivery.id,
+          attemptCount: delivery.attemptCount
+        });
+      }
 
       return true;
     } catch {
+      if (sendingStarted) {
+        await requireMerchantInvitationDeliveryReview({
+          deliveryId: delivery.id,
+          attemptCount: delivery.attemptCount
+        });
+
+        return true;
+      }
+
       await failMerchantInvitationDelivery({
         deliveryId: delivery.id,
         attemptCount: delivery.attemptCount,

@@ -65,7 +65,7 @@ export interface MerchantActivationEmailInput {
       typeof result !== "object" ||
       !("id" in result) ||
       typeof result.id !== "string" ||
-      !result.id
+      !result.id.trim()
     ) {
       throw new Error(
         "Resend returned an invalid email acceptance response"
