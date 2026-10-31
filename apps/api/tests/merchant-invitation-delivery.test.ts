@@ -166,6 +166,52 @@ describe("merchant invitation delivery worker", () => {
     expect(duplicateStart).toBe(false);
   });
 
+  it("rejects sending when the processing lease has expired", async () => {
+    const { delivery } = await createFixture();
+
+    const claim = await claimMerchantInvitationDelivery();
+
+    expect(claim).not.toBeNull();
+    expect(claim!.id).toBe(delivery.id);
+
+    // Expire the lease without allowing another worker
+    // to reclaim the invitation.
+    await prisma.merchantInvitationDelivery.update({
+      where: {
+        id: delivery.id
+      },
+      data: {
+        processingUntil: new Date(
+          Date.now() - 60_000
+        )
+      }
+    });
+
+    const started = await beginMerchantInvitationSending({
+      deliveryId: delivery.id,
+      attemptCount: claim!.attemptCount
+    });
+
+    expect(started).toBe(false);
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PROCESSING");
+    expect(persisted.attemptCount).toBe(
+      claim!.attemptCount
+    );
+    expect(persisted.sentAt).toBeNull();
+    expect(persisted.providerMessageId).toBeNull();
+    expect(persisted.processingUntil!.getTime()).toBeLessThan(
+      Date.now()
+    );
+  });
+
   it("moves stale SENDING deliveries to manual review without retrying", async () => {
     const { delivery } = await createFixture();
 
