@@ -1,6 +1,7 @@
 import {
   beginMerchantInvitationSending,
   claimMerchantInvitationDelivery,
+  claimSpecificMerchantInvitationDelivery,
   completeMerchantInvitationDelivery,
   failMerchantInvitationDelivery,
   isMerchantInvitationReadyToSend,
@@ -51,6 +52,62 @@ import {
       return false;
     }
 
+    return processClaimedMerchantInvitation(
+      delivery,
+      config,
+      baseUrl
+    );
+  }
+
+  export async function processSpecificMerchantInvitation(
+    input: {
+      deliveryId: string;
+      expectedMerchantId: string;
+      expectedRecipientEmail: string;
+    },
+    config: MerchantInvitationProcessorConfig
+  ): Promise<boolean> {
+    if (
+      !config.apiKey?.trim() ||
+      !config.fromEmail?.trim() ||
+      !config.activationBaseUrl?.trim()
+    ) {
+      throw new Error(
+        "Merchant invitation email configuration is incomplete"
+      );
+    }
+
+    const baseUrl = new URL(config.activationBaseUrl);
+
+    if (baseUrl.protocol !== "https:") {
+      throw new Error(
+        "Merchant activation URL must use HTTPS"
+      );
+    }
+
+    const delivery =
+      await claimSpecificMerchantInvitationDelivery(input);
+
+    if (!delivery) {
+      return false;
+    }
+
+    return processClaimedMerchantInvitation(
+      delivery,
+      config,
+      baseUrl
+    );
+  }
+
+  async function processClaimedMerchantInvitation(
+    delivery: NonNullable<
+      Awaited<
+        ReturnType<typeof claimMerchantInvitationDelivery>
+      >
+    >,
+    config: MerchantInvitationProcessorConfig,
+    baseUrl: URL
+  ): Promise<boolean> {
     let sendingStarted = false;
 
     try {

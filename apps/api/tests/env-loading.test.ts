@@ -48,6 +48,70 @@ describe("environment loading", () => {
     }
   });
 
+  it("initializes Prisma after loading DATABASE_URL from .env", () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), "ethio-prisma-env-test-")
+    );
+
+    try {
+      writeFileSync(
+        path.join(directory, ".env"),
+        "DATABASE_URL=postgresql://test:test@127.0.0.1:1/ethio_commerce_test\n"
+      );
+
+      const databaseModuleUrl = import.meta.resolve("@ethio-commerce/database");
+      const dotenvModuleUrl = import.meta.resolve("dotenv");
+
+      const script = `
+        import dotenv from ${JSON.stringify(dotenvModuleUrl)};
+
+        dotenv.config({
+          path: ".env",
+          override: false
+        });
+
+        import(${JSON.stringify(databaseModuleUrl)})
+          .then(() => process.stdout.write("PRISMA_ENV_OK"))
+          .catch((error) => {
+            process.stderr.write(String(error.message));
+            process.exitCode = 1;
+          });
+      `;
+
+      const env: NodeJS.ProcessEnv = {
+        PATH: process.env.PATH,
+        Path: process.env.Path,
+        SystemRoot: process.env.SystemRoot,
+        TEMP: process.env.TEMP,
+        TMP: process.env.TMP,
+        NODE_ENV: "test"
+      };
+
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          script
+        ],
+        {
+          cwd: directory,
+          env,
+          encoding: "utf8",
+          timeout: 10000
+        }
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("PRISMA_ENV_OK");
+    } finally {
+      rmSync(directory, {
+        recursive: true,
+        force: true
+      });
+    }
+  });
   it("loads invitation worker encryption without unrelated API secrets", () => {
     const script = `
       import("./src/services/merchant-invitation-encryption.ts")

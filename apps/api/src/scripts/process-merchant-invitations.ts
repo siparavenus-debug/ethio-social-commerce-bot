@@ -1,31 +1,33 @@
+import dotenv from "dotenv";
+import path from "node:path";
 
-import {
-    prisma
-  } from "@ethio-commerce/database";
+dotenv.config({
+  path: path.resolve(process.cwd(), ".env"),
+  override: false
+});
 
-  import dotenv from "dotenv";
-  import path from "node:path";
+const MAX_INVITATIONS_PER_RUN = 100;
 
-  dotenv.config({
-    path: path.resolve(process.cwd(), ".env"),
-    override: false
-  });
+let prisma: typeof import("@ethio-commerce/database").prisma | undefined;
 
-  import {
+async function main() {
+  const database =
+    await import("@ethio-commerce/database");
+
+  prisma = database.prisma;
+
+  const {
     cleanupExpiredMerchantInvitations,
     reconcileStaleMerchantInvitationSending
-  } from "../services/merchant-invitation-delivery.js";
+  } = await import("../services/merchant-invitation-delivery.js");
 
-  import {
+  const {
     processNextMerchantInvitation
-  } from "../services/merchant-invitation-processor.js";
+  } = await import("../services/merchant-invitation-processor.js");
 
-  const MAX_INVITATIONS_PER_RUN = 100;
-
-  async function main() {
-    console.log(
-      "PROCESSING MERCHANT ACTIVATION INVITATIONS"
-    );
+  console.log(
+    "PROCESSING MERCHANT ACTIVATION INVITATIONS"
+  );
 
   const apiKey =
     process.env.RESEND_API_KEY?.trim();
@@ -36,71 +38,71 @@ import {
   const activationBaseUrl =
     process.env.MERCHANT_ACTIVATION_BASE_URL?.trim();
 
-    if (
-      !apiKey ||
-      !fromEmail ||
-      !activationBaseUrl
-    ) {
-      throw new Error(
-        "Merchant invitation email configuration is incomplete"
-      );
-    }
-
-    const expiredCount =
-      await cleanupExpiredMerchantInvitations();
-
-    console.log(
-      `Expired or consumed invitations cleaned: ${expiredCount}`
+  if (
+    !apiKey ||
+    !fromEmail ||
+    !activationBaseUrl
+  ) {
+    throw new Error(
+      "Merchant invitation email configuration is incomplete"
     );
-
-    const reviewRequiredCount =
-      await reconcileStaleMerchantInvitationSending();
-
-    console.log(
-      `Stale invitation deliveries moved to manual review: ${reviewRequiredCount}`
-    );
-
-    let processedCount = 0;
-
-    while (
-      processedCount < MAX_INVITATIONS_PER_RUN
-    ) {
-      const processed =
-        await processNextMerchantInvitation({
-          apiKey,
-          fromEmail,
-          activationBaseUrl
-        });
-
-      if (!processed) {
-        break;
-      }
-
-      processedCount++;
-    }
-
-    console.log(
-      `Invitation delivery attempts processed: ${processedCount}`
-    );
-
-    if (
-      processedCount === MAX_INVITATIONS_PER_RUN
-    ) {
-      console.log(
-        "Processing limit reached; remaining invitations will be handled by a later run"
-      );
-    }
   }
 
-  main()
-    .catch((error) => {
-      console.error(
-        "Merchant invitation processing failed:",
-        error
-      );
+  const expiredCount =
+    await cleanupExpiredMerchantInvitations();
 
-      process.exitCode = 1;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
+  console.log(
+    `Expired or consumed invitations cleaned: ${expiredCount}`
+  );
+
+  const reviewRequiredCount =
+    await reconcileStaleMerchantInvitationSending();
+
+  console.log(
+    `Stale invitation deliveries moved to manual review: ${reviewRequiredCount}`
+  );
+
+  let processedCount = 0;
+
+  while (
+    processedCount < MAX_INVITATIONS_PER_RUN
+  ) {
+    const processed =
+      await processNextMerchantInvitation({
+        apiKey,
+        fromEmail,
+        activationBaseUrl
+      });
+
+    if (!processed) {
+      break;
+    }
+
+    processedCount++;
+  }
+
+  console.log(
+    `Invitation delivery attempts processed: ${processedCount}`
+  );
+
+  if (
+    processedCount === MAX_INVITATIONS_PER_RUN
+  ) {
+    console.log(
+      "Processing limit reached; remaining invitations will be handled by a later run"
+    );
+  }
+}
+
+main()
+  .catch((error) => {
+    console.error(
+      "Merchant invitation processing failed:",
+      error
+    );
+
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma?.$disconnect();
+  });
