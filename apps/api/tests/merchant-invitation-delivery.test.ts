@@ -13,6 +13,7 @@ import {
 import {
   beginMerchantInvitationSending,
   claimMerchantInvitationDelivery,
+  claimSpecificMerchantInvitationDelivery,
   completeMerchantInvitationDelivery,
   failMerchantInvitationDelivery,
   cleanupExpiredMerchantInvitations,
@@ -28,7 +29,8 @@ import {
 } from "../src/services/merchant-invitation-encryption.js";
 
 import {
-  processNextMerchantInvitation
+  processNextMerchantInvitation,
+  processSpecificMerchantInvitation
 } from "../src/services/merchant-invitation-processor.js";
 
 const testPrefix = "merchant-invitation-worker";
@@ -370,6 +372,290 @@ describe("merchant invitation delivery worker", () => {
     expect(persisted.attemptCount).toBe(1);
   });
 
+
+
+  it("claims only the explicitly targeted invitation", async () => {
+    const unrelated = await createFixture();
+    const target = await createFixture();
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: target.delivery.id,
+        expectedMerchantId: target.merchant.id,
+        expectedRecipientEmail: target.delivery.recipientEmail
+      });
+
+    expect(claimed?.id).toBe(target.delivery.id);
+    expect(claimed?.status).toBe("PROCESSING");
+    expect(claimed?.attemptCount).toBe(1);
+    expect(claimed?.processingUntil).toBeInstanceOf(Date);
+
+    const unrelatedPersisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: unrelated.delivery.id
+        }
+      });
+
+    expect(unrelatedPersisted.status).toBe("PENDING");
+    expect(unrelatedPersisted.attemptCount).toBe(0);
+    expect(unrelatedPersisted.processingUntil).toBeNull();
+
+    const targetPersisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: target.delivery.id
+        }
+      });
+
+    expect(targetPersisted.status).toBe("PROCESSING");
+    expect(targetPersisted.attemptCount).toBe(1);
+  });
+
+
+
+  it("does not modify invitations when the targeted ID does not exist", async () => {
+    const { merchant, delivery } = await createFixture();
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: "nonexistent-invitation-id",
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(0);
+    expect(persisted.processingUntil).toBeNull();
+  });
+
+
+  it("does not claim a targeted invitation with an expired activation", async () => {
+    const { merchant, activation, delivery } = await createFixture();
+
+    await prisma.merchantOwnerActivation.update({
+      where: {
+        id: activation.id
+      },
+      data: {
+        expiresAt: new Date(Date.now() - 60_000)
+      }
+    });
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: delivery.id,
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(0);
+    expect(persisted.processingUntil).toBeNull();
+    expect(persisted.sentAt).toBeNull();
+  });
+
+
+  it("does not claim a targeted invitation whose activation was consumed", async () => {
+    const { merchant, activation, delivery } = await createFixture();
+
+    await prisma.merchantOwnerActivation.update({
+      where: {
+        id: activation.id
+      },
+      data: {
+        consumedAt: new Date()
+      }
+    });
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: delivery.id,
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(0);
+    expect(persisted.processingUntil).toBeNull();
+    expect(persisted.sentAt).toBeNull();
+  });
+
+
+  it("does not claim a targeted invitation after five attempts", async () => {
+    const { merchant, delivery } = await createFixture();
+
+    await prisma.merchantInvitationDelivery.update({
+      where: {
+        id: delivery.id
+      },
+      data: {
+        status: "PENDING",
+        attemptCount: 5,
+        nextAttemptAt: new Date(Date.now() - 60_000)
+      }
+    });
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: delivery.id,
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(5);
+    expect(persisted.processingUntil).toBeNull();
+    expect(persisted.sentAt).toBeNull();
+  });
+
+
+  it("rejects a targeted claim with the wrong merchant identity", async () => {
+    const target = await createFixture();
+    const unrelated = await createFixture();
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: target.delivery.id,
+        expectedMerchantId: unrelated.merchant.id,
+        expectedRecipientEmail: target.delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: target.delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(0);
+    expect(persisted.processingUntil).toBeNull();
+    expect(persisted.sentAt).toBeNull();
+
+    const unrelatedPersisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: unrelated.delivery.id
+        }
+      });
+
+    expect(unrelatedPersisted.status).toBe("PENDING");
+    expect(unrelatedPersisted.attemptCount).toBe(0);
+    expect(unrelatedPersisted.processingUntil).toBeNull();
+  });
+
+
+  it("rejects a targeted claim with the wrong recipient email", async () => {
+    const target = await createFixture();
+    const unrelated = await createFixture();
+
+    const claimed =
+      await claimSpecificMerchantInvitationDelivery({
+        deliveryId: target.delivery.id,
+        expectedMerchantId: target.merchant.id,
+        expectedRecipientEmail: unrelated.delivery.recipientEmail
+      });
+
+    expect(claimed).toBeNull();
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: target.delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PENDING");
+    expect(persisted.attemptCount).toBe(0);
+    expect(persisted.processingUntil).toBeNull();
+    expect(persisted.sentAt).toBeNull();
+
+    const unrelatedPersisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: unrelated.delivery.id
+        }
+      });
+
+    expect(unrelatedPersisted.status).toBe("PENDING");
+    expect(unrelatedPersisted.attemptCount).toBe(0);
+    expect(unrelatedPersisted.processingUntil).toBeNull();
+    expect(unrelatedPersisted.sentAt).toBeNull();
+  });
+
+  it("prevents two concurrent targeted claims of the same invitation", async () => {
+    const { merchant, delivery } = await createFixture();
+
+    const [first, second] = await Promise.all([
+      claimSpecificMerchantInvitationDelivery({
+        deliveryId: delivery.id,
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      }),
+      claimSpecificMerchantInvitationDelivery({
+        deliveryId: delivery.id,
+        expectedMerchantId: merchant.id,
+        expectedRecipientEmail: delivery.recipientEmail
+      })
+    ]);
+
+    const successfulClaims = [first, second].filter(
+      (claim) => claim !== null
+    );
+
+    expect(successfulClaims).toHaveLength(1);
+    expect(successfulClaims[0]?.id).toBe(delivery.id);
+
+    const persisted =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(persisted.status).toBe("PROCESSING");
+    expect(persisted.attemptCount).toBe(1);
+    expect(persisted.processingUntil).not.toBeNull();
+  });
 
   it("prevents two concurrent workers from claiming the same invitation", async () => {
     const { delivery } = await createFixture();
@@ -1120,6 +1406,317 @@ describe("merchant invitation delivery worker", () => {
       });
 
     expect(currentWorkerReady).toBe(true);
+  });
+
+  it("does not send a targeted invitation with the wrong merchant identity", async () => {
+    const target = await createFixture();
+    const unrelated = await createFixture();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    try {
+      const processed =
+        await processSpecificMerchantInvitation(
+          {
+            deliveryId: target.delivery.id,
+            expectedMerchantId: unrelated.merchant.id,
+            expectedRecipientEmail:
+              target.delivery.recipientEmail
+          },
+          {
+            apiKey: "test-resend-api-key",
+            fromEmail: "onboarding@example.test",
+            activationBaseUrl:
+              "https://merchant.example.test/activate"
+          }
+        );
+
+      expect(processed).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const persisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: target.delivery.id
+          }
+        });
+
+      expect(persisted.status).toBe("PENDING");
+      expect(persisted.attemptCount).toBe(0);
+      expect(persisted.processingUntil).toBeNull();
+      expect(persisted.sentAt).toBeNull();
+      expect(persisted.providerMessageId).toBeNull();
+
+      const unrelatedPersisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: unrelated.delivery.id
+          }
+        });
+
+      expect(unrelatedPersisted.status).toBe("PENDING");
+      expect(unrelatedPersisted.attemptCount).toBe(0);
+      expect(unrelatedPersisted.processingUntil).toBeNull();
+      expect(unrelatedPersisted.sentAt).toBeNull();
+      expect(unrelatedPersisted.providerMessageId).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("does not send a targeted invitation with the wrong recipient email", async () => {
+    const target = await createFixture();
+    const unrelated = await createFixture();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    try {
+      const processed =
+        await processSpecificMerchantInvitation(
+          {
+            deliveryId: target.delivery.id,
+            expectedMerchantId: target.merchant.id,
+            expectedRecipientEmail:
+              unrelated.delivery.recipientEmail
+          },
+          {
+            apiKey: "test-resend-api-key",
+            fromEmail: "onboarding@example.test",
+            activationBaseUrl:
+              "https://merchant.example.test/activate"
+          }
+        );
+
+      expect(processed).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const persisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: target.delivery.id
+          }
+        });
+
+      expect(persisted.status).toBe("PENDING");
+      expect(persisted.attemptCount).toBe(0);
+      expect(persisted.processingUntil).toBeNull();
+      expect(persisted.sentAt).toBeNull();
+      expect(persisted.providerMessageId).toBeNull();
+
+      const unrelatedPersisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: unrelated.delivery.id
+          }
+        });
+
+      expect(unrelatedPersisted.status).toBe("PENDING");
+      expect(unrelatedPersisted.attemptCount).toBe(0);
+      expect(unrelatedPersisted.processingUntil).toBeNull();
+      expect(unrelatedPersisted.sentAt).toBeNull();
+      expect(unrelatedPersisted.providerMessageId).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("rejects targeted processing with missing email configuration", async () => {
+    const target = await createFixture();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    try {
+      await expect(
+        processSpecificMerchantInvitation(
+          {
+            deliveryId: target.delivery.id,
+            expectedMerchantId: target.merchant.id,
+            expectedRecipientEmail:
+              target.delivery.recipientEmail
+          },
+          {
+            apiKey: "",
+            fromEmail: "onboarding@example.test",
+            activationBaseUrl:
+              "https://merchant.example.test/activate"
+          }
+        )
+      ).rejects.toThrow(
+        "Merchant invitation email configuration is incomplete"
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const persisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: target.delivery.id
+          }
+        });
+
+      expect(persisted.status).toBe("PENDING");
+      expect(persisted.attemptCount).toBe(0);
+      expect(persisted.processingUntil).toBeNull();
+      expect(persisted.sentAt).toBeNull();
+      expect(persisted.providerMessageId).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("rejects targeted processing with a non-HTTPS activation URL", async () => {
+    const target = await createFixture();
+
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+
+    try {
+      await expect(
+        processSpecificMerchantInvitation(
+          {
+            deliveryId: target.delivery.id,
+            expectedMerchantId: target.merchant.id,
+            expectedRecipientEmail:
+              target.delivery.recipientEmail
+          },
+          {
+            apiKey: "test-resend-api-key",
+            fromEmail: "onboarding@example.test",
+            activationBaseUrl:
+              "http://merchant.example.test/activate"
+          }
+        )
+      ).rejects.toThrow(
+        "Merchant activation URL must use HTTPS"
+      );
+
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const persisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: target.delivery.id
+          }
+        });
+
+      expect(persisted.status).toBe("PENDING");
+      expect(persisted.attemptCount).toBe(0);
+      expect(persisted.processingUntil).toBeNull();
+      expect(persisted.sentAt).toBeNull();
+      expect(persisted.providerMessageId).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it("sends only the explicitly targeted merchant invitation", async () => {
+    const target = await createFixture();
+    const unrelated = await createFixture();
+
+    const token = randomUUID();
+
+    await prisma.merchantInvitationDelivery.update({
+      where: {
+        id: target.delivery.id
+      },
+      data: {
+        encryptedToken:
+          encryptMerchantInvitation(token)
+      }
+    });
+
+    const fetchMock = vi.spyOn(
+      globalThis,
+      "fetch"
+    ).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "resend-targeted-test-message"
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json"
+          }
+        }
+      )
+    );
+
+    try {
+      const processed =
+        await processSpecificMerchantInvitation(
+          {
+            deliveryId: target.delivery.id,
+            expectedMerchantId: target.merchant.id,
+            expectedRecipientEmail:
+              target.delivery.recipientEmail
+          },
+          {
+            apiKey: "test-resend-api-key",
+            fromEmail: "onboarding@example.test",
+            activationBaseUrl:
+              "https://merchant.example.test/activate"
+          }
+        );
+
+      expect(processed).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      const [requestUrl, requestOptions] =
+        fetchMock.mock.calls[0]!;
+
+      expect(requestUrl).toBe(
+        "https://api.resend.com/emails"
+      );
+
+      const body = JSON.parse(
+        String(requestOptions?.body)
+      );
+
+      expect(body.to).toEqual([
+        target.delivery.recipientEmail
+      ]);
+
+      expect(body.text).toContain(token);
+
+      expect(
+        new Headers(requestOptions?.headers).get(
+          "Idempotency-Key"
+        )
+      ).toBe(
+        `merchant-invitation/${target.delivery.id}`
+      );
+
+      const persisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: target.delivery.id
+          }
+        });
+
+      expect(persisted.status).toBe("SENT");
+      expect(persisted.providerMessageId).toBe(
+        "resend-targeted-test-message"
+      );
+      expect(persisted.encryptedToken).toBeNull();
+      expect(persisted.sentAt).toBeInstanceOf(Date);
+      expect(persisted.processingUntil).toBeNull();
+      expect(persisted.attemptCount).toBe(1);
+
+      const unrelatedPersisted =
+        await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+          where: {
+            id: unrelated.delivery.id
+          }
+        });
+
+      expect(unrelatedPersisted.status).toBe("PENDING");
+      expect(unrelatedPersisted.attemptCount).toBe(0);
+      expect(unrelatedPersisted.processingUntil).toBeNull();
+      expect(unrelatedPersisted.sentAt).toBeNull();
+      expect(unrelatedPersisted.providerMessageId).toBeNull();
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it("sends an activation email and clears the encrypted token", async () => {

@@ -58,6 +58,84 @@ WHERE (
   });
 }
 
+
+export async function claimSpecificMerchantInvitationDelivery(
+  input: {
+    deliveryId: string;
+    expectedMerchantId: string;
+    expectedRecipientEmail: string;
+  }
+) {
+  const {
+    deliveryId,
+    expectedMerchantId,
+    expectedRecipientEmail
+  } = input;
+  if (
+    !deliveryId?.trim() ||
+    !expectedMerchantId?.trim() ||
+    !expectedRecipientEmail?.trim()
+  ) {
+    return null;
+  }
+
+  const now = new Date();
+
+  const processingUntil = new Date(
+    now.getTime() +
+      PROCESSING_LEASE_MINUTES * 60 * 1000
+  );
+
+  return prisma.$transaction(async (tx) => {
+    const candidates = await tx.$queryRaw<
+      Array<{ id: string }>
+    >`
+      SELECT d."id"
+      FROM "MerchantInvitationDelivery" d
+      INNER JOIN "MerchantOwnerActivation" a
+        ON a."id" = d."activationId"
+      WHERE d."id" = ${deliveryId}
+        AND a."merchantId" = ${expectedMerchantId}
+        AND d."recipientEmail" = ${expectedRecipientEmail}
+        AND a."ownerEmail" = ${expectedRecipientEmail}
+        AND (
+          (
+            d."status" = 'PENDING'
+            AND d."nextAttemptAt" <= ${now}
+          )
+          OR (
+            d."status" = 'PROCESSING'
+            AND d."processingUntil" <= ${now}
+          )
+        )
+        AND a."expiresAt" > ${now}
+        AND a."consumedAt" IS NULL
+        AND d."attemptCount" < ${MAX_DELIVERY_ATTEMPTS}
+      LIMIT 1
+      FOR UPDATE OF d SKIP LOCKED
+    `;
+
+    const candidate = candidates[0];
+
+    if (!candidate) {
+      return null;
+    }
+
+    return tx.merchantInvitationDelivery.update({
+      where: {
+        id: candidate.id
+      },
+      data: {
+        status: "PROCESSING",
+        attemptCount: {
+          increment: 1
+        },
+        processingUntil
+      }
+    });
+  });
+}
+
 export async function beginMerchantInvitationSending(
   input: {
     deliveryId: string;
