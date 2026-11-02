@@ -214,6 +214,52 @@ describe("merchant invitation delivery worker", () => {
     );
   });
 
+  it("does not reconcile SENDING deliveries while their lease is active", async () => {
+    const { delivery } = await createFixture();
+
+    const claim = await claimMerchantInvitationDelivery();
+
+    expect(claim).not.toBeNull();
+
+    const started = await beginMerchantInvitationSending({
+      deliveryId: delivery.id,
+      attemptCount: claim!.attemptCount
+    });
+
+    expect(started).toBe(true);
+
+    const before =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(before.status).toBe("SENDING");
+    expect(before.processingUntil).toBeInstanceOf(Date);
+    expect(before.processingUntil!.getTime()).toBeGreaterThan(
+      Date.now()
+    );
+
+    const reconciled =
+      await reconcileStaleMerchantInvitationSending();
+
+    expect(reconciled).toBe(0);
+
+    const after =
+      await prisma.merchantInvitationDelivery.findUniqueOrThrow({
+        where: {
+          id: delivery.id
+        }
+      });
+
+    expect(after.status).toBe("SENDING");
+    expect(after.processingUntil).toEqual(before.processingUntil);
+    expect(after.attemptCount).toBe(before.attemptCount);
+    expect(after.sentAt).toBeNull();
+    expect(after.providerMessageId).toBeNull();
+  });
+
   it("moves stale SENDING deliveries to manual review without retrying", async () => {
     const { delivery } = await createFixture();
 
