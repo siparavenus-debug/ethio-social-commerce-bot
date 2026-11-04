@@ -14,7 +14,8 @@ import {
   beforeEach,
   describe,
   expect,
-  it
+  it,
+  vi
 } from "vitest";
 
 import {
@@ -2456,6 +2457,134 @@ describe(
           createdCount: 0,
           skippedCount: 0
         });
+      }
+    );
+
+    it(
+      "does not create SECOND_OVERDUE reminders for invoices changed to PAID",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-paid",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        const dueAt =
+          new Date("2026-10-05T00:00:00.000Z");
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id: fixture.invoice.id
+          },
+          data: {
+            dueAt,
+            status: MerchantInvoiceStatus.PAID,
+            paidAt: new Date("2026-10-07T00:00:00.000Z")
+          }
+        });
+
+        const result =
+          await processSecondOverdueInvoiceReminders({
+            now: new Date("2026-10-08T00:00:00.000Z")
+          });
+
+        const reminderCount =
+          await prisma.merchantInvoiceReminder.count({
+            where: {
+              invoiceId: fixture.invoice.id,
+              type: MerchantInvoiceReminderType.SECOND_OVERDUE
+            }
+          });
+
+        expect(result).toEqual({
+          discoveredCount: 0,
+          createdCount: 0,
+          skippedCount: 0
+        });
+
+        expect(reminderCount).toBe(0);
+      }
+    );
+
+    it(
+      "skips SECOND_OVERDUE when an invoice becomes PAID after discovery",
+      async () => {
+        const fixture =
+          await createFixture(
+            "second-overdue-discovery-race",
+            MerchantInvoiceStatus.OVERDUE
+          );
+
+        await prisma.merchantInvoice.update({
+          where: {
+            id: fixture.invoice.id
+          },
+          data: {
+            dueAt: new Date("2026-10-05T00:00:00.000Z")
+          }
+        });
+
+        const originalFindMany =
+          prisma.merchantInvoice.findMany.bind(
+            prisma.merchantInvoice
+          );
+
+        const discoverySpy =
+          vi.spyOn(prisma.merchantInvoice, "findMany");
+
+        try {
+          discoverySpy.mockImplementationOnce(
+            (async (...args: Parameters<typeof originalFindMany>) => {
+              const candidates =
+                await originalFindMany(...args);
+
+              expect(candidates).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({
+                    id: fixture.invoice.id,
+                    merchantId: fixture.merchant.id
+                  })
+                ])
+              );
+
+              await prisma.merchantInvoice.update({
+                where: {
+                  id: fixture.invoice.id
+                },
+                data: {
+                  status: MerchantInvoiceStatus.PAID,
+                  paidAt: new Date("2026-10-07T00:00:00.000Z")
+                }
+              });
+
+              return candidates;
+            }) as typeof prisma.merchantInvoice.findMany
+          );
+
+          const result =
+            await processSecondOverdueInvoiceReminders({
+              now: new Date("2026-10-08T00:00:00.000Z")
+            });
+
+          expect(result).toEqual({
+            discoveredCount: 1,
+            createdCount: 0,
+            skippedCount: 1
+          });
+
+          const reminderCount =
+            await prisma.merchantInvoiceReminder.count({
+              where: {
+                invoiceId: fixture.invoice.id,
+                type:
+                  MerchantInvoiceReminderType.SECOND_OVERDUE
+              }
+            });
+
+          expect(reminderCount).toBe(0);
+        } finally {
+          discoverySpy.mockRestore();
+        }
       }
     );
 

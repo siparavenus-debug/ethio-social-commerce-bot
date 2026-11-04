@@ -531,6 +531,121 @@ export async function processOverdueMerchantInvoices(
   };
 }
 
+const MAX_SECOND_REMINDER_SERIALIZABLE_ATTEMPTS = 3;
+
+async function createSecondOverdueReminderAttempt(
+  merchantId: string,
+  invoiceId: string,
+  secondReminderDueAt: Date
+): Promise<boolean> {
+  return prisma.$transaction(
+    async (tx) => {
+      const invoice =
+        await tx.merchantInvoice.findFirst({
+          where: {
+            id: invoiceId,
+            merchantId,
+            status: MerchantInvoiceStatus.OVERDUE,
+            dueAt: {
+              lte: secondReminderDueAt
+            },
+            settlements: {
+              none: {
+                status:
+                  MerchantSettlementStatus.REVIEW_REQUIRED
+              }
+            },
+            reminders: {
+              none: {
+                type:
+                  MerchantInvoiceReminderType.SECOND_OVERDUE
+              }
+            }
+          },
+          select: {
+            id: true
+          }
+        });
+
+      if (!invoice) {
+        return false;
+      }
+
+      await tx.merchantInvoiceReminder.create({
+        data: {
+          merchantId,
+          invoiceId,
+          type:
+            MerchantInvoiceReminderType.SECOND_OVERDUE
+        }
+      });
+
+      return true;
+    },
+    {
+      isolationLevel:
+        Prisma.TransactionIsolationLevel.Serializable
+    }
+  );
+}
+
+async function createSecondOverdueReminder(
+  merchantId: string,
+  invoiceId: string,
+  secondReminderDueAt: Date
+): Promise<boolean> {
+  for (
+    let attempt = 1;
+    attempt <= MAX_SECOND_REMINDER_SERIALIZABLE_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await createSecondOverdueReminderAttempt(
+        merchantId,
+        invoiceId,
+        secondReminderDueAt
+      );
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034" &&
+        attempt < MAX_SECOND_REMINDER_SERIALIZABLE_ATTEMPTS
+      ) {
+        continue;
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        const existing =
+          await prisma.merchantInvoiceReminder.findUnique({
+            where: {
+              invoiceId_type: {
+                invoiceId,
+                type:
+                  MerchantInvoiceReminderType.SECOND_OVERDUE
+              }
+            },
+            select: {
+              id: true
+            }
+          });
+
+        if (existing) {
+          return false;
+        }
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error(
+    "Second overdue reminder could not be completed"
+  );
+}
+
 export type ProcessSecondOverdueInvoiceRemindersInput = {
   now?: Date;
 };
@@ -581,20 +696,14 @@ export async function processSecondOverdueInvoiceReminders(
     });
 
   const results =
-    await Promise.allSettled(
+    await Promise.all(
       candidates.map(
         (invoice) =>
-          prisma.merchantInvoiceReminder.create({
-            data: {
-              merchantId:
-                invoice.merchantId,
-              invoiceId:
-                invoice.id,
-              type:
-                MerchantInvoiceReminderType
-                  .SECOND_OVERDUE
-            }
-          })
+          createSecondOverdueReminder(
+            invoice.merchantId,
+            invoice.id,
+            secondReminderDueAt
+          )
       )
     );
 
@@ -603,13 +712,11 @@ export async function processSecondOverdueInvoiceReminders(
       candidates.length,
     createdCount:
       results.filter(
-        (result) =>
-          result.status === "fulfilled"
+        (created) => created
       ).length,
     skippedCount:
       results.filter(
-        (result) =>
-          result.status === "rejected"
+        (created) => !created
       ).length
   };
 }
