@@ -437,3 +437,145 @@ What does this decision change?
 ## Status
 
 Proposed / Accepted / Superseded / Rejected
+
+# ADR-012 — Dedicated Platform Billing Telegram Notification Architecture
+
+**Project:** Ethio Social Commerce / Yagebeya
+**Date:** November 4, 2026
+**Status:** Accepted — November 4, 2026
+**Gate:** 15.6 Part B — B1
+
+## Decision
+
+Introduce a dedicated, platform-owned Telegram bot for merchant billing notifications.
+
+The platform bot will operate independently of merchant-owned Telegram commerce bots.
+
+Billing notifications will use a durable, transactionally produced business-event architecture with separate notification intents, recipient deliveries, and provider send attempts.
+
+Only explicitly opted-in, authenticated merchant OWNER accounts may receive billing notifications.
+
+Telegram will have no authority to mutate financial state.
+
+A shared Telegram bot identity registry and historical ownership reservation mechanism will prevent conflicting ownership between platform and merchant bots.
+
+## Reason
+
+The existing application supports merchant commerce messaging, invoice processing, settlement verification, subscription management, and merchant account enforcement.
+
+Billing notifications require a separate trust boundary because they communicate financial information to merchant account owners.
+
+Reusing merchant commerce bots would introduce avoidable coupling between customer-facing commerce messaging and platform billing administration.
+
+Sending Telegram messages directly inside billing transactions would couple financial state transitions to external provider availability and create inconsistent failure behavior.
+
+A durable event-and-delivery architecture preserves authoritative billing state independently of notification outcomes.
+
+Explicit consent, verified Telegram identity, and merchant OWNER authorization reduce the risk of financial information being sent to an unauthorized recipient.
+
+A shared bot identity registry prevents accidental reuse of the same Telegram bot by competing platform and merchant integrations.
+
+## Alternatives Considered
+
+### 1. Reuse existing merchant commerce bots
+
+Rejected because merchant-controlled commerce credentials and customer-facing messaging should not become the platform's billing notification channel.
+
+### 2. Send Telegram notifications directly from billing transactions
+
+Rejected because external provider calls must not participate in financial database transactions.
+
+### 3. Use billing reminder records as Telegram delivery records
+
+Rejected because authoritative billing reminders and provider delivery attempts represent different business facts and lifecycles.
+
+### 4. Use one notification for every billing business event
+
+Rejected because settlement verification and invoice payment are separate business facts that should produce only one payment-confirmation notification.
+
+### 5. Automatically retry every failed Telegram request
+
+Rejected because a timeout or crash may occur after Telegram accepts the message, making blind retries unsafe.
+
+### 6. Maintain separate, uncoordinated bot ownership records
+
+Rejected because database uniqueness inside separate tables cannot prevent the same Telegram bot ID from being claimed by both platform and merchant systems.
+
+## Consequences
+
+### Positive
+
+- Strong separation between platform billing and merchant commerce.
+- Durable, auditable notification processing.
+- Explicit merchant OWNER consent.
+- Reduced duplicate notification risk.
+- Conservative handling of uncertain provider outcomes.
+- Shared Telegram bot ownership enforcement.
+- Improved operational visibility.
+- Independent evolution of billing notifications.
+
+### Costs and Tradeoffs
+
+- Additional database models and migrations.
+- Dedicated webhook and worker infrastructure.
+- Historical merchant bot identity reconciliation.
+- Additional authorization and lifecycle logic.
+- Manual review for ambiguous Telegram sends.
+- More extensive regression testing.
+- No guarantee of exactly-once delivery or message readership.
+
+## Security Requirements
+
+The implementation must preserve:
+
+- Existing financial authorization boundaries.
+- Merchant and platform identity separation.
+- Merchant-scoped database relationships.
+- Dedicated webhook authentication.
+- Cryptographically secure, short-lived linking credentials.
+- Atomic single-use enrollment.
+- Explicit consent and revocation.
+- Private-chat-only linking.
+- Independent recipient eligibility checks.
+- Secure bot credential storage.
+- Auditable operator recovery.
+- No financial mutation authority for Telegram.
+
+## Compatibility Requirements
+
+Existing merchant Telegram integration registration, replacement, status changes, webhook authentication, customer conversations, and order fulfillment messaging must remain operational.
+
+Legacy integrations without verified bot IDs require explicit reconciliation or compatibility handling.
+
+INACTIVE merchant integrations must not automatically release bot ownership.
+
+Uncertain webhook cleanup must not release ownership prematurely.
+
+Existing integration test fixtures must be updated safely during B2 without weakening production database constraints.
+
+## Implementation Boundaries
+
+This ADR establishes the architecture only.
+
+It does not approve:
+
+- Prisma schema modifications.
+- Database migrations.
+- Historical data backfills.
+- New routes or workers.
+- Telegram bot registration.
+- Webhook configuration.
+- Test execution.
+- Commits or pushes.
+- Railway deployment.
+- Production notification sends.
+
+These activities require explicit authorization under subsequent gates.
+
+## Acceptance
+
+This ADR was formally accepted on November 4, 2026, as part of the Gate 15.6 Part B B1 architecture baseline. B2 implementation requires separate authorization.
+
+The detailed implementation remains governed by the separately maintained Gate 15.6 Part B master plan.
+
+**Status: ACCEPTED — November 4, 2026.**
