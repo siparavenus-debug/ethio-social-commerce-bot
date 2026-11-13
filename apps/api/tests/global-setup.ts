@@ -29,9 +29,13 @@ export async function setup(): Promise<void> {
     expectedDatabase = "ethio_commerce_test";
   } else if (suite === "bootstrap-concurrency") {
     expectedDatabase = "ethio_commerce_bootstrap_test";
+  } else if (suite === "billing-telegram-b3") {
+    expectedDatabase = "ethio_commerce_b2_migration_test";
+  } else if (suite === "billing-b53-concurrency") {
+    expectedDatabase = "ethio_commerce_b53_concurrency_test";
   } else {
     throw new Error(
-      "API_TEST_SUITE must explicitly be standard or bootstrap-concurrency."
+      "API_TEST_SUITE must explicitly be standard, bootstrap-concurrency, billing-telegram-b3, or billing-b53-concurrency."
     );
   }
 

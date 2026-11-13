@@ -19,6 +19,8 @@ import paymentMethodsRouter from "./routes/payment-methods.js";
 import paymentsRouter from "./routes/payments.js";
 import merchantSettlementsRouter from "./routes/merchant-settlements.js";
 import merchantUsersRouter from "./routes/merchant-users.js";
+import merchantBillingTelegramRouter from "./routes/merchant-billing-telegram.js";
+import platformBillingTelegramRouter from "./routes/platform-billing-telegram.js";
 
 async function start() {
   const app = express();
@@ -131,6 +133,17 @@ async function start() {
       }
     });
 
+  const platformBillingTelegramWebhookLimiter =
+    rateLimit({
+      windowMs: 60 * 1000,
+      limit: 60,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+      message: {
+        error: "Too many platform Telegram webhook requests"
+      }
+    });
+
   /*
    * Health check.
    *
@@ -210,6 +223,21 @@ async function start() {
     telegramWebhookLimiter,
     telegramRouter
   );
+
+  /*
+ * Dedicated platform billing Telegram webhook.
+ *
+ * Separate from merchant commerce Telegram.
+ * Uses independent JSON parsing and rate limiting.
+ */
+app.use(
+  "/webhooks/platform-billing-telegram",
+  express.json({
+    limit: "100kb"
+  }),
+  platformBillingTelegramWebhookLimiter,
+  platformBillingTelegramRouter
+);
 
   /*
    * General JSON body-size protection.
@@ -330,6 +358,11 @@ async function start() {
   app.use(
     "/merchants",
     merchantSettlementsRouter
+  );
+
+  app.use(
+    "/merchants",
+    merchantBillingTelegramRouter
   );
 
   console.log(

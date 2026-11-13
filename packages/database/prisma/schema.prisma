@@ -188,6 +188,11 @@ model Merchant {
   settlements           MerchantSettlement[]
   onboardingApplication MerchantOnboardingApplication?
   ownerActivations MerchantOwnerActivation[]
+  billingLinkTokens PlatformTelegramLinkToken[]
+  billingDestinations MerchantBillingTelegramDestination[]
+  billingEvents PlatformBillingEvent[]
+  billingAudits PlatformBillingNotificationAudit[]
+  billingBotReservations TelegramBotOwnershipReservation[]
 }
 
 model MerchantUser {
@@ -203,6 +208,11 @@ model MerchantUser {
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
 
+  billingLinkTokens PlatformTelegramLinkToken[] @relation("BillingLinkCreator")
+  billingDestinations MerchantBillingTelegramDestination[] @relation("BillingDestinationLinker")
+  billingAudits PlatformBillingNotificationAudit[] @relation("BillingAuditMerchantActor")
+
+  @@unique([id, merchantId])
   @@index([merchantId])
 }
 
@@ -426,6 +436,7 @@ model MerchantTelegramIntegration {
 
   merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   botClaims MerchantTelegramBotClaim[]
+  billingBotReservations TelegramBotOwnershipReservation[]
 
   @@unique([id, merchantId])
   @@index([status])
@@ -443,6 +454,7 @@ model MerchantTelegramBotClaim {
   merchant    Merchant                    @relation(fields: [merchantId], references: [id], onDelete: Cascade)
   integration MerchantTelegramIntegration @relation(fields: [integrationId, merchantId], references: [id, merchantId], onDelete: Cascade)
 
+  @@unique([id, integrationId, merchantId])
   @@index([merchantId, status])
   @@unique([integrationId, status])
 }
@@ -484,6 +496,7 @@ model MerchantSubscription {
   plan         SubscriptionPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
   commissions  Commission[]
   invoiceItems MerchantInvoiceItem[]
+  suspensionGeneration Int @default(0)
 
   @@unique([id, merchantId])
   @@index([planId])
@@ -572,10 +585,13 @@ model MerchantInvoice {
   items       MerchantInvoiceItem[]
   reminders   MerchantInvoiceReminder[]
   settlements MerchantSettlement[]
+  paidBySettlementId String?
+  paidBySettlement MerchantSettlement? @relation("InvoicePaidBySettlement", fields: [paidBySettlementId, id, merchantId], references: [id, invoiceId, merchantId], onDelete: Restrict)
 
   @@unique([merchantId, invoiceNumber])
   @@unique([merchantId, periodStart, periodEnd])
   @@unique([id, merchantId])
+  @@unique([paidBySettlementId, id, merchantId])
   @@index([merchantId, status, createdAt])
   @@index([merchantId, dueAt])
 }
@@ -629,6 +645,7 @@ model MerchantInvoiceReminder {
   invoice  MerchantInvoice @relation(fields: [invoiceId, merchantId], references: [id, merchantId], onDelete: Restrict)
 
   @@unique([invoiceId, type])
+  @@unique([id, invoiceId, merchantId, type])
   @@index([merchantId, createdAt])
   @@index([invoiceId, createdAt])
 }
@@ -658,7 +675,9 @@ model MerchantSettlement {
 
   merchant Merchant        @relation(fields: [merchantId], references: [id], onDelete: Restrict)
   invoice  MerchantInvoice @relation(fields: [invoiceId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  paidInvoice MerchantInvoice? @relation("InvoicePaidBySettlement")
 
+  @@unique([id, invoiceId, merchantId])
   @@unique([merchantId, idempotencyKey])
   @@unique([provider, transactionReference])
   @@index([merchantId, status, createdAt])
@@ -737,6 +756,7 @@ model PlatformUser {
   updatedAt    DateTime @updatedAt
 
   auditLogs PlatformAuditLog[]
+  billingAudits PlatformBillingNotificationAudit[] @relation("BillingAuditPlatformActor")
 
   createdOnboardingApplications  MerchantOnboardingApplication[] @relation("OnboardingCreator")
   reviewedOnboardingApplications MerchantOnboardingApplication[] @relation("OnboardingReviewer")
@@ -790,4 +810,306 @@ model PlatformAuditLog {
   @@index([actorPlatformUserId, createdAt])
   @@index([merchantId, createdAt])
   @@index([entityType, entityId])
+}
+
+
+
+// Gate 15.6 Part B2 — proposed platform billing Telegram schema.
+// SQL-only partial indexes, CHECKs, triggers, and migration/backfill remain B2.2 work.
+
+enum PlatformBillingEventType {
+  INVOICE_ISSUED
+  INVOICE_FIRST_OVERDUE
+  INVOICE_SECOND_OVERDUE
+  SETTLEMENT_SUBMITTED
+  SETTLEMENT_VERIFIED
+  SETTLEMENT_REJECTED
+  INVOICE_PAID
+  SUBSCRIPTION_SUSPENDED
+  SUBSCRIPTION_RECOVERED
+}
+
+enum PlatformBillingNotificationStatus {
+  PENDING
+  COMPLETED
+  SUPPRESSED
+  REVIEW_REQUIRED
+}
+
+enum PlatformBillingDeliveryStatus {
+  PENDING
+  PROCESSING
+  SENDING
+  SENT
+  FAILED
+  SUPPRESSED
+  REVIEW_REQUIRED
+}
+
+enum PlatformBillingAttemptOutcome {
+  PREPARED
+  REQUEST_STARTED
+  SUCCEEDED
+  FAILED_PRE_SEND
+  UNCERTAIN
+}
+
+enum PlatformBillingWebhookStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  REJECTED
+  REVIEW_REQUIRED
+}
+
+enum PlatformBillingBotStatus {
+  PROVISIONING
+  ACTIVE
+  INACTIVE
+  REVIEW_REQUIRED
+}
+
+enum BillingDestinationStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum PlatformBillingAuditActorType {
+  PLATFORM_USER
+  MERCHANT_OWNER
+  SYSTEM
+}
+
+enum TelegramBotOwnerType {
+  PLATFORM_BILLING
+  MERCHANT_COMMERCE
+}
+
+enum TelegramBotReservationStatus {
+  RESERVED
+  RELEASED
+}
+
+model PlatformTelegramLinkToken {
+  id                    String @id @default(cuid())
+  merchantId            String
+  createdByUserId       String
+  createdByTokenVersion Int
+  tokenHash             String @unique
+  expiresAt             DateTime
+  consumedAt            DateTime?
+  revokedAt             DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  creator MerchantUser @relation("BillingLinkCreator", fields: [createdByUserId, merchantId], references: [id, merchantId], onDelete: Restrict)
+
+  @@index([merchantId, expiresAt])
+  @@index([createdByUserId, createdAt])
+}
+
+model MerchantBillingTelegramDestination {
+  id             String @id @default(cuid())
+  merchantId     String
+  platformBotId  String
+  chatId         String
+  telegramUserId String
+  status         BillingDestinationStatus @default(ACTIVE)
+  linkedByUserId String
+  linkVersion          Int @default(1)
+  consentedAt          DateTime
+  notificationsEnabled Boolean @default(true)
+  revokedAt            DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  linkedBy MerchantUser @relation("BillingDestinationLinker", fields: [linkedByUserId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  platformBot PlatformBillingTelegramBot @relation(fields: [platformBotId], references: [id], onDelete: Restrict)
+  deliveries PlatformBillingNotificationDelivery[]
+
+  @@unique([id, merchantId])
+  @@unique([id, merchantId, linkVersion])
+  @@index([merchantId, status])
+  @@index([platformBotId, chatId])
+}
+
+model PlatformBillingEvent {
+  id            String @id @default(cuid())
+  merchantId    String
+  type          PlatformBillingEventType
+  sourceId      String
+  occurrenceKey String @unique
+  createdAt     DateTime @default(now())
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  notification PlatformBillingNotification?
+
+  @@unique([id, merchantId])
+  @@index([merchantId, type, createdAt])
+}
+
+model PlatformBillingNotification {
+  id             String @id @default(cuid())
+  merchantId     String
+  eventId        String @unique
+  status         PlatformBillingNotificationStatus @default(PENDING)
+  terminalReason String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event PlatformBillingEvent @relation(fields: [eventId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  delivery PlatformBillingNotificationDelivery?
+
+  @@unique([id, merchantId])
+  @@unique([eventId, merchantId])
+  @@index([merchantId, status])
+}
+
+model PlatformBillingNotificationDelivery {
+  id                     String @id @default(cuid())
+  merchantId             String
+  notificationId         String @unique
+  destinationId          String?
+  destinationLinkVersion Int?
+  status                 PlatformBillingDeliveryStatus @default(PENDING)
+  attemptCount           Int @default(0)
+  nextAttemptAt          DateTime @default(now())
+  claimId                String?
+  processingUntil        DateTime?
+  terminalReason         String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  notification PlatformBillingNotification @relation(fields: [notificationId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  destination MerchantBillingTelegramDestination? @relation(fields: [destinationId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  attempts PlatformBillingNotificationAttempt[]
+  quarantine PlatformBillingDeliveryQuarantine?
+
+  @@unique([id, merchantId])
+  @@unique([notificationId, merchantId])
+  @@index([status, nextAttemptAt])
+  @@index([status, processingUntil])
+  @@index([claimId])
+}
+
+model PlatformBillingDeliveryQuarantine {
+  deliveryId String @id
+  merchantId String
+  reason     String
+  createdAt  DateTime @default(now())
+
+  delivery PlatformBillingNotificationDelivery @relation(fields: [deliveryId, merchantId], references: [id, merchantId], onDelete: Restrict)
+
+  @@unique([deliveryId, merchantId])
+  @@index([merchantId])
+}
+model PlatformBillingNotificationAttempt {
+  id                 String @id @default(cuid())
+  merchantId         String
+  deliveryId         String
+  attemptNumber      Int
+  claimId            String
+  outcome            PlatformBillingAttemptOutcome @default(PREPARED)
+  requestStartedAt   DateTime?
+  responseReceivedAt DateTime?
+  sanitizedError     String?
+  retryAfterSeconds  Int?
+  telegramMessageId  String?
+  createdAt          DateTime @default(now())
+
+  delivery PlatformBillingNotificationDelivery @relation(fields: [deliveryId, merchantId], references: [id, merchantId], onDelete: Restrict)
+
+  @@unique([deliveryId, attemptNumber])
+  @@index([merchantId, createdAt])
+}
+
+model PlatformBillingTelegramWebhookEvent {
+  id               String @id @default(cuid())
+  platformBotId    String
+  telegramUpdateId String
+  status           PlatformBillingWebhookStatus @default(PENDING)
+  sanitizedPayload Json?
+  attemptCount     Int @default(0)
+  nextAttemptAt    DateTime @default(now())
+  claimId          String?
+  processingUntil  DateTime?
+  terminalReason   String?
+  receivedAt       DateTime @default(now())
+  processedAt      DateTime?
+
+  platformBot PlatformBillingTelegramBot @relation(fields: [platformBotId], references: [id], onDelete: Restrict)
+
+  @@unique([platformBotId, telegramUpdateId])
+  @@index([status, nextAttemptAt])
+  @@index([status, processingUntil])
+}
+
+model PlatformBillingTelegramBot {
+  id                     String @id @default(cuid())
+  botIdentityId          String @unique
+  botTokenEncrypted      String
+  webhookSecretEncrypted String
+  webhookKey             String @unique
+  status                 PlatformBillingBotStatus @default(PROVISIONING)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  botIdentity TelegramBotIdentityRegistry @relation(fields: [botIdentityId], references: [id], onDelete: Restrict)
+  destinations MerchantBillingTelegramDestination[]
+  webhookEvents PlatformBillingTelegramWebhookEvent[]
+  reservations TelegramBotOwnershipReservation[]
+
+  @@unique([id, botIdentityId])
+  @@index([status])
+}
+
+model PlatformBillingNotificationAudit {
+  id                  String @id @default(cuid())
+  merchantId          String?
+  actorType           PlatformBillingAuditActorType
+  actorMerchantUserId String?
+  actorPlatformUserId String?
+  action              String
+  entityType          String
+  entityId            String
+  sanitizedMetadata   Json?
+  createdAt           DateTime @default(now())
+
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  merchantActor MerchantUser? @relation("BillingAuditMerchantActor", fields: [actorMerchantUserId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  platformActor PlatformUser? @relation("BillingAuditPlatformActor", fields: [actorPlatformUserId], references: [id], onDelete: Restrict)
+
+  @@index([merchantId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model TelegramBotIdentityRegistry {
+  id            String @id @default(cuid())
+  telegramBotId String @unique
+  createdAt     DateTime @default(now())
+
+  platformBot PlatformBillingTelegramBot?
+  reservations TelegramBotOwnershipReservation[]
+}
+
+model TelegramBotOwnershipReservation {
+  id                    String @id @default(cuid())
+  botIdentityId         String
+  ownerType             TelegramBotOwnerType
+  status                TelegramBotReservationStatus @default(RESERVED)
+  merchantId            String?
+  merchantIntegrationId String?
+  platformBillingBotId  String?
+  createdAt             DateTime @default(now())
+  releasedAt            DateTime?
+
+  botIdentity TelegramBotIdentityRegistry @relation(fields: [botIdentityId], references: [id], onDelete: Restrict)
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  merchantIntegration MerchantTelegramIntegration? @relation(fields: [merchantIntegrationId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  platformBot PlatformBillingTelegramBot? @relation(fields: [platformBillingBotId, botIdentityId], references: [id, botIdentityId], onDelete: Restrict)
+
+  @@index([botIdentityId, status])
+  @@index([merchantId, status])
 }

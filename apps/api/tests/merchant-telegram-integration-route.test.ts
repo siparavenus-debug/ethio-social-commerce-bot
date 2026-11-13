@@ -81,6 +81,38 @@ import type {
   let server: Server | undefined;
   let apiBaseUrl = "";
 
+  async function deleteFixtureTelegramIntegration(
+    merchantId: string
+  ) {
+    const integration =
+      await prisma.merchantTelegramIntegration.findUnique({
+        where: {
+          merchantId
+        },
+        select: {
+          id: true
+        }
+      });
+
+    if (!integration) {
+      throw new Error(
+        "Fixture Telegram integration not found"
+      );
+    }
+
+    await prisma.telegramBotOwnershipReservation.deleteMany({
+      where: {
+        merchantId,
+        merchantIntegrationId: integration.id
+      }
+    });
+
+    await prisma.merchantTelegramIntegration.delete({
+      where: {
+        merchantId
+      }
+    });
+  }
   async function cleanup() {
     const merchants =
       await prisma.merchant.findMany({
@@ -114,11 +146,53 @@ import type {
       }
     });
 
+    const fixtureReservations =
+      await prisma.telegramBotOwnershipReservation.findMany({
+        where: {
+          merchantId: {
+            in: merchantIds
+          }
+        },
+        select: {
+          botIdentityId: true
+        }
+      });
+
+    const fixtureBotIdentityIds = [
+      ...new Set(
+        fixtureReservations.map(
+          (reservation) => reservation.botIdentityId
+        )
+      )
+    ];
+
+    await prisma.telegramBotOwnershipReservation.deleteMany({
+      where: {
+        merchantId: {
+          in: merchantIds
+        }
+      }
+    });
+
     await prisma.merchantTelegramIntegration.deleteMany({
       where: {
         merchantId: {
           in:
             merchantIds
+        }
+      }
+    });
+
+    await prisma.telegramBotIdentityRegistry.deleteMany({
+      where: {
+        id: {
+          in: fixtureBotIdentityIds
+        },
+        reservations: {
+          none: {}
+        },
+        platformBot: {
+          is: null
         }
       }
     });
@@ -214,6 +288,28 @@ import type {
             ),
           status:
             MerchantTelegramIntegrationStatus.ACTIVE
+        }
+      });
+
+      const botIdentity =
+        await prisma.telegramBotIdentityRegistry.upsert({
+          where: {
+            telegramBotId: "123456789"
+          },
+          create: {
+            telegramBotId: "123456789"
+          },
+          update: {}
+        });
+
+      await prisma.telegramBotOwnershipReservation.create({
+        data: {
+          botIdentityId: botIdentity.id,
+          ownerType: "MERCHANT_COMMERCE",
+          merchantId: merchant.id,
+          merchantIntegrationId: integration.id,
+          status: "RESERVED",
+          releasedAt: null
         }
       });
 
@@ -481,12 +577,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           const response =
             await fetch(
@@ -582,12 +673,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -685,12 +771,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1033,12 +1114,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1089,7 +1165,9 @@ import type {
 
           expect(
             telegramMocks.deleteTelegramWebhook
-          ).not.toHaveBeenCalled();
+          ).toHaveBeenCalledExactlyOnceWith(
+            botToken
+          );
 
           const storedIntegration =
             await prisma.merchantTelegramIntegration.findUnique({
@@ -1135,12 +1213,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1254,12 +1327,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1417,12 +1485,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1545,12 +1608,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -1738,12 +1796,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           const response =
             await fetch(
@@ -1808,12 +1861,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -2453,11 +2501,12 @@ import type {
 
           expect(
             telegramMocks.setTelegramWebhook
-          ).toHaveBeenCalledTimes(1);
+          ).toHaveBeenCalledTimes(2);
 
           expect(
             telegramMocks.setTelegramWebhook
-          ).toHaveBeenCalledWith(
+          ).toHaveBeenNthCalledWith(
+            1,
             newBotToken,
             `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
             expect.any(String)
@@ -2465,7 +2514,22 @@ import type {
 
           expect(
             telegramMocks.deleteTelegramWebhook
-          ).not.toHaveBeenCalled();
+          ).toHaveBeenCalledExactlyOnceWith(
+            newBotToken
+          );
+
+          expect(
+            telegramMocks.setTelegramWebhook
+          ).toHaveBeenNthCalledWith(
+            2,
+            decryptTelegramCredential(
+              fixture.integration.botTokenEncrypted
+            ),
+            `http://127.0.0.1:3000/webhooks/telegram/${fixture.integration.webhookKey}`,
+            decryptTelegramCredential(
+              fixture.integration.webhookSecretEncrypted
+            )
+          );
 
           const storedIntegration =
             await prisma.merchantTelegramIntegration.findUniqueOrThrow({
@@ -2580,11 +2644,25 @@ import type {
                 "Replacement Persistence Bot"
             });
 
+          const originalTransaction =
+            prisma.$transaction.bind(prisma);
+
           const transactionSpy =
             vi.spyOn(
               prisma,
               "$transaction"
-            ).mockRejectedValueOnce(
+            );
+
+          transactionSpy
+            .mockImplementationOnce(
+              ((...args: Parameters<
+                typeof prisma.$transaction
+              >) =>
+                originalTransaction(
+                  ...args
+                )) as typeof prisma.$transaction
+            )
+            .mockRejectedValueOnce(
               new Error(
                 "Simulated replacement persistence failure"
               )
@@ -2758,11 +2836,25 @@ import type {
                 "Replacement Cleanup Bot"
             });
 
+          const originalTransaction =
+            prisma.$transaction.bind(prisma);
+
           const transactionSpy =
             vi.spyOn(
               prisma,
               "$transaction"
-            ).mockRejectedValueOnce(
+            );
+
+          transactionSpy
+            .mockImplementationOnce(
+              ((...args: Parameters<
+                typeof prisma.$transaction
+              >) =>
+                originalTransaction(
+                  ...args
+                )) as typeof prisma.$transaction
+            )
+            .mockRejectedValueOnce(
               new Error(
                 "Simulated replacement persistence failure"
               )
@@ -2825,7 +2917,7 @@ import type {
             expect(
               storedIntegration.status
             ).toBe(
-              fixture.integration.status
+              "PROVISIONING"
             );
 
             expect(
@@ -2920,11 +3012,25 @@ import type {
                 "Replacement Restore Failure Bot"
             });
 
+          const originalTransaction =
+            prisma.$transaction.bind(prisma);
+
           const transactionSpy =
             vi.spyOn(
               prisma,
               "$transaction"
-            ).mockRejectedValueOnce(
+            );
+
+          transactionSpy
+            .mockImplementationOnce(
+              ((...args: Parameters<
+                typeof prisma.$transaction
+              >) =>
+                originalTransaction(
+                  ...args
+                )) as typeof prisma.$transaction
+            )
+            .mockRejectedValueOnce(
               new Error(
                 "Simulated replacement persistence failure"
               )
@@ -2997,7 +3103,7 @@ import type {
             expect(
               storedIntegration.status
             ).toBe(
-              fixture.integration.status
+              "PROVISIONING"
             );
 
             expect(
@@ -3215,10 +3321,10 @@ import type {
                 "Replacement Race Bot"
             });
 
-          const claimCreateSpy =
+          const transactionSpy =
             vi.spyOn(
-              prisma.merchantTelegramBotClaim,
-              "create"
+              prisma,
+              "$transaction"
             ).mockRejectedValueOnce(
               new Prisma.PrismaClientKnownRequestError(
                 "Unique constraint failed",
@@ -3266,19 +3372,8 @@ import type {
             );
 
             expect(
-              claimCreateSpy
-            ).toHaveBeenCalledWith({
-              data: {
-                merchantId:
-                  fixture.merchant.id,
-                integrationId:
-                  fixture.integration.id,
-                telegramBotId:
-                  "987654321",
-                status:
-                  "PENDING"
-              }
-            });
+              transactionSpy
+            ).toHaveBeenCalledTimes(1);
 
             expect(
               telegramMocks.setTelegramWebhook
@@ -3372,7 +3467,7 @@ import type {
 
             expect(audit).toBeNull();
           } finally {
-            claimCreateSpy.mockRestore();
+            transactionSpy.mockRestore();
           }
         }
       );
@@ -3791,12 +3886,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id
@@ -3894,12 +3984,7 @@ import type {
           const fixture =
             await createFixture();
 
-          await prisma.merchantTelegramIntegration.delete({
-            where: {
-              merchantId:
-                fixture.merchant.id
-            }
-          });
+          await deleteFixtureTelegramIntegration(fixture.merchant.id);
 
           await createActiveSubscription(
             fixture.merchant.id

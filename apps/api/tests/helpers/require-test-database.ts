@@ -2,7 +2,9 @@
 
 const ALLOWED_TEST_DATABASES = [
   "ethio_commerce_test",
-  "ethio_commerce_bootstrap_test"
+  "ethio_commerce_bootstrap_test",
+  "ethio_commerce_b2_migration_test",
+  "ethio_commerce_b53_concurrency_test"
 ] as const;
 
 export type TestDatabaseName =

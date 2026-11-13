@@ -1,3 +1,5 @@
+import { lockPlatformBillingMerchant } from "./platform-billing-merchant-lock.js";
+import { createPlatformBillingEvent } from "./platform-billing-notification-events.js";
 import {
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
@@ -81,6 +83,10 @@ async function verifySettlementAttempt(
 ) {
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        input.merchantId
+      );
       const settlement =
         await tx.merchantSettlement.findFirst({
           where: {
@@ -299,6 +305,14 @@ async function verifySettlementAttempt(
                 "Merchant subscription not found after recovery"
               );
             }
+
+            await createPlatformBillingEvent(tx, {
+              merchantId: input.merchantId,
+              type: "SUBSCRIPTION_RECOVERED",
+              sourceId: recoveredSubscription.id,
+              occurrenceKey:
+                `SUBSCRIPTION_RECOVERED:${recoveredSubscription.id}:${invoice.id}`
+            });
 
             await tx.auditLog.create({
               data: {
@@ -527,6 +541,14 @@ async function verifySettlementAttempt(
         });
       }
 
+      await createPlatformBillingEvent(tx, {
+        merchantId: input.merchantId,
+        type: "SETTLEMENT_VERIFIED",
+        sourceId: verifiedSettlement.id,
+        occurrenceKey:
+          `SETTLEMENT_VERIFIED:${verifiedSettlement.id}`
+      });
+
       return {
         settlement:
           verifiedSettlement,
@@ -551,6 +573,10 @@ async function rejectSettlementAttempt(
 ) {
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        input.merchantId
+      );
       const settlement =
         await tx.merchantSettlement.findFirst({
           where: {
@@ -723,6 +749,13 @@ async function rejectSettlementAttempt(
           }
         });
       }
+
+      await createPlatformBillingEvent(tx, {
+        merchantId: input.merchantId,
+        type: "SETTLEMENT_REJECTED",
+        sourceId: rejectedSettlement.id,
+        occurrenceKey: `SETTLEMENT_REJECTED:${rejectedSettlement.id}`
+      });
 
       return {
         settlement:

@@ -174,6 +174,27 @@ if (
   );
 }
 
+const platformBillingTelegramWebhookSecret =
+  process.env.PLATFORM_BILLING_TELEGRAM_WEBHOOK_SECRET?.trim();
+
+if (
+  platformBillingTelegramWebhookSecret &&
+  (
+    platformBillingTelegramWebhookSecret.length < 32 ||
+    [
+      authSecret,
+      platformAuthSecret,
+      deliveryConfirmationSecret,
+      telegramCredentialEncryptionKey,
+      merchantInvitationEncryptionKey
+    ].includes(platformBillingTelegramWebhookSecret)
+  )
+) {
+  throw new Error(
+    "PLATFORM_BILLING_TELEGRAM_WEBHOOK_SECRET must contain at least 32 characters and differ from existing security secrets."
+  );
+}
+
 const resendApiKey =
   process.env.RESEND_API_KEY?.trim();
 
@@ -249,6 +270,8 @@ export const env = {
   telegramCredentialEncryptionKey,
 
   merchantInvitationEncryptionKey,
+
+  platformBillingTelegramWebhookSecret,
 
   resendApiKey,
   resendFromEmail,

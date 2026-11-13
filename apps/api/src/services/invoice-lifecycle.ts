@@ -1,3 +1,5 @@
+import { lockPlatformBillingMerchant } from "./platform-billing-merchant-lock.js";
+import { createPlatformBillingEvent } from "./platform-billing-notification-events.js";
 import {
   MerchantInvoiceReminderType,
   MerchantInvoiceStatus,
@@ -38,6 +40,10 @@ export async function openMerchantInvoice(
 
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        merchantId
+      );
       const invoice =
         await tx.merchantInvoice.findUnique({
           where: {
@@ -166,6 +172,13 @@ export async function openMerchantInvoice(
         });
       }
 
+      await createPlatformBillingEvent(tx, {
+        merchantId,
+        type: "INVOICE_ISSUED",
+        sourceId: openedInvoice.id,
+        occurrenceKey: `INVOICE_ISSUED:${openedInvoice.id}`
+      });
+
       return openedInvoice;
     }
   );
@@ -194,6 +207,10 @@ async function markMerchantInvoiceOverdueAttempt(
 
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        merchantId
+      );
       const invoice =
         await tx.merchantInvoice.findUnique({
           where: {
@@ -278,7 +295,8 @@ async function markMerchantInvoiceOverdueAttempt(
         );
       }
 
-      await tx.merchantInvoiceReminder.create({
+      const firstReminder =
+        await tx.merchantInvoiceReminder.create({
         data: {
           merchantId,
           invoiceId:
@@ -422,6 +440,13 @@ async function markMerchantInvoiceOverdueAttempt(
         });
       }
 
+      await createPlatformBillingEvent(tx, {
+        merchantId,
+        type: "INVOICE_FIRST_OVERDUE",
+        sourceId: overdueInvoice.id,
+        occurrenceKey: `INVOICE_FIRST_OVERDUE:${firstReminder.id}`
+      });
+
       return overdueInvoice;
     },
     {
@@ -540,6 +565,10 @@ async function createSecondOverdueReminderAttempt(
 ): Promise<boolean> {
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        merchantId
+      );
       const invoice =
         await tx.merchantInvoice.findFirst({
           where: {
@@ -571,13 +600,21 @@ async function createSecondOverdueReminderAttempt(
         return false;
       }
 
-      await tx.merchantInvoiceReminder.create({
+      const secondReminder =
+        await tx.merchantInvoiceReminder.create({
         data: {
           merchantId,
           invoiceId,
           type:
             MerchantInvoiceReminderType.SECOND_OVERDUE
         }
+      });
+
+      await createPlatformBillingEvent(tx, {
+        merchantId,
+        type: "INVOICE_SECOND_OVERDUE",
+        sourceId: invoiceId,
+        occurrenceKey: `INVOICE_SECOND_OVERDUE:${secondReminder.id}`
       });
 
       return true;
@@ -732,6 +769,10 @@ async function suspendPastDueSubscriptionAttempt(
 ) {
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        merchantId
+      );
       const invoice =
         await tx.merchantInvoice.findUnique({
           where: {
@@ -848,6 +889,14 @@ async function suspendPastDueSubscriptionAttempt(
               MerchantSubscriptionStatus.SUSPENDED
           }
         }
+      });
+
+      await createPlatformBillingEvent(tx, {
+        merchantId,
+        type: "SUBSCRIPTION_SUSPENDED",
+        sourceId: subscription.id,
+        occurrenceKey:
+          `SUBSCRIPTION_SUSPENDED:${subscription.id}:${invoice.id}`
       });
 
       return subscription;

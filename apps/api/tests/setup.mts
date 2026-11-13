@@ -11,17 +11,23 @@ const suite = process.env.API_TEST_SUITE;
 
 if (
   suite !== "standard" &&
-  suite !== "bootstrap-concurrency"
+  suite !== "bootstrap-concurrency" &&
+  suite !== "billing-telegram-b3" &&
+  suite !== "billing-b53-concurrency"
 ) {
   throw new Error(
-    "API_TEST_SUITE must explicitly be standard or bootstrap-concurrency."
+    "API_TEST_SUITE must explicitly be standard, bootstrap-concurrency, billing-telegram-b3, or billing-b53-concurrency."
   );
 }
 
 const expectedDatabase =
   suite === "bootstrap-concurrency"
     ? "ethio_commerce_bootstrap_test"
-    : "ethio_commerce_test";
+    : suite === "billing-telegram-b3"
+      ? "ethio_commerce_b2_migration_test"
+      : suite === "billing-b53-concurrency"
+        ? "ethio_commerce_b53_concurrency_test"
+        : "ethio_commerce_test";
 
 const validatedConnectionString =
   await requireTestDatabase(expectedDatabase);

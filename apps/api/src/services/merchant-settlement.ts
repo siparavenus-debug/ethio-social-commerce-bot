@@ -1,3 +1,5 @@
+import { lockPlatformBillingMerchant } from "./platform-billing-merchant-lock.js";
+import { createPlatformBillingEvent } from "./platform-billing-notification-events.js";
 import {
   MerchantInvoiceStatus,
   MerchantSettlementProvider,
@@ -237,6 +239,10 @@ async function submitSettlementAttempt(
 ) {
   return prisma.$transaction(
     async (tx) => {
+      await lockPlatformBillingMerchant(
+        tx,
+        input.merchantId
+      );
       const invoice =
         await tx.merchantInvoice.findUnique({
           where: {
@@ -429,6 +435,13 @@ async function submitSettlementAttempt(
        * Invoice remains OPEN.
        * Settlement remains REVIEW_REQUIRED.
        */
+      await createPlatformBillingEvent(tx, {
+        merchantId: input.merchantId,
+        type: "SETTLEMENT_SUBMITTED",
+        sourceId: settlement.id,
+        occurrenceKey: `SETTLEMENT_SUBMITTED:${settlement.id}`
+      });
+
       return settlement;
     },
     {

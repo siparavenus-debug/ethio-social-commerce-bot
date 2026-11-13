@@ -1,4 +1,5 @@
-import { useCallback,
+import {
+  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -6,6 +7,14 @@ import { useCallback,
   useState
 } from "react";
 import { createSessionGuard } from "./session-guard.js";
+
+import {
+  issueBillingTelegramLinkToken
+} from "./billing-telegram-link-request.js";
+
+import {
+  scheduleBillingTelegramLinkExpiration
+} from "./billing-telegram-link-expiration.js";
 
 type AuthUser = {
   id: string;
@@ -267,6 +276,23 @@ type BillingSettlement = {
   createdAt: string;
 };
 
+type BillingTelegramDestination = {
+  id: string;
+  platformBotId: string;
+  chatId: string;
+  telegramUserId: string;
+  status: "ACTIVE";
+  linkVersion: number;
+  consentedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BillingTelegramStatus = {
+  linked: boolean;
+  destination: BillingTelegramDestination | null;
+};
+
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:3000";
@@ -309,9 +335,9 @@ type TelegramIntegration = {
   merchantId: string;
   telegramBotUsername: string | null;
   status:
-    | "PROVISIONING"
-    | "ACTIVE"
-    | "INACTIVE";
+  | "PROVISIONING"
+  | "ACTIVE"
+  | "INACTIVE";
   createdAt: string;
   updatedAt: string;
 };
@@ -364,6 +390,8 @@ export default function App() {
   }
 
   const sessionGuard = sessionGuardRef.current;
+  const billingTelegramRequestIdRef = useRef(0);
+  const billingTelegramLinkRequestIdRef = useRef(0);
   const role = auth?.user.role;
   const merchantId = auth?.user.merchantId;
   const canManageProducts = role === "OWNER" || role === "ADMIN";
@@ -612,6 +640,64 @@ export default function App() {
     loadingBilling,
     setLoadingBilling
   ] = useState(false);
+
+  const [
+    billingTelegramStatus,
+    setBillingTelegramStatus
+  ] = useState<BillingTelegramStatus | null>(
+    null
+  );
+
+  const [
+    loadingBillingTelegram,
+    setLoadingBillingTelegram
+  ] = useState(false);
+
+  const [
+    billingTelegramError,
+    setBillingTelegramError
+  ] = useState("");
+
+  const [
+    billingTelegramLinkToken,
+    setBillingTelegramLinkToken
+  ] = useState<string | null>(null);
+
+  const [
+    billingTelegramLinkExpiresAt,
+    setBillingTelegramLinkExpiresAt
+  ] = useState<string | null>(null);
+
+  const [
+    loadingBillingTelegramLink,
+    setLoadingBillingTelegramLink
+  ] = useState(false);
+
+  const [
+    billingTelegramLinkError,
+    setBillingTelegramLinkError
+  ] = useState("");
+
+
+  useEffect(() => {
+    if (
+      !billingTelegramLinkToken ||
+      !billingTelegramLinkExpiresAt
+    ) {
+      return;
+    }
+
+    return scheduleBillingTelegramLinkExpiration(
+      billingTelegramLinkExpiresAt,
+      () => {
+        setBillingTelegramLinkToken(null);
+        setBillingTelegramLinkExpiresAt(null);
+      }
+    );
+  }, [
+    billingTelegramLinkToken,
+    billingTelegramLinkExpiresAt
+  ]);
 
   const [
     settlementInvoiceId,
@@ -891,6 +977,15 @@ export default function App() {
     setLoadingTelegram(false);
     setSavingTelegram(false);
     setLoadingBilling(false);
+    billingTelegramRequestIdRef.current += 1;
+    setBillingTelegramStatus(null);
+    setLoadingBillingTelegram(false);
+    setBillingTelegramError("");
+    billingTelegramLinkRequestIdRef.current += 1;
+    setBillingTelegramLinkToken(null);
+    setBillingTelegramLinkExpiresAt(null);
+    setLoadingBillingTelegramLink(false);
+    setBillingTelegramLinkError("");
     setSettlementInvoiceId("");
     setSettlementProvider("TELEBIRR");
     setSettlementTransactionReference("");
@@ -3155,6 +3250,144 @@ export default function App() {
     }
   }
 
+  async function loadBillingTelegramStatus() {
+    const requestId =
+      ++billingTelegramRequestIdRef.current;
+
+    if (!auth?.token || !merchantId || !canViewBilling) {
+      setBillingTelegramStatus(null);
+      setBillingTelegramError("");
+      setLoadingBillingTelegram(false);
+      return;
+    }
+
+    const requestSession = sessionGuard.capture();
+
+    const isCurrentRequest = () =>
+      billingTelegramRequestIdRef.current === requestId &&
+      sessionGuard.isCurrent(requestSession);
+
+    try {
+      setLoadingBillingTelegram(true);
+      setBillingTelegramError("");
+
+      const response = await apiFetch(
+        `/merchants/${merchantId}/billing-telegram`,
+        {
+          cache: "no-store"
+        }
+      );
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      const data = await response.json();
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          "Failed to load billing Telegram connection status"
+        );
+      }
+
+      if (
+        typeof data?.linked !== "boolean" ||
+        (
+          data.linked &&
+          (
+            !data.destination ||
+            data.destination.status !== "ACTIVE"
+          )
+        ) ||
+        (!data.linked && data.destination !== null)
+      ) {
+        throw new Error(
+          "Invalid billing Telegram status response"
+        );
+      }
+
+      setBillingTelegramStatus(
+        data as BillingTelegramStatus
+      );
+    } catch {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setBillingTelegramStatus(null);
+      setBillingTelegramError(
+        "Unable to load billing Telegram connection status."
+      );
+    } finally {
+      if (isCurrentRequest()) {
+        setLoadingBillingTelegram(false);
+      }
+    }
+  }
+
+  async function requestBillingTelegramLinkToken() {
+    const requestId =
+      ++billingTelegramLinkRequestIdRef.current;
+
+    setBillingTelegramLinkToken(null);
+    setBillingTelegramLinkExpiresAt(null);
+    setBillingTelegramLinkError("");
+
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canViewBilling ||
+      auth.user.role !== "OWNER"
+    ) {
+      setLoadingBillingTelegramLink(false);
+      setBillingTelegramLinkError(
+        "Only the merchant OWNER can request a billing Telegram link."
+      );
+      return;
+    }
+
+    const requestSession = sessionGuard.capture();
+
+    const isCurrentRequest = () =>
+      billingTelegramLinkRequestIdRef.current === requestId &&
+      sessionGuard.isCurrent(requestSession);
+
+    try {
+      setLoadingBillingTelegramLink(true);
+
+      const result = await issueBillingTelegramLinkToken({
+        merchantId,
+        isCurrentRequest,
+        apiFetch
+      });
+
+      if (!result || !isCurrentRequest()) {
+        return;
+      }
+
+      setBillingTelegramLinkToken(result.token);
+      setBillingTelegramLinkExpiresAt(result.expiresAt);
+    } catch {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      setBillingTelegramLinkToken(null);
+      setBillingTelegramLinkExpiresAt(null);
+      setBillingTelegramLinkError(
+        "Unable to prepare billing Telegram linking. Please try again."
+      );
+    } finally {
+      if (isCurrentRequest()) {
+        setLoadingBillingTelegramLink(false);
+      }
+    }
+  }
+
   async function submitSettlement() {
     if (
       !auth?.token ||
@@ -4577,6 +4810,7 @@ export default function App() {
                 setError("");
                 setSuccess("");
                 void loadBilling();
+                void loadBillingTelegramStatus();
               }}
               style={{
                 ...styles.tab,
@@ -7394,7 +7628,7 @@ export default function App() {
                                 style={
                                   styles.formLabel
                                 }
-                               htmlFor="restock-quantity">Quantity to add</label>
+                                htmlFor="restock-quantity">Quantity to add</label>
 
                               <input
                                 type="number" id="restock-quantity"
@@ -7466,7 +7700,7 @@ export default function App() {
                                 style={
                                   styles.formLabel
                                 }
-                               htmlFor="restock-note">Note{" "}
+                                htmlFor="restock-note">Note{" "}
                                 <span
                                   style={
                                     styles.optionalLabel
@@ -7705,6 +7939,59 @@ export default function App() {
                   ? "Loading..."
                   : "Refresh Billing"}
               </button>
+            </div>
+
+            <div
+              style={{
+                ...styles.summaryCard,
+                marginBottom: 20
+              }}
+            >
+              <h3>Billing Telegram Notifications</h3>
+
+              <p>
+                View the connection status of your
+                platform billing Telegram notifications.
+                This is separate from your store's
+                customer-facing Telegram bot.
+              </p>
+
+              {loadingBillingTelegram ? (
+                <p>Checking Telegram connection...</p>
+              ) : billingTelegramError ? (
+                <p role="alert">
+                  {billingTelegramError}
+                </p>
+              ) : billingTelegramStatus?.linked ? (
+                <p>
+                  Status: Connected
+                </p>
+              ) : billingTelegramStatus ? (
+                <p>
+                  Status: Not connected
+                </p>
+              ) : (
+                <p>
+                  Connection status has not been checked.
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  void loadBillingTelegramStatus()
+                }
+                disabled={loadingBillingTelegram}
+                style={styles.refreshButton}
+              >
+                Refresh Telegram Status
+              </button>
+
+              <p>
+                Telegram account linking is not yet
+                available. This feature will be enabled
+                after the secure linking workflow is ready.
+              </p>
             </div>
 
             {loadingBilling &&
@@ -8921,7 +9208,7 @@ export default function App() {
             </div>
 
             {loadingTelegram &&
-            !telegramIntegration ? (
+              !telegramIntegration ? (
               <p>
                 Loading Telegram connection...
               </p>
@@ -8952,16 +9239,16 @@ export default function App() {
 
                 {telegramIntegration.status ===
                   "PROVISIONING" && (
-                  <p
-                    style={{
-                      marginTop: "16px"
-                    }}
-                  >
-                    Telegram setup needs to be
-                    completed. Replace the bot token
-                    below to retry the connection.
-                  </p>
-                )}
+                    <p
+                      style={{
+                        marginTop: "16px"
+                      }}
+                    >
+                      Telegram setup needs to be
+                      completed. Replace the bot token
+                      below to retry the connection.
+                    </p>
+                  )}
 
                 <div
                   style={{
@@ -9003,43 +9290,43 @@ export default function App() {
 
                   {telegramIntegration.status !==
                     "PROVISIONING" && (
-                    <div
-                      style={{
-                        marginTop: "16px"
-                      }}
-                    >
-                      {telegramIntegration.status ===
-                      "ACTIVE" ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void disableTelegram()
-                          }
-                          disabled={
-                            savingTelegram
-                          }
-                        >
-                          {savingTelegram
-                            ? "Saving..."
-                            : "Disable Telegram"}
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void enableTelegram()
-                          }
-                          disabled={
-                            savingTelegram
-                          }
-                        >
-                          {savingTelegram
-                            ? "Saving..."
-                            : "Enable Telegram"}
-                        </button>
-                      )}
-                    </div>
-                  )}
+                      <div
+                        style={{
+                          marginTop: "16px"
+                        }}
+                      >
+                        {telegramIntegration.status ===
+                          "ACTIVE" ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void disableTelegram()
+                            }
+                            disabled={
+                              savingTelegram
+                            }
+                          >
+                            {savingTelegram
+                              ? "Saving..."
+                              : "Disable Telegram"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void enableTelegram()
+                            }
+                            disabled={
+                              savingTelegram
+                            }
+                          >
+                            {savingTelegram
+                              ? "Saving..."
+                              : "Enable Telegram"}
+                          </button>
+                        )}
+                      </div>
+                    )}
                 </div>
               </div>
             ) : (
@@ -9160,7 +9447,7 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                   htmlFor="new-user-display-name">
+                    htmlFor="new-user-display-name">
                     Display name
                   </label>
 
@@ -9181,7 +9468,7 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                   htmlFor="new-user-email">
+                    htmlFor="new-user-email">
                     Email
                   </label>
 
@@ -9202,7 +9489,7 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                   htmlFor="new-user-password">
+                    htmlFor="new-user-password">
                     Password
                   </label>
 
@@ -9223,7 +9510,7 @@ export default function App() {
                 <div>
                   <label
                     style={styles.formLabel}
-                   htmlFor="new-user-role">
+                    htmlFor="new-user-role">
                     Role
                   </label>
 
@@ -9320,7 +9607,7 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                               htmlFor="edit-user-display-name">
+                                htmlFor="edit-user-display-name">
                                 Display name
                               </label>
 
@@ -9341,7 +9628,7 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                               htmlFor="edit-user-role">
+                                htmlFor="edit-user-role">
                                 Role
                               </label>
 
@@ -9370,7 +9657,7 @@ export default function App() {
                             <div>
                               <label
                                 style={styles.formLabel}
-                               htmlFor="edit-user-password">
+                                htmlFor="edit-user-password">
                                 New password
                               </label>
 
@@ -9630,7 +9917,7 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-             htmlFor="change-password-current">
+              htmlFor="change-password-current">
               Current password
             </label>
             <input id="change-password-current"
@@ -9646,7 +9933,7 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-             htmlFor="change-password-new">
+              htmlFor="change-password-new">
               New password
             </label>
             <input id="change-password-new"
@@ -9663,7 +9950,7 @@ export default function App() {
 
             <label
               style={styles.formLabel}
-             htmlFor="change-password-confirm">
+              htmlFor="change-password-confirm">
               Confirm new password
             </label>
             <input id="change-password-confirm"

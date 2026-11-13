@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import {
   MerchantInvoiceStatus,
   MerchantSettlementProvider,
@@ -34,10 +36,38 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+  const candidateMerchantIds =
     merchants.map(
       (merchant) =>
         merchant.id
+    );
+
+  if (candidateMerchantIds.length === 0) {
+    return;
+  }
+
+  const protectedEvents =
+    await prisma.platformBillingEvent.findMany({
+      where: {
+        merchantId: {
+          in: candidateMerchantIds
+        }
+      },
+      select: {
+        merchantId: true
+      }
+    });
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (id) => !protectedMerchantIds.has(id)
     );
 
   if (merchantIds.length === 0) {
@@ -678,10 +708,22 @@ describe(
     it(
       "allows only one settlement and one audit for concurrent identical submission",
       async () => {
+        const suffix =
+          `concurrent-${randomUUID()}`;
+
         const fixture =
           await createFixture(
-            "concurrent"
+            suffix
           );
+
+        await prisma.merchant.update({
+          where: {
+            id: fixture.merchant.id
+          },
+          data: {
+            name: `b56-retained-${suffix}`
+          }
+        });
 
         const input = {
           ...baseInput(
@@ -731,6 +773,23 @@ describe(
             }
           })
         ).toBe(1);
+        const billingEvents =
+          await prisma.platformBillingEvent.findMany({
+            where: {
+              merchantId: fixture.merchant.id,
+              type: "SETTLEMENT_SUBMITTED"
+            }
+          });
+
+        expect(billingEvents).toHaveLength(1);
+
+        expect(billingEvents[0]).toMatchObject({
+          merchantId: fixture.merchant.id,
+          type: "SETTLEMENT_SUBMITTED",
+          sourceId: results[0].id,
+          occurrenceKey:
+            `SETTLEMENT_SUBMITTED:${results[0].id}`
+        });
       }
     );
 

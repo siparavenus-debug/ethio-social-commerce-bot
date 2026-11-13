@@ -11,16 +11,67 @@ type TelegramFile = {
   file_path?: string;
 };
 
+const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+
+export type TelegramApiErrorKind =
+  | "TIMEOUT"
+  | "NETWORK"
+  | "RATE_LIMITED"
+  | "BOT_BLOCKED"
+  | "BAD_REQUEST"
+  | "SERVER_ERROR"
+  | "API_ERROR"
+  | "INVALID_RESPONSE";
+
+export class TelegramApiError extends Error {
+  constructor(
+    public readonly kind: TelegramApiErrorKind,
+    public readonly status: number | null = null,
+    public readonly retryAfterSeconds: number | null = null
+  ) {
+    super(`Telegram API request failed: ${kind}`);
+    this.name = "TelegramApiError";
+  }
+}
+
+function getRetryAfterSeconds(
+  value: Record<string, unknown>
+): number | null {
+  const parameters = value.parameters;
+
+  if (
+    parameters === null ||
+    typeof parameters !== "object" ||
+    Array.isArray(parameters)
+  ) {
+    return null;
+  }
+
+  const retryAfter = (
+    parameters as Record<string, unknown>
+  ).retry_after;
+
+  return (
+    typeof retryAfter === "number" &&
+    Number.isSafeInteger(retryAfter) &&
+    retryAfter >= 0
+  )
+    ? retryAfter
+    : null;
+}
+
 async function telegramApi<T>(
   botToken: string,
   method: string,
   body?: Record<string, unknown>
 ): Promise<T> {
   if (!botToken) {
-    throw new Error(
-      "Telegram bot token is required"
-    );
+    throw new Error("Telegram bot token is required");
   }
+
+  const signal = AbortSignal.timeout(
+    TELEGRAM_REQUEST_TIMEOUT_MS
+  );
 
   let response: Response;
 
@@ -32,30 +83,109 @@ async function telegramApi<T>(
         headers: {
           "content-type": "application/json"
         },
-        body: JSON.stringify(body ?? {})
+        body: JSON.stringify(body ?? {}),
+        signal
       }
     );
   } catch {
-    throw new Error(
-      `Telegram API ${method} request failed`
+    throw new TelegramApiError(
+      signal.aborted ? "TIMEOUT" : "NETWORK"
     );
   }
 
-  const data =
-    (await response.json()) as TelegramApiResponse<T>;
+  let data: unknown;
 
-  if (!response.ok || !data.ok || !data.result) {
-    throw new Error(
-      `Telegram API ${method} failed: ${
-        data.description ??
-        response.statusText
-      }`
+  try {
+    data = await response.json();
+  } catch (error) {
+    if (signal.aborted) {
+      throw new TelegramApiError("TIMEOUT");
+    }
+
+    if (error instanceof SyntaxError) {
+      throw new TelegramApiError(
+        "INVALID_RESPONSE",
+        response.status
+      );
+    }
+
+    throw new TelegramApiError("NETWORK");
+  }
+
+  if (
+    data === null ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  ) {
+    throw new TelegramApiError(
+      "INVALID_RESPONSE",
+      response.status
     );
   }
 
-  return data.result;
+  const payload = data as Record<string, unknown>;
+
+  if (typeof payload.ok !== "boolean") {
+    throw new TelegramApiError(
+      "INVALID_RESPONSE",
+      response.status
+    );
+  }
+
+  if (!response.ok || !payload.ok) {
+    const status = response.status;
+
+    if (status === 429) {
+      throw new TelegramApiError(
+        "RATE_LIMITED",
+        status,
+        getRetryAfterSeconds(payload)
+      );
+    }
+
+    if (status === 403) {
+      throw new TelegramApiError(
+        "BOT_BLOCKED",
+        status
+      );
+    }
+
+    if (status === 400) {
+      throw new TelegramApiError(
+        "BAD_REQUEST",
+        status
+      );
+    }
+
+    if (status >= 500) {
+      throw new TelegramApiError(
+        "SERVER_ERROR",
+        status
+      );
+    }
+
+    throw new TelegramApiError(
+      "API_ERROR",
+      status
+    );
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      payload,
+      "result"
+    ) ||
+    payload.result === null ||
+    payload.result === undefined
+  ) {
+    throw new TelegramApiError(
+      "INVALID_RESPONSE",
+      response.status
+    );
+  }
+
+  return payload.result as T;
 }
-
 export type TelegramBotIdentity = {
   id: number;
   username?: string;

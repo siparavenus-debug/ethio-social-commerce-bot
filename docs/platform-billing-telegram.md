@@ -55,7 +55,7 @@ No platform billing Telegram notification implementation has been introduced und
 
 ## 4. Authoritative Billing Business Events
 
-Seven durable business events are required.
+Nine durable business event types are required under the B5.4 amendment.
 
 | Event | Authoritative source | Identity |
 |---|---|---|
@@ -64,35 +64,50 @@ Seven durable business events are required.
 | INVOICE_SECOND_OVERDUE | `createSecondOverdueReminderAttempt()` | Second-overdue reminder ID |
 | SETTLEMENT_SUBMITTED | `submitSettlementAttempt()` | Settlement ID |
 | SETTLEMENT_VERIFIED | `verifySettlementAttempt()` | Verified settlement ID |
+| SETTLEMENT_REJECTED | Authoritative settlement rejection transition | Rejected settlement ID, provided each settlement can be rejected only once |
 | INVOICE_PAID | `verifySettlementAttempt()` | Paid invoice ID |
 | SUBSCRIPTION_SUSPENDED | `suspendPastDueSubscriptionAttempt()` | Unique suspension transition occurrence |
+| SUBSCRIPTION_RECOVERED | Authoritative subscription recovery transition | Unique recovery transition occurrence |
 
-All source locations were identified through read-only repository inspection.
+The original seven source locations were identified through read-only repository inspection. The two added source locations and their final occurrence-key construction must be verified against the implementation before B5.4 PASS.
 
 The event must be inserted within the transaction that commits its authoritative business transition.
 
 An idempotent replay that does not create a new transition must not create a new business event.
 
-Subscription suspension requires an identity that distinguishes separate suspension occurrences for the same subscription.
+Subscription suspension and recovery require identities that distinguish separate transition occurrences for the same subscription.
+
+Settlement rejection must not mark an invoice paid or imply that submitted evidence constitutes verified settlement.
 
 ## 5. Event-to-Notification Mapping
 
-Seven business events map to six notification categories.
+Nine business event types map to eight Telegram notification categories.
 
-- INVOICE_ISSUED → invoice issued.
-- INVOICE_FIRST_OVERDUE → first overdue reminder.
-- INVOICE_SECOND_OVERDUE → second overdue reminder.
-- SETTLEMENT_SUBMITTED → settlement submitted.
-- SETTLEMENT_VERIFIED → no separate Telegram notification.
-- INVOICE_PAID → payment confirmed.
-- SUBSCRIPTION_SUSPENDED → subscription suspended.
+- INVOICE_ISSUED -> invoice issued.
+- INVOICE_FIRST_OVERDUE -> first overdue reminder.
+- INVOICE_SECOND_OVERDUE -> second overdue reminder.
+- SETTLEMENT_SUBMITTED -> settlement submitted.
+- SETTLEMENT_VERIFIED -> no separate Telegram notification.
+- SETTLEMENT_REJECTED -> settlement rejected.
+- INVOICE_PAID -> payment confirmed.
+- SUBSCRIPTION_SUSPENDED -> subscription suspended.
+- SUBSCRIPTION_RECOVERED -> subscription recovered.
 
 SETTLEMENT_VERIFIED and INVOICE_PAID are distinct durable facts produced by one successful verification transaction.
 
 Only INVOICE_PAID produces the merchant payment-confirmation notification.
 
+SETTLEMENT_REJECTED must communicate rejection without disclosing sensitive evidence or internal review notes.
+
+SUBSCRIPTION_RECOVERED must represent an actual recovery transition, not an unchanged active subscription.
+
 Notification identities must be database-unique and tied to the authoritative transition.
 
+Destination-specific delivery requires an eligible OWNER opt-in. Without eligible opt-in, the business event is retained for reconciliation, but no Telegram delivery is created.
+
+Later opt-in must never trigger historical notification backfill. Suppressed historical notifications must not be reactivated or redirected to a newly linked destination.
+
+This B5.4 amendment expands notification categories only. It does not authorize schema changes, migrations, deployments, or changes to financial verification rules.
 ## 6. Event and Delivery Architecture
 
 The processing pipeline is:

@@ -35,6 +35,8 @@ import {
     setTelegramWebhook
   } from "../services/telegram.js";
 
+  import { BotOwnershipConflictError, reserveMerchantBot, releaseMerchantBot } from "../services/merchant-telegram-bot-ownership.js";
+
   const router = Router();
 
   router.use(requireAuth);
@@ -222,14 +224,16 @@ import {
                     }
                   });
 
+                  await reserveMerchantBot(tx, { merchantId, integrationId: createdIntegration.id, telegramBotId });
+
                   return createdIntegration;
                 }
               );
           } catch (error) {
             if (
-              error instanceof
+              (error instanceof
                 Prisma.PrismaClientKnownRequestError &&
-              error.code === "P2002"
+              error.code === "P2002") || error instanceof BotOwnershipConflictError
             ) {
               res.status(409).json({
                 error:
@@ -249,13 +253,17 @@ import {
               webhookSecret
             );
           } catch (webhookError) {
-            await prisma.merchantTelegramIntegration.delete({
-              where: {
-                id:
-                  provisioningIntegration.id
-              }
-            });
-
+            // A failed API response does not prove Telegram left the webhook unchanged.
+            // If cleanup fails, keep PROVISIONING and ownership reserved for reconciliation.
+            try {
+              await deleteTelegramWebhook(botToken.trim());
+              await prisma.$transaction(async (tx) => {
+                await releaseMerchantBot(tx, { merchantId, integrationId: provisioningIntegration.id, telegramBotId, detach: true });
+                await tx.merchantTelegramIntegration.delete({ where: { id: provisioningIntegration.id } });
+              });
+            } catch (compensationError) {
+              console.error("Initial Telegram webhook uncertain; reservation retained:", compensationError);
+            }
             throw webhookError;
           }
 
@@ -324,11 +332,9 @@ import {
                 botToken.trim()
               );
 
-              await prisma.merchantTelegramIntegration.delete({
-                where: {
-                  id:
-                    provisioningIntegration.id
-                }
+              await prisma.$transaction(async (tx) => {
+                await releaseMerchantBot(tx, { merchantId, integrationId: provisioningIntegration.id, telegramBotId, detach: true });
+                await tx.merchantTelegramIntegration.delete({ where: { id: provisioningIntegration.id } });
               });
             } catch (cleanupError) {
               console.error(
@@ -403,7 +409,8 @@ import {
               telegramBotUsername: true,
               botTokenEncrypted: true,
               webhookSecretEncrypted: true,
-              status: true
+              status: true,
+              updatedAt: true
             }
           });
 
@@ -487,12 +494,53 @@ import {
             replacementBotIdentity.id
         ) !== existing.telegramBotId;
 
+        // A persisted PROVISIONING state is a cross-process lifecycle lock.
+        // On uncertain Telegram outcomes it is deliberately NOT cleared:
+        // an operator must reconcile the webhook before another mutation.
+        if (existing.status === MerchantTelegramIntegrationStatus.PROVISIONING) {
+          res.status(409).json({ error: "Telegram integration operation already in progress" });
+          return;
+        }
+        const acquired = await prisma.merchantTelegramIntegration.updateMany({
+          where: {
+            id: existing.id,
+            status: { in: [MerchantTelegramIntegrationStatus.ACTIVE, MerchantTelegramIntegrationStatus.INACTIVE] },
+            updatedAt: existing.updatedAt
+          },
+          data: { status: MerchantTelegramIntegrationStatus.PROVISIONING }
+        });
+        if (acquired.count !== 1) {
+          res.status(409).json({ error: "Telegram integration operation already in progress" });
+          return;
+        }
+
+        const restoreLifecycleStatus = async () => {
+          const restored = await prisma.merchantTelegramIntegration.updateMany({
+            where: { id: existing.id, status: MerchantTelegramIntegrationStatus.PROVISIONING },
+            data: { status: existing.status }
+          });
+          if (restored.count !== 1) throw new Error("Telegram lifecycle lock changed concurrently");
+        };
+
+        let replacementWebhookAttempted = false;
+        const compensateReplacementWebhook = async () => {
+          if (!replacementWebhookAttempted || !replacementBotIdentity || botToken === undefined) return;
+          const previousToken = decryptTelegramCredential(existing.botTokenEncrypted);
+          const previousSecret = decryptTelegramCredential(existing.webhookSecretEncrypted);
+          const url = `${getPublicApiBaseUrl()}/webhooks/telegram/${existing.webhookKey}`;
+          if (botToken.trim() !== previousToken) {
+            await deleteTelegramWebhook(botToken.trim());
+          }
+          await setTelegramWebhook(previousToken, url, previousSecret);
+        };
+
         if (
           replacementBotIdentity &&
           isDifferentTelegramBot
         ) {
           try {
-            await prisma.merchantTelegramBotClaim.create({
+            await prisma.$transaction(async (tx) => {
+              await tx.merchantTelegramBotClaim.create({
               data: {
                 merchantId,
                 integrationId:
@@ -504,12 +552,19 @@ import {
                 status:
                   "PENDING"
               }
+             });
+              await reserveMerchantBot(tx, {
+                merchantId, integrationId: existing.id,
+                telegramBotId: String(replacementBotIdentity.id)
+              });
             });
           } catch (error) {
+            // No Telegram mutation has been attempted: always release the lifecycle lock.
+            await restoreLifecycleStatus();
             if (
-              error instanceof
+              (error instanceof
                 Prisma.PrismaClientKnownRequestError &&
-              error.code === "P2002"
+              error.code === "P2002") || error instanceof BotOwnershipConflictError
             ) {
               res.status(409).json({
                 error:
@@ -529,26 +584,34 @@ import {
           replacementWebhookUrl
         ) {
           try {
+            // Mark before the call: a timeout/error can mean Telegram applied it.
+            replacementWebhookAttempted = true;
             await setTelegramWebhook(
               botToken.trim(),
               replacementWebhookUrl,
               replacementWebhookSecret
             );
           } catch (webhookError) {
-            await prisma.merchantTelegramBotClaim.deleteMany({
-              where: {
-                merchantId,
-                integrationId:
-                  existing.id,
-                telegramBotId:
-                  String(
-                    replacementBotIdentity.id
-                  ),
-                status:
-                  "PENDING"
+            // Telegram may have applied the webhook even if its response failed.
+            // Never release provisional ownership until compensation succeeds.
+            try {
+              await compensateReplacementWebhook();
+              if (isDifferentTelegramBot) {
+                await prisma.$transaction(async (tx) => {
+                  await releaseMerchantBot(tx, {
+                    merchantId, integrationId: existing.id,
+                    telegramBotId: String(replacementBotIdentity.id)
+                  });
+                  await tx.merchantTelegramBotClaim.deleteMany({
+                    where: { merchantId, integrationId: existing.id,
+                      telegramBotId: String(replacementBotIdentity.id), status: "PENDING" }
+                  });
+                });
               }
-            });
-
+              await restoreLifecycleStatus();
+            } catch (compensationError) {
+              console.error("Telegram webhook state uncertain; integration locked for reconciliation:", compensationError);
+            }
             throw webhookError;
           }
         }
@@ -588,9 +651,7 @@ import {
             async (tx) => {
               const updatedIntegration =
                 await tx.merchantTelegramIntegration.update({
-                  where: {
-                    merchantId
-                  },
+                  where: { id: existing.id, status: MerchantTelegramIntegrationStatus.PROVISIONING },
                   data: {
                     ...(replacementBotIdentity
                       ? {
@@ -619,18 +680,9 @@ import {
                           )
                       }
                       : {}),
-                    ...(replacementBotIdentity
-                      ? {
-                        status:
-                          status ??
-                          MerchantTelegramIntegrationStatus.ACTIVE
-                      }
-                      : status !== undefined
-                        ? {
-                          status:
-                            status as MerchantTelegramIntegrationStatus
-                        }
-                        : {})
+                    status: status ?? (replacementBotIdentity
+                      ? MerchantTelegramIntegrationStatus.ACTIVE
+                      : existing.status)
                   }
                 });
 
@@ -646,6 +698,12 @@ import {
                     status:
                       "ACTIVE"
                   }
+                });
+
+                await releaseMerchantBot(tx, {
+                  merchantId,
+                  integrationId: existing.id,
+                  telegramBotId: existing.telegramBotId!
                 });
 
                 const promotedClaim =
@@ -702,58 +760,24 @@ import {
           );
 
         } catch (persistenceError) {
-          if (
-            replacementBotIdentity &&
-            replacementWebhookSecret &&
-            botToken !== undefined
-          ) {
-            const replacementBotToken =
-              botToken.trim();
-
-            const existingBotToken =
-              decryptTelegramCredential(
-                existing.botTokenEncrypted
-              );
-
-            const existingWebhookSecret =
-              decryptTelegramCredential(
-                existing.webhookSecretEncrypted
-              );
-
-            const webhookUrl =
-              `${getPublicApiBaseUrl()}/webhooks/telegram/${existing.webhookKey}`;
-
-            if (
-              replacementBotToken !==
-              existingBotToken
-            ) {
-              await deleteTelegramWebhook(
-                replacementBotToken
-              );
+          try {
+            await compensateReplacementWebhook();
+            if (replacementBotIdentity && isDifferentTelegramBot) {
+              await prisma.$transaction(async (tx) => {
+                await releaseMerchantBot(tx, {
+                  merchantId, integrationId: existing.id,
+                  telegramBotId: String(replacementBotIdentity.id)
+                });
+                await tx.merchantTelegramBotClaim.deleteMany({
+                  where: { merchantId, integrationId: existing.id,
+                    telegramBotId: String(replacementBotIdentity.id), status: "PENDING" }
+                });
+              });
             }
-
-            await setTelegramWebhook(
-              existingBotToken,
-              webhookUrl,
-              existingWebhookSecret
-            );
-
-            await prisma.merchantTelegramBotClaim.deleteMany({
-              where: {
-                merchantId,
-                integrationId:
-                  existing.id,
-                telegramBotId:
-                  String(
-                    replacementBotIdentity.id
-                  ),
-                status:
-                  "PENDING"
-              }
-            });
-
+            await restoreLifecycleStatus();
+          } catch (compensationError) {
+            console.error("Telegram webhook state uncertain; integration locked for reconciliation:", compensationError);
           }
-
           throw persistenceError;
         }
 

@@ -13,7 +13,8 @@ import {
   beforeEach,
   describe,
   expect,
-  it
+  it,
+  vi
 } from "vitest";
 
 import {
@@ -21,6 +22,12 @@ import {
   verifyMerchantSettlement
 } from "../src/services/merchant-settlement-review.js";
 
+vi.mock(
+  "../src/services/platform-billing-notification-events.js",
+  () => ({
+    createPlatformBillingEvent: vi.fn()
+  })
+);
 const testPrefix =
   "day15-settlement-review";
 
@@ -31,6 +38,9 @@ async function cleanup(): Promise<void> {
         name: {
           startsWith:
             testPrefix
+        },
+        billingEvents: {
+          none: {}
         }
       },
       select: {
@@ -45,6 +55,7 @@ async function cleanup(): Promise<void> {
     );
 
   if (merchantIds.length > 0) {
+
     await prisma.platformAuditLog.deleteMany({
       where: {
         merchantId: {
@@ -308,6 +319,7 @@ describe(
           result.settlement.verifiedAt
             ?.getTime()
         );
+
       }
     );
 

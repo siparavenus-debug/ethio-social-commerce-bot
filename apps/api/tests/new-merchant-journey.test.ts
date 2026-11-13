@@ -282,6 +282,14 @@ async function cleanup():
     }
   });
 
+  await prisma.telegramBotOwnershipReservation.deleteMany({
+    where: {
+      merchantId: {
+        in: merchantIds
+      }
+    }
+  });
+
   await prisma.merchant.deleteMany({
     where: {
       id: {
