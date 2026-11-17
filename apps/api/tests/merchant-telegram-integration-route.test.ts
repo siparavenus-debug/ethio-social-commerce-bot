@@ -275,7 +275,7 @@ import type {
           webhookKey:
             "test-telegram-webhook-key",
           telegramBotId:
-            "123456789",
+            "823456789",
           telegramBotUsername:
             "test_shop_bot",
           botTokenEncrypted:
@@ -294,10 +294,10 @@ import type {
       const botIdentity =
         await prisma.telegramBotIdentityRegistry.upsert({
           where: {
-            telegramBotId: "123456789"
+            telegramBotId: "823456789"
           },
           create: {
-            telegramBotId: "123456789"
+            telegramBotId: "823456789"
           },
           update: {}
         });
@@ -320,7 +320,7 @@ import type {
           integrationId:
             integration.id,
           telegramBotId:
-            "123456789",
+            "823456789",
           status:
             "ACTIVE"
         }
@@ -404,7 +404,7 @@ import type {
 
       telegramMocks.getTelegramBotIdentity
         .mockResolvedValue({
-          id: 123456789,
+          id: 823456789,
           username:
             "test_shop_bot",
           firstName:
@@ -857,7 +857,7 @@ import type {
             integrationId:
               storedIntegration.id,
             telegramBotId:
-              "123456789",
+              "823456789",
             status:
               "ACTIVE"
           });
@@ -865,7 +865,7 @@ import type {
           expect(
             storedIntegration.telegramBotId
           ).toBe(
-            "123456789"
+            "823456789"
           );
 
           expect(
@@ -1103,7 +1103,7 @@ import type {
           expect(
             existingIntegration.telegramBotId
           ).toBe(
-            "123456789"
+            "823456789"
           );
         }
       );
@@ -1434,7 +1434,7 @@ import type {
             expect(
               storedIntegration?.telegramBotId
             ).toBe(
-              "123456789"
+              "823456789"
             );
 
             const botClaims =
@@ -1457,7 +1457,7 @@ import type {
               integrationId:
                 storedIntegration!.id,
               telegramBotId:
-                "123456789",
+                "823456789",
               status:
                 "PENDING"
             });
@@ -3188,7 +3188,7 @@ import type {
 
           telegramMocks.getTelegramBotIdentity
             .mockResolvedValueOnce({
-              id: 123456789,
+              id: 823456789,
               username: "test_shop_bot",
               firstName: "Test Shop Bot"
             });

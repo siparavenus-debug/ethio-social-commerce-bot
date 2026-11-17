@@ -279,8 +279,8 @@ type BillingSettlement = {
 type BillingTelegramDestination = {
   id: string;
   platformBotId: string;
-  chatId: string;
-  telegramUserId: string;
+  maskedTelegramAccount: string;
+  notificationsEnabled: boolean;
   status: "ACTIVE";
   linkVersion: number;
   consentedAt: string;
@@ -659,6 +659,47 @@ export default function App() {
   ] = useState("");
 
   const [
+    savingBillingTelegramPreference,
+    setSavingBillingTelegramPreference
+  ] = useState(false);
+
+  const [
+    billingTelegramPreferenceError,
+    setBillingTelegramPreferenceError
+  ] = useState("");
+
+  const [
+    billingTelegramPreferenceSuccess,
+    setBillingTelegramPreferenceSuccess
+  ] = useState("");
+
+  const billingTelegramPreferenceRequestIdRef =
+    useRef(0);
+
+  const [
+    confirmingBillingTelegramUnlink,
+    setConfirmingBillingTelegramUnlink
+  ] = useState(false);
+
+  const [
+    unlinkingBillingTelegram,
+    setUnlinkingBillingTelegram
+  ] = useState(false);
+
+  const [
+    billingTelegramUnlinkError,
+    setBillingTelegramUnlinkError
+  ] = useState("");
+
+  const [
+    billingTelegramUnlinkSuccess,
+    setBillingTelegramUnlinkSuccess
+  ] = useState("");
+
+  const billingTelegramUnlinkRequestIdRef =
+    useRef(0);
+
+  const [
     billingTelegramLinkToken,
     setBillingTelegramLinkToken
   ] = useState<string | null>(null);
@@ -981,6 +1022,15 @@ export default function App() {
     setBillingTelegramStatus(null);
     setLoadingBillingTelegram(false);
     setBillingTelegramError("");
+    billingTelegramPreferenceRequestIdRef.current += 1;
+    setSavingBillingTelegramPreference(false);
+    setBillingTelegramPreferenceError("");
+    setBillingTelegramPreferenceSuccess("");
+    billingTelegramUnlinkRequestIdRef.current += 1;
+    setConfirmingBillingTelegramUnlink(false);
+    setUnlinkingBillingTelegram(false);
+    setBillingTelegramUnlinkError("");
+    setBillingTelegramUnlinkSuccess("");
     billingTelegramLinkRequestIdRef.current += 1;
     setBillingTelegramLinkToken(null);
     setBillingTelegramLinkExpiresAt(null);
@@ -3300,7 +3350,8 @@ export default function App() {
           data.linked &&
           (
             !data.destination ||
-            data.destination.status !== "ACTIVE"
+            data.destination.status !== "ACTIVE" ||
+            typeof data.destination.notificationsEnabled !== "boolean"
           )
         ) ||
         (!data.linked && data.destination !== null)
@@ -3310,9 +3361,11 @@ export default function App() {
         );
       }
 
-      setBillingTelegramStatus(
-        data as BillingTelegramStatus
-      );
+      const validatedStatus =
+        data as BillingTelegramStatus;
+
+      setBillingTelegramStatus(validatedStatus);
+      return validatedStatus;
     } catch {
       if (!isCurrentRequest()) {
         return;
@@ -3329,6 +3382,226 @@ export default function App() {
     }
   }
 
+  async function updateBillingTelegramNotificationPreference(
+    notificationsEnabled: boolean
+  ) {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canViewBilling ||
+      auth.user.role !== "OWNER" ||
+      !billingTelegramStatus?.linked ||
+      !billingTelegramStatus.destination ||
+      savingBillingTelegramPreference ||
+      loadingBillingTelegram ||
+      unlinkingBillingTelegram ||
+      confirmingBillingTelegramUnlink
+    ) {
+      return;
+    }
+
+    const requestId =
+      ++billingTelegramPreferenceRequestIdRef.current;
+    const requestSession = sessionGuard.capture();
+
+    const isCurrentRequest = () =>
+      billingTelegramPreferenceRequestIdRef.current === requestId &&
+      sessionGuard.isCurrent(requestSession);
+
+    billingTelegramRequestIdRef.current += 1;
+    setSavingBillingTelegramPreference(true);
+    setBillingTelegramPreferenceError("");
+    setBillingTelegramPreferenceSuccess("");
+
+    try {
+      const response = await apiFetch(
+        `/merchants/${merchantId}/billing-telegram/preferences`,
+        {
+          method: "PATCH",
+          cache: "no-store",
+          body: JSON.stringify({
+            notificationsEnabled
+          })
+        }
+      );
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (!response.ok) {
+        const message =
+          response.status === 409
+            ? "Notifications cannot be changed while deliveries require safety review."
+            : response.status === 403
+              ? "You are not permitted to change billing Telegram preferences."
+              : "Unable to update billing Telegram notifications.";
+
+        setBillingTelegramPreferenceError(message);
+        return;
+      }
+
+      const result: unknown = await response.json();
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("notificationsEnabled" in result) ||
+        result.notificationsEnabled !== notificationsEnabled ||
+        !("suppressedDeliveries" in result) ||
+        typeof result.suppressedDeliveries !== "number" ||
+        !Number.isSafeInteger(result.suppressedDeliveries) ||
+        result.suppressedDeliveries < 0
+      ) {
+        throw new Error("Invalid preference response");
+      }
+
+      const refreshed =
+        await loadBillingTelegramStatus();
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (
+        !refreshed?.linked ||
+        !refreshed.destination ||
+        refreshed.destination.notificationsEnabled !==
+          notificationsEnabled
+      ) {
+        setBillingTelegramPreferenceError(
+          "Preference update submitted, but the saved notification status could not be confirmed."
+        );
+        return;
+      }
+
+      setBillingTelegramPreferenceSuccess(
+        "Notification preference updated and status refreshed."
+      );
+    } catch {
+      if (isCurrentRequest()) {
+        setBillingTelegramPreferenceError(
+          "Unable to confirm the preference update. Refresh Telegram status before trying again."
+        );
+      }
+    } finally {
+      if (isCurrentRequest()) {
+        setSavingBillingTelegramPreference(false);
+      }
+    }
+  }
+  async function unlinkBillingTelegramAccount() {
+    if (
+      !auth?.token ||
+      !merchantId ||
+      !canViewBilling ||
+      auth.user.role !== "OWNER" ||
+      !billingTelegramStatus?.linked ||
+      !billingTelegramStatus.destination ||
+      !confirmingBillingTelegramUnlink ||
+      unlinkingBillingTelegram ||
+      savingBillingTelegramPreference ||
+      loadingBillingTelegram
+    ) {
+      return;
+    }
+
+    const requestId =
+      ++billingTelegramUnlinkRequestIdRef.current;
+    const requestSession = sessionGuard.capture();
+
+    const isCurrentRequest = () =>
+      billingTelegramUnlinkRequestIdRef.current === requestId &&
+      sessionGuard.isCurrent(requestSession);
+
+    billingTelegramRequestIdRef.current += 1;
+    billingTelegramPreferenceRequestIdRef.current += 1;
+
+    setConfirmingBillingTelegramUnlink(false);
+    setUnlinkingBillingTelegram(true);
+    setBillingTelegramUnlinkError("");
+    setBillingTelegramUnlinkSuccess("");
+    setBillingTelegramPreferenceError("");
+    setBillingTelegramPreferenceSuccess("");
+
+    try {
+      const response = await apiFetch(
+        `/merchants/${merchantId}/billing-telegram/unlink`,
+        {
+          method: "POST",
+          cache: "no-store"
+        }
+      );
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (!response.ok) {
+        setBillingTelegramUnlinkError(
+          response.status === 409
+            ? "Telegram cannot be unlinked while deliveries require safety review."
+            : response.status === 403
+              ? "You are not permitted to unlink this Telegram account."
+              : "Unable to unlink the Telegram account."
+        );
+        return;
+      }
+
+      const result: unknown = await response.json();
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("linked" in result) ||
+        result.linked !== false ||
+        !("unlinked" in result) ||
+        typeof result.unlinked !== "boolean"
+      ) {
+        throw new Error("Invalid unlink response");
+      }
+
+      const refreshed =
+        await loadBillingTelegramStatus();
+
+      if (!isCurrentRequest()) {
+        return;
+      }
+
+      if (
+        !refreshed ||
+        refreshed.linked !== false ||
+        refreshed.destination !== null
+      ) {
+        setBillingTelegramUnlinkError(
+          "Unlink submitted, but the disconnected status could not be confirmed. Refresh Telegram status before trying again."
+        );
+        return;
+      }
+
+      setBillingTelegramUnlinkSuccess(
+        "Telegram account disconnected and status verified."
+      );
+    } catch {
+      if (isCurrentRequest()) {
+        setBillingTelegramUnlinkError(
+          "Unable to confirm Telegram disconnection. Refresh Telegram status before trying again."
+        );
+      }
+    } finally {
+      if (isCurrentRequest()) {
+        setUnlinkingBillingTelegram(false);
+      }
+    }
+  }
   async function requestBillingTelegramLinkToken() {
     const requestId =
       ++billingTelegramLinkRequestIdRef.current;
@@ -3341,7 +3614,9 @@ export default function App() {
       !auth?.token ||
       !merchantId ||
       !canViewBilling ||
-      auth.user.role !== "OWNER"
+      auth.user.role !== "OWNER" ||
+      unlinkingBillingTelegram ||
+      confirmingBillingTelegramUnlink
     ) {
       setLoadingBillingTelegramLink(false);
       setBillingTelegramLinkError(
@@ -4810,7 +5085,9 @@ export default function App() {
                 setError("");
                 setSuccess("");
                 void loadBilling();
-                void loadBillingTelegramStatus();
+                if (!savingBillingTelegramPreference && !unlinkingBillingTelegram) {
+                  void loadBillingTelegramStatus();
+                }
               }}
               style={{
                 ...styles.tab,
@@ -7978,20 +8255,252 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={() =>
-                  void loadBillingTelegramStatus()
+                onClick={() => {
+                  if (!savingBillingTelegramPreference && !unlinkingBillingTelegram) {
+                    void loadBillingTelegramStatus();
+                  }
+                }}
+                disabled={
+                  loadingBillingTelegram ||
+                  savingBillingTelegramPreference ||
+                  unlinkingBillingTelegram
                 }
-                disabled={loadingBillingTelegram}
                 style={styles.refreshButton}
               >
                 Refresh Telegram Status
               </button>
 
+              {billingTelegramStatus?.linked &&
+                billingTelegramStatus.destination &&
+                !loadingBillingTelegram &&
+                !billingTelegramError && (
+                  <div>
+                    <p>
+                      Linked Telegram account:{" "}
+                      {billingTelegramStatus.destination.maskedTelegramAccount}
+                    </p>
+                    <p>
+                      Notifications:{" "}
+                      {billingTelegramStatus.destination.notificationsEnabled
+                        ? "Enabled"
+                        : "Disabled"}
+                    </p>
+
+                    {auth?.user.role === "OWNER" && (
+                      <button
+                        type="button"
+                        disabled={
+                          savingBillingTelegramPreference ||
+                          loadingBillingTelegram ||
+                          unlinkingBillingTelegram ||
+                          confirmingBillingTelegramUnlink
+                        }
+                        onClick={() =>
+                          void updateBillingTelegramNotificationPreference(
+                            !billingTelegramStatus.destination!
+                              .notificationsEnabled
+                          )
+                        }
+                        style={styles.refreshButton}
+                      >
+                        {savingBillingTelegramPreference
+                          ? "Saving notification preference..."
+                          : billingTelegramStatus.destination.notificationsEnabled
+                            ? "Disable notifications"
+                            : "Enable notifications"}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+              {auth?.user.role === "OWNER" &&
+                billingTelegramStatus?.linked &&
+                billingTelegramStatus.destination &&
+                !loadingBillingTelegram &&
+                !billingTelegramError && (
+                  <div>
+                    {!confirmingBillingTelegramUnlink ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmingBillingTelegramUnlink(true);
+                          setBillingTelegramUnlinkError("");
+                          setBillingTelegramUnlinkSuccess("");
+                        }}
+                        disabled={
+                          unlinkingBillingTelegram ||
+                          savingBillingTelegramPreference
+                        }
+                        style={styles.refreshButton}
+                      >
+                        {unlinkingBillingTelegram
+                          ? "Unlinking Telegram account..."
+                          : "Unlink Telegram Account"}
+                      </button>
+                    ) : (
+                      <div>
+                        <p>
+                          Disconnect this platform billing Telegram
+                          account? New billing notifications will
+                          no longer use this destination.
+                          Messages already accepted by Telegram
+                          cannot be recalled.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void unlinkBillingTelegramAccount()
+                          }
+                          disabled={
+                            unlinkingBillingTelegram ||
+                            savingBillingTelegramPreference ||
+                            loadingBillingTelegram
+                          }
+                          style={styles.refreshButton}
+                        >
+                          Confirm Unlink
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirmingBillingTelegramUnlink(false)
+                          }
+                          disabled={unlinkingBillingTelegram}
+                          style={styles.refreshButton}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+              {billingTelegramUnlinkError && (
+                <p role="alert">
+                  {billingTelegramUnlinkError}
+                </p>
+              )}
+
+              {billingTelegramUnlinkSuccess && (
+                <p role="status">
+                  {billingTelegramUnlinkSuccess}
+                </p>
+              )}
+              {billingTelegramPreferenceError && (
+                <p role="alert">
+                  {billingTelegramPreferenceError}
+                </p>
+              )}
+
+              {billingTelegramPreferenceSuccess && (
+                <p role="status">
+                  {billingTelegramPreferenceSuccess}
+                </p>
+              )}
+
               <p>
-                Telegram account linking is not yet
-                available. This feature will be enabled
-                after the secure linking workflow is ready.
+                Linking a Telegram account and enabling notifications
+                do not guarantee message delivery. Platform billing
+                notification delivery is not currently operational.
               </p>
+              {auth?.user.role === "OWNER" && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void requestBillingTelegramLinkToken()
+                    }
+                    disabled={
+                      loadingBillingTelegramLink ||
+                      unlinkingBillingTelegram ||
+                      confirmingBillingTelegramUnlink
+                    }
+                    style={styles.refreshButton}
+                  >
+                    {loadingBillingTelegramLink
+                      ? "Preparing secure link..."
+                      : billingTelegramStatus?.linked
+                        ? "Generate Replacement Telegram Link Token"
+                        : "Generate Telegram Link Token"}
+                  </button>
+
+                  {billingTelegramStatus?.linked && (
+                    <p>
+                      To replace your linked Telegram account,
+                      generate a new token and complete the
+                      linking process from the replacement
+                      account in the designated platform billing
+                      Telegram bot. Generating a token alone
+                      does not replace your current connection.
+                      Refresh the connection status afterward
+                      to verify the replacement.
+                    </p>
+                  )}
+
+                  {billingTelegramLinkError && (
+                    <p role="alert">
+                      {billingTelegramLinkError}
+                    </p>
+                  )}
+
+                  {billingTelegramLinkToken &&
+                    billingTelegramLinkExpiresAt && (
+                      <div>
+                        <p>Temporary linking token:</p>
+                        <code>{billingTelegramLinkToken}</code>
+
+                        <p>
+                          Expires at:{" "}
+                          {new Date(
+                            billingTelegramLinkExpiresAt
+                          ).toLocaleString()}
+                        </p>
+
+                        <p>
+                          Open a private conversation with
+                          the designated platform billing
+                          Telegram bot and send:
+                        </p>
+
+                        <p>
+                          <code>
+                            /start{" "}
+                            {billingTelegramLinkToken}
+                          </code>
+                        </p>
+
+                        <p>
+                          Keep this token private.
+                          Generating a token does not
+                          connect your Telegram account.
+                          After completing the linking
+                          step, refresh the status.
+                        </p>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            billingTelegramLinkRequestIdRef.current += 1;
+                            setBillingTelegramLinkToken(null);
+                            setBillingTelegramLinkExpiresAt(null);
+                            setBillingTelegramLinkError("");
+                            setLoadingBillingTelegramLink(false);
+                          }}
+                          style={styles.refreshButton}
+                        >
+                          Dismiss Token
+                        </button>
+                      </div>
+                    )}
+                </div>
+              )}
+
+              {auth?.user.role !== "OWNER" && (
+                <p>
+                  Only the merchant OWNER can manage
+                  platform billing Telegram linking.
+                </p>
+              )}
             </div>
 
             {loadingBilling &&

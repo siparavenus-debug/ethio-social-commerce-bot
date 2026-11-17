@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   MerchantInvoiceStatus,
   MerchantSettlementProvider,
@@ -25,7 +26,7 @@ import {
 } from "../src/services/merchant-settlement.js";
 
 const testPrefix =
-  "day17-settlement-history";
+  `d17sh-${randomUUID().slice(0, 8)}`;
 
 async function cleanup(): Promise<void> {
   const merchants =
@@ -41,10 +42,35 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+    const candidateMerchantIds =
     merchants.map(
-      (merchant) =>
-        merchant.id
+      (merchant) => merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (id) => !protectedMerchantIds.has(id)
     );
 
   if (merchantIds.length === 0) {
@@ -137,7 +163,7 @@ async function createInvoice(
     data: {
       merchantId,
       invoiceNumber:
-        `INV-DAY17-SETTLEMENT-${suffix}`,
+      `INV-${testPrefix}-${suffix}`,
       periodStart,
       periodEnd,
       subscriptionAmount:
@@ -181,9 +207,9 @@ async function submitFixture(
     currency:
       "ETB",
     idempotencyKey:
-      `day17-settlement-${suffix}`,
+      `${testPrefix}-${suffix}`,
     transactionReference:
-      `DAY17-SETTLEMENT-TXN-${suffix}`,
+      `TX-${testPrefix}-${suffix}`,
     receiptUrl:
       `https://example.test/${suffix}.jpg`
   });
@@ -260,7 +286,7 @@ describe(
           currency:
             "ETB",
           transactionReference:
-            "DAY17-SETTLEMENT-TXN-review-required",
+            `TX-${testPrefix}-review-required`,
           receiptUrl:
             "https://example.test/review-required.jpg",
           hasReceiptEvidence:
@@ -310,9 +336,9 @@ describe(
             currency:
               "ETB",
             idempotencyKey:
-              "day17-settlement-private-evidence",
+              `${testPrefix}-private-evidence`,
             transactionReference:
-              "DAY17-SETTLEMENT-TXN-PRIVATE-EVIDENCE",
+              `TX-${testPrefix}-private-evidence`,
             receiptUrl:
               null,
             receiptMetadata: {
@@ -391,9 +417,9 @@ describe(
             currency:
               "ETB",
             idempotencyKey:
-              "day17-settlement-reference-only",
+              `${testPrefix}-reference-only`,
             transactionReference:
-              "DAY17-SETTLEMENT-TXN-REFERENCE-ONLY",
+              `TX-${testPrefix}-reference-only`,
             receiptUrl:
               null
           });

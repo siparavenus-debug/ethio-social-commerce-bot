@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
@@ -23,7 +24,7 @@ const API_BASE_URL =
   "http://127.0.0.1:3100";
 
 const testPrefix =
-  "d16-billing-recovery";
+  `d16br-${randomUUID().slice(0, 8)}`;
 
 async function cleanup(): Promise<void> {
   const merchants =
@@ -39,10 +40,35 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+  const candidateMerchantIds =
     merchants.map(
-      (merchant) =>
-        merchant.id
+      (merchant) => merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (id) => !protectedMerchantIds.has(id)
     );
 
   if (merchantIds.length > 0) {
@@ -113,8 +139,10 @@ async function cleanup(): Promise<void> {
   await prisma.subscriptionPlan.deleteMany({
     where: {
       code: {
-        startsWith:
-          testPrefix
+        startsWith: testPrefix
+      },
+      subscriptions: {
+        none: {}
       }
     }
   });
@@ -275,9 +303,9 @@ function settlementBody(
     currency:
       "ETB",
     idempotencyKey:
-      `d16-${suffix}`,
+      `${testPrefix}-${suffix}`,
     transactionReference:
-      `TX-D16-${suffix}`
+      `TX-${testPrefix}-${suffix}`
   };
 }
 

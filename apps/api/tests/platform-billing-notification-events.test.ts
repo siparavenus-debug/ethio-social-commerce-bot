@@ -69,31 +69,63 @@ describe("B3.6 Unit 2B billing event foundation", () => {
       });
 
       expect(persisted).not.toBeNull();
-      expect(persisted?.notification).toBeNull();
+      expect(persisted?.notification).toMatchObject({
+        status: "SUPPRESSED",
+        terminalReason: "NO_ELIGIBLE_OPT_IN"
+      });
     });
   });
 
-  it("verifies a previously committed durable event without creating a notification", async () => {
-    // Append-only fixture created by the original committed-persistence test.
-    // This verifies persisted state without attempting to delete audit events.
-    const sourceId = "fbde3439-3835-494c-ace9-cecb639e9b8c";
-    const merchantId = "872d5530-d0c8-4a46-926f-f74e5293d101";
-    const occurrenceKey = `UNIT2B:COMMITTED:${sourceId}`;
+  it(
+    "creates an event and suppressed notification atomically",
+    async () => {
+      const occurrenceKey = `UNIT2B:${randomUUID()}`;
 
-    const persisted = await prisma.platformBillingEvent.findUnique({
-      where: { occurrenceKey },
-      include: { notification: true }
-    });
+      await withRollback(async (tx) => {
+        const merchant = await tx.merchant.create({
+          data: {
+            name: `Unit 2B ${randomUUID()}`
+          }
+        });
 
-    expect(persisted).not.toBeNull();
-    expect(persisted?.merchantId).toBe(merchantId);
-    expect(persisted?.type).toBe(
-      PlatformBillingEventType.INVOICE_ISSUED
-    );
-    expect(persisted?.sourceId).toBe(sourceId);
-    expect(persisted?.occurrenceKey).toBe(occurrenceKey);
-    expect(persisted?.notification).toBeNull();
-  });
+        const event = await createPlatformBillingEvent(
+          tx,
+          {
+            merchantId: merchant.id,
+            type: PlatformBillingEventType.INVOICE_ISSUED,
+            sourceId: randomUUID(),
+            occurrenceKey
+          }
+        );
+
+        const persisted =
+          await tx.platformBillingEvent.findUnique({
+            where: { id: event.id },
+            include: { notification: true }
+          });
+
+        expect(persisted).not.toBeNull();
+        expect(persisted?.merchantId).toBe(merchant.id);
+        expect(persisted?.type).toBe(
+          PlatformBillingEventType.INVOICE_ISSUED
+        );
+
+        expect(persisted?.notification).toMatchObject({
+          status: "SUPPRESSED",
+          terminalReason: "NO_ELIGIBLE_OPT_IN"
+        });
+      });
+
+      const persistedAfterRollback =
+        await prisma.platformBillingEvent.findUnique({
+          where: { occurrenceKey },
+          include: { notification: true }
+        });
+
+      expect(persistedAfterRollback).toBeNull();
+    }
+  );
+
   it("rolls back durable event creation", async () => {
     const occurrenceKey = `UNIT2B:${randomUUID()}`;
 

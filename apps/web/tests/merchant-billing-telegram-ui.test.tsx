@@ -160,12 +160,152 @@ import {
       ).toBe("no-store");
 
       expect(
-        screen.queryByRole("button", {
-          name: /generate.*token|link.*telegram/i
+        screen.getByRole("button", {
+          name: "Generate Telegram Link Token"
         })
-      ).toBeNull();
+      ).toBeTruthy();
     });
 
+
+    it("allows OWNER to generate and dismiss a billing Telegram link token", async () => {
+      const token = "A".repeat(42) + "E";
+
+      const fetchMock = vi.spyOn(
+        globalThis,
+        "fetch"
+      ).mockImplementation(async (input) => {
+        const url = String(input);
+
+        if (url.endsWith("/auth/login")) {
+          return new Response(
+            JSON.stringify({
+              token: "owner-token",
+              user: {
+                id: "owner-user",
+                merchantId: "merchant-a",
+                email: "owner@example.com",
+                displayName: "Merchant Owner",
+                role: "OWNER"
+              }
+            }),
+            { status: 200 }
+          );
+        }
+
+        if (url.endsWith("/billing-telegram/link-token")) {
+          return new Response(
+            JSON.stringify({
+              token,
+              expiresAt: new Date(
+                Date.now() + 60_000
+              ).toISOString()
+            }),
+            { status: 201 }
+          );
+        }
+
+        if (url.endsWith("/billing-telegram")) {
+          return new Response(
+            JSON.stringify({
+              linked: false,
+              destination: null
+            }),
+            { status: 200 }
+          );
+        }
+
+        if (url.endsWith("/billing/summary")) {
+          return new Response(
+            JSON.stringify({
+              merchantId: "merchant-a",
+              subscription: null,
+              currentPeriod: {
+                status: "NO_SUBSCRIPTION"
+              }
+            }),
+            { status: 200 }
+          );
+        }
+
+        if (url.includes("/merchants/")) {
+          return new Response(
+            JSON.stringify([]),
+            { status: 200 }
+          );
+        }
+
+        throw new Error(`Unexpected request: ${url}`);
+      });
+
+      render(<App />);
+
+      fireEvent.change(screen.getByLabelText("Email"), {
+        target: { value: "owner@example.com" }
+      });
+
+      fireEvent.change(screen.getByLabelText("Password"), {
+        target: { value: "test-password" }
+      });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Sign in" })
+      );
+
+      await screen.findByText("Merchant Owner");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Billing" })
+      );
+
+      await screen.findByText(
+        "Billing Telegram Notifications"
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Generate Telegram Link Token"
+        })
+      );
+
+      expect(
+        await screen.findByText("Temporary linking token:")
+      ).toBeTruthy();
+
+      expect(
+        screen.getByText((text) =>
+          text.includes("/start") &&
+          text.includes(token)
+        )
+      ).toBeTruthy();
+
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input).endsWith(
+              "/billing-telegram/link-token"
+            ) &&
+            init?.method === "POST" &&
+            init?.cache === "no-store"
+        )
+      ).toBe(true);
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Dismiss Token"
+        })
+      );
+
+      expect(
+        screen.queryByText("Temporary linking token:")
+      ).toBeNull();
+
+      expect(
+        screen.queryByText((text) =>
+          text.includes("/start") &&
+          text.includes(token)
+        )
+      ).toBeNull();
+    });
 
 it.each(["ADMIN", "STAFF"] as const)(
     "does not expose billing Telegram to %s",
@@ -266,9 +406,9 @@ it("shows connected status without exposing Telegram identifiers", async () => {
     const destination = {
       id: "destination-test-123",
       platformBotId: "platform-bot-test-456",
-      chatId: "987654321",
-      telegramUserId: "123456789",
+      maskedTelegramAccount: "••••6789",
       status: "ACTIVE",
+      notificationsEnabled: true,
       linkVersion: 1,
       consentedAt: "2026-11-06T10:00:00.000Z",
       createdAt: "2026-11-06T10:00:00.000Z",
@@ -367,10 +507,33 @@ it("shows connected status without exposing Telegram identifiers", async () => {
 
     const renderedText = container.textContent ?? "";
 
-    expect(renderedText).not.toContain(destination.chatId);
-    expect(renderedText).not.toContain(destination.telegramUserId);
+    expect(renderedText).toContain(
+      "Linked Telegram account:"
+    );
+    expect(renderedText).toContain(
+      destination.maskedTelegramAccount
+    );
+
+    expect(renderedText).not.toContain("987654321");
+    expect(renderedText).not.toContain("123456789");
     expect(renderedText).not.toContain(destination.platformBotId);
     expect(renderedText).not.toContain(destination.id);
+
+    expect(
+      screen.getByRole("button", {
+        name: "Generate Replacement Telegram Link Token"
+      })
+    ).toBeTruthy();
+
+    expect(renderedText).toContain(
+      "To replace your linked Telegram account"
+    );
+    expect(renderedText).toContain(
+      "Generating a token alone"
+    );
+    expect(renderedText).toContain(
+      "does not replace your current connection."
+    );
   });
 
 

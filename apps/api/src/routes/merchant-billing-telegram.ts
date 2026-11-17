@@ -25,6 +25,16 @@ import {
     updateBillingTelegramPreferences
   } from "../services/merchant-billing-telegram-preferences.js";
 
+function maskBillingTelegramAccount(
+  telegramUserId: string
+): string {
+  if (!/^\d{6,}$/.test(telegramUserId)) {
+    return "••••";
+  }
+
+  return `••••${telegramUserId.slice(-4)}`;
+}
+
 const router = Router();
 
 router.use(requireAuth);
@@ -62,7 +72,23 @@ router.get(
 
       res.status(200).json({
         linked: destination !== null,
-        destination
+        destination: destination
+          ? {
+              id: destination.id,
+              platformBotId: destination.platformBotId,
+              maskedTelegramAccount:
+                maskBillingTelegramAccount(
+                  destination.telegramUserId
+                ),
+              status: destination.status,
+              linkVersion: destination.linkVersion,
+              notificationsEnabled:
+                destination.notificationsEnabled,
+              consentedAt: destination.consentedAt,
+              createdAt: destination.createdAt,
+              updatedAt: destination.updatedAt
+            }
+          : null
       });
     } catch {
       res.status(500).json({

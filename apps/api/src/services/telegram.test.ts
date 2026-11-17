@@ -11,7 +11,8 @@ import {
     downloadTelegramFile,
     getTelegramBotIdentity,
     getTelegramWebhookInfo,
-    setTelegramWebhook
+    setTelegramWebhook,
+    TelegramApiError
   } from "./telegram.js";
 
   function mockTelegramResponse(
@@ -73,7 +74,8 @@ import {
                 "content-type":
                   "application/json"
               },
-              body: "{}"
+              body: "{}",
+              signal: expect.any(AbortSignal)
             }
           );
         }
@@ -105,7 +107,8 @@ import {
                 url: "https://api.example.com/webhooks/telegram/webhook-key",
                 secret_token:
                   "webhook-secret"
-              })
+              }),
+              signal: expect.any(AbortSignal)
             }
           );
         }
@@ -131,7 +134,8 @@ import {
                 "content-type":
                   "application/json"
               },
-              body: "{}"
+              body: "{}",
+              signal: expect.any(AbortSignal)
             }
           );
         }
@@ -220,11 +224,21 @@ import {
             Error
           );
 
+          expect(caughtError).toBeInstanceOf(
+            TelegramApiError
+          );
+
+          expect(
+            (caughtError as TelegramApiError).kind
+          ).toBe("API_ERROR");
+
+          expect(
+            (caughtError as TelegramApiError).status
+          ).toBe(401);
+
           expect(
             (caughtError as Error).message
-          ).toContain(
-            "Telegram API getMe failed: Unauthorized"
-          );
+          ).toBe("Telegram API request failed: API_ERROR");
 
           expect(
             (caughtError as Error).message
@@ -260,11 +274,21 @@ import {
             Error
           );
 
+          expect(caughtError).toBeInstanceOf(
+            TelegramApiError
+          );
+
+          expect(
+            (caughtError as TelegramApiError).kind
+          ).toBe("NETWORK");
+
+          expect(
+            (caughtError as TelegramApiError).status
+          ).toBeNull();
+
           expect(
             (caughtError as Error).message
-          ).toBe(
-            "Telegram API getMe request failed"
-          );
+          ).toBe("Telegram API request failed: NETWORK");
 
           expect(
             (caughtError as Error).message

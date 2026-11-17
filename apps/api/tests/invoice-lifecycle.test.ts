@@ -34,8 +34,10 @@ import {
   rejectMerchantSettlement
 } from "../src/services/merchant-settlement-review.js";
 
+import { randomUUID } from "node:crypto";
+
 const testPrefix =
-  "day15-invoice-lifecycle";
+  `d15il-${randomUUID().slice(0, 8)}`;
 
 async function cleanup(): Promise<void> {
   const merchants =
@@ -51,10 +53,36 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+    const candidateMerchantIds =
     merchants.map(
-      (merchant) =>
-        merchant.id
+      (merchant) => merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (merchantId) =>
+        !protectedMerchantIds.has(merchantId)
     );
 
   if (merchantIds.length > 0) {
@@ -134,8 +162,10 @@ async function cleanup(): Promise<void> {
   await prisma.subscriptionPlan.deleteMany({
     where: {
       code: {
-        startsWith:
-          testPrefix
+        startsWith: testPrefix
+      },
+      subscriptions: {
+        none: {}
       }
     }
   });
@@ -233,6 +263,33 @@ async function createFixture(
   };
 }
 
+function isolateWorkerDiscovery(
+  merchantIds: string[]
+) {
+  const originalFindMany =
+    prisma.merchantInvoice.findMany.bind(
+      prisma.merchantInvoice
+    );
+
+  return vi.spyOn(
+    prisma.merchantInvoice,
+    "findMany"
+  ).mockImplementation(
+    (async (...args: Parameters<typeof originalFindMany>) => {
+      const query = args[0];
+
+      return originalFindMany({
+        ...query,
+        where: {
+          ...query?.where,
+          merchantId: {
+            in: merchantIds
+          }
+        }
+      } as typeof query);
+    }) as typeof prisma.merchantInvoice.findMany
+  );
+}
 
 async function createPlatformUser(
   suffix: string
@@ -2173,10 +2230,22 @@ describe(
           }
         });
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          protectedInvoice.merchant.id,
+          eligibleInvoice.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processOverdueMerchantInvoices({
             now
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const storedProtectedInvoice =
           await prisma.merchantInvoice.findUniqueOrThrow({
@@ -2238,13 +2307,21 @@ describe(
           }
         });
 
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      try {
         await processSecondOverdueInvoiceReminders({
           now:
             new Date(
               "2026-10-08T00:00:00.000Z"
             )
         });
-
+      } finally {
+        discoverySpy.mockRestore();
+      }
         const reminders =
           await prisma.merchantInvoiceReminder.findMany({
             where: {
@@ -2312,13 +2389,24 @@ describe(
           }
         });
 
-        const result =
+        const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processSecondOverdueInvoiceReminders({
             now:
               new Date(
                 "2026-10-08T00:00:00.000Z"
               )
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const reminders =
           await prisma.merchantInvoiceReminder.findMany({
@@ -2364,13 +2452,24 @@ describe(
           }
         });
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processSecondOverdueInvoiceReminders({
             now:
               new Date(
                 "2026-10-07T23:59:59.999Z"
               )
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const reminders =
           await prisma.merchantInvoiceReminder.findMany({
@@ -2421,15 +2520,27 @@ describe(
             "2026-10-08T00:00:00.000Z"
           );
 
-        const firstResult =
-          await processSecondOverdueInvoiceReminders({
-            now
-          });
+          const discoverySpy =
+          isolateWorkerDiscovery([
+            fixture.merchant.id
+          ]);
 
-        const secondResult =
-          await processSecondOverdueInvoiceReminders({
-            now
-          });
+        let firstResult;
+        let secondResult;
+
+        try {
+          firstResult =
+            await processSecondOverdueInvoiceReminders({
+              now
+            });
+
+          secondResult =
+            await processSecondOverdueInvoiceReminders({
+              now
+            });
+        } finally {
+          discoverySpy.mockRestore();
+        }
 
         const reminders =
           await prisma.merchantInvoiceReminder.findMany({
@@ -2483,10 +2594,21 @@ describe(
           }
         });
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processSecondOverdueInvoiceReminders({
             now: new Date("2026-10-08T00:00:00.000Z")
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const reminderCount =
           await prisma.merchantInvoiceReminder.count({
@@ -2535,8 +2657,18 @@ describe(
         try {
           discoverySpy.mockImplementationOnce(
             (async (...args: Parameters<typeof originalFindMany>) => {
+              const query = args[0];
+
               const candidates =
-                await originalFindMany(...args);
+                await originalFindMany({
+                  ...query,
+                  where: {
+                    ...query?.where,
+                    merchantId: {
+                      in: [fixture.merchant.id]
+                    }
+                  }
+                } as typeof query);
 
               expect(candidates).toEqual(
                 expect.arrayContaining([
@@ -2662,15 +2794,27 @@ describe(
           "2026-10-12T00:00:00.000Z"
         );
 
-      const firstResult =
-        await processPastDueSubscriptionSuspensions({
-          now
-        });
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
 
-      const secondResult =
-        await processPastDueSubscriptionSuspensions({
-          now
-        });
+      let firstResult;
+      let secondResult;
+
+      try {
+        firstResult =
+          await processPastDueSubscriptionSuspensions({
+            now
+          });
+
+        secondResult =
+          await processPastDueSubscriptionSuspensions({
+            now
+          });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const subscription =
           await prisma.merchantSubscription.findUnique({
@@ -2920,13 +3064,24 @@ describe(
           }
         });
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processPastDueSubscriptionSuspensions({
             now:
               new Date(
                 "2026-10-12T00:00:00.000Z"
               )
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const subscription =
           await prisma.merchantSubscription.findUnique({
@@ -3037,9 +3192,9 @@ describe(
               currency:
                 "ETB",
               idempotencyKey:
-                "suspension-rejected-settlement",
+                `${testPrefix}-susp-rejected`,
               transactionReference:
-                "TX-SUSPENSION-REJECTED-001"
+                `TX-${testPrefix}-susp-rejected`
             }
           });
 
@@ -3065,13 +3220,24 @@ describe(
           MerchantInvoiceStatus.OVERDUE
         );
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processPastDueSubscriptionSuspensions({
             now:
               new Date(
                 "2026-10-12T00:00:00.000Z"
               )
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const subscription =
           await prisma.merchantSubscription.findUnique({
@@ -3205,13 +3371,24 @@ describe(
           }
         });
 
-        const result =
+      const discoverySpy =
+        isolateWorkerDiscovery([
+          fixture.merchant.id
+        ]);
+
+      let result;
+
+      try {
+        result =
           await processPastDueSubscriptionSuspensions({
             now:
               new Date(
                 "2026-10-12T00:00:00.000Z"
               )
           });
+      } finally {
+        discoverySpy.mockRestore();
+      }
 
         const subscription =
           await prisma.merchantSubscription.findUnique({

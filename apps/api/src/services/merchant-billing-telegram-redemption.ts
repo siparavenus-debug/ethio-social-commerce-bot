@@ -328,7 +328,9 @@ export async function redeemBillingTelegramLink(
             actorType: "MERCHANT_OWNER",
             actorMerchantUserId: token.createdByUserId,
             actorPlatformUserId: null,
-            action: "BILLING_TELEGRAM_DESTINATION_LINKED",
+            action: previous.length === 1
+              ? "BILLING_TELEGRAM_DESTINATION_REPLACED"
+              : "BILLING_TELEGRAM_DESTINATION_LINKED",
             entityType: "BILLING_TELEGRAM_DESTINATION",
             entityId: destination.id,
             sanitizedMetadata: {

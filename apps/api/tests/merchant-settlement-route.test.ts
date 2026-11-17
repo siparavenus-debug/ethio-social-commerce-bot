@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   MerchantInvoiceStatus,
   MerchantSettlementStatus,
@@ -21,7 +22,7 @@ const API_BASE_URL =
   "http://127.0.0.1:3100";
 
 const testPrefix =
-  "day15-settlement-route";
+  `d15sr-${randomUUID().slice(0, 8)}`;
 
 async function cleanup(): Promise<void> {
   const merchants =
@@ -37,10 +38,35 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+  const candidateMerchantIds =
     merchants.map(
-      (merchant) =>
-        merchant.id
+      (merchant) => merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (id) => !protectedMerchantIds.has(id)
     );
 
   if (merchantIds.length === 0) {
@@ -141,7 +167,7 @@ async function createFixture(
         merchantId:
           merchant.id,
         invoiceNumber:
-          `INV-ROUTE-${suffix}`,
+          `INV-${testPrefix}-${suffix}`,
         periodStart:
           new Date(
             "2026-09-01T00:00:00.000Z"
@@ -206,9 +232,9 @@ function settlementBody(
     currency:
       "ETB",
     idempotencyKey:
-      `route-${suffix}`,
+      `${testPrefix}-${suffix}`,
     transactionReference:
-      `TX-ROUTE-${suffix}`
+      `TX-${testPrefix}-${suffix}`
   };
 }
 
@@ -665,8 +691,8 @@ describe(
             fixture.merchant.id,
             {
               ...firstBody,
-              transactionReference:
-                "TX-ROUTE-CONFLICT-DIFFERENT"
+            transactionReference:
+              `TX-${testPrefix}-CONFLICT-DIFFERENT`
             },
             fixture.token
           );

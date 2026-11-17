@@ -1,6 +1,8 @@
-﻿import type {
+import type {
   Server
 } from "node:http";
+
+import { randomInt, randomUUID } from "node:crypto";
 
 import express from "express";
 
@@ -87,7 +89,9 @@ import {
 } from "../src/tools/orders.js";
 
 const testPrefix =
-  "new-merchant-journey";
+  `new-merchant-journey-${randomUUID().slice(0, 12)}`;
+
+const testTelegramBotId = randomInt(1000000000, 9000000000);
 
 let server:
   Server | null = null;
@@ -97,13 +101,31 @@ let apiBaseUrl =
 
 async function cleanup():
   Promise<void> {
+  const protectedMerchantCount =
+    await prisma.merchant.count({
+      where: {
+        name: {
+          startsWith: testPrefix
+        },
+        billingEvents: {
+          some: {}
+        }
+      }
+    });
+
+  // Preserve the complete fixture when append-only billing
+  // events prevent safe merchant deletion.
+  if (protectedMerchantCount > 0) {
+    return;
+  }
+
   const merchants =
     await prisma.merchant.findMany({
       where: {
         name: {
-          startsWith:
-            testPrefix
-        }
+          startsWith: testPrefix
+        },
+        billingEvents: { none: {} }
       },
       select: {
         id: true
@@ -290,6 +312,31 @@ async function cleanup():
     }
   });
 
+  await prisma.platformBillingNotificationAudit.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
+  await prisma.platformBillingNotificationAttempt.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
+  await prisma.platformBillingDeliveryQuarantine.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
+  await prisma.platformBillingNotificationDelivery.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
+  await prisma.platformBillingNotification.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
+
+  await prisma.merchantBillingTelegramDestination.deleteMany({
+    where: { merchantId: { in: merchantIds } }
+  });
+
   await prisma.merchant.deleteMany({
     where: {
       id: {
@@ -377,7 +424,7 @@ beforeEach(
 
     getTelegramBotIdentityMock
       .mockResolvedValue({
-        id: 123456789,
+        id: testTelegramBotId,
         username:
           "gate13_merchant_bot"
       });
@@ -1907,6 +1954,9 @@ describe(
           OrderStatus.PENDING_PAYMENT
         );
 
+        const paymentTransactionReference =
+          `GATE13-TXN-${randomUUID()}`;
+
         const paymentResponse =
           await fetch(
             `${apiBaseUrl}/merchants/${merchantBody.merchant.id}/payments`,
@@ -1930,7 +1980,7 @@ describe(
                   currency:
                     "ETB",
                   transactionReference:
-                    "GATE13-TXN-001",
+                    paymentTransactionReference,
                   receiptUrl:
                     `receipts/${merchantBody.merchant.id}/${customerOrder.id}/gate13.jpg`
                 })
@@ -1968,7 +2018,7 @@ describe(
           currency:
             "ETB",
           transactionReference:
-            "GATE13-TXN-001"
+            paymentTransactionReference
         });
 
         expect(

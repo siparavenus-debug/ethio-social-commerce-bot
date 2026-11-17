@@ -365,7 +365,10 @@ describe("B5.5-I2-M3 attempt fencing", () => {
     expect(started).toEqual({
       started: true,
       sendAuthorized: false,
-      attemptId: prepared.attemptId
+      attemptId: prepared.attemptId,
+      destinationId: expect.any(String),
+      platformBotId: expect.any(String),
+      botIdentityId: expect.any(String)
     });
 
     const attempt =

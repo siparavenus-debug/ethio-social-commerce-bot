@@ -62,10 +62,37 @@ async function cleanup(): Promise<void> {
       }
     });
 
-  const merchantIds =
+    const candidateMerchantIds =
     merchants.map(
       (merchant) =>
         merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (merchantId) =>
+        !protectedMerchantIds.has(merchantId)
     );
 
   if (merchantIds.length > 0) {

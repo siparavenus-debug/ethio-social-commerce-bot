@@ -207,6 +207,9 @@ export type BillingRequestStartResult =
       started: true;
       sendAuthorized: false;
       attemptId: string;
+      destinationId: string;
+      platformBotId: string;
+      botIdentityId: string;
     }
   | {
       started: false;
@@ -395,7 +398,10 @@ export async function markPlatformBillingNotificationRequestStarted(
       return {
         started: true,
         sendAuthorized: false,
-        attemptId: updated[0].id
+        attemptId: updated[0].id,
+        destinationId: eligibility.destinationId,
+        platformBotId: eligibility.platformBotId,
+        botIdentityId: eligibility.botIdentityId
       };
     },
     {

@@ -22,6 +22,14 @@ import {
 const testPrefix =
   "day15-settlement-submission";
 
+const referenceRunId = randomUUID();
+
+function testTransactionReference(
+  reference: string
+): string {
+  return `${reference}-${referenceRunId}`;
+}
+
 async function cleanup(): Promise<void> {
   const merchants =
     await prisma.merchant.findMany({
@@ -251,7 +259,7 @@ describe(
               "reference"
             ),
             transactionReference:
-              "TX-REFERENCE-001"
+              testTransactionReference("TX-REFERENCE-001")
           });
 
         expect(
@@ -264,7 +272,7 @@ describe(
         expect(
           settlement.transactionReference
         ).toBe(
-          "TX-REFERENCE-001"
+          testTransactionReference("TX-REFERENCE-001")
         );
 
         expect(
@@ -329,7 +337,7 @@ describe(
               "both"
             ),
             transactionReference:
-              "TX-BOTH-001",
+              testTransactionReference("TX-BOTH-001"),
             receiptUrl:
               "https://example.test/both.jpg",
             receiptMetadata: {
@@ -341,7 +349,7 @@ describe(
         expect(
           settlement.transactionReference
         ).toBe(
-          "TX-BOTH-001"
+          testTransactionReference("TX-BOTH-001")
         );
 
         expect(
@@ -445,7 +453,7 @@ describe(
             merchantId:
               other.merchant.id,
             transactionReference:
-              "TX-CROSS-001"
+              testTransactionReference("TX-CROSS-001")
           })
         ).rejects.toThrow(
           "Merchant invoice not found"
@@ -481,7 +489,7 @@ describe(
                 "500.00"
               ),
             transactionReference:
-              "TX-AMOUNT-001"
+              testTransactionReference("TX-AMOUNT-001")
           })
         ).rejects.toThrow(
           "Merchant settlement amount does not match invoice total"
@@ -508,7 +516,7 @@ describe(
                 "0.00"
               ),
             transactionReference:
-              "TX-ZERO-001"
+              testTransactionReference("TX-ZERO-001")
           })
         ).rejects.toThrow(
           "Merchant settlement amount must be greater than zero"
@@ -533,7 +541,7 @@ describe(
             currency:
               " etb ",
             transactionReference:
-              "TX-CURRENCY-OK"
+              testTransactionReference("TX-CURRENCY-OK")
           });
 
         expect(
@@ -551,7 +559,7 @@ describe(
             currency:
               "USD",
             transactionReference:
-              "TX-CURRENCY-BAD"
+            testTransactionReference( "TX-CURRENCY-BAD")
           })
         ).rejects.toThrow(
           "Merchant settlement currency does not match invoice currency"
@@ -573,7 +581,7 @@ describe(
             "replay"
           ),
           transactionReference:
-            "TX-REPLAY-001",
+            testTransactionReference("TX-REPLAY-001"),
           actorUserId:
             "day15-merchant-actor"
         };
@@ -632,7 +640,7 @@ describe(
             "conflict"
           ),
           transactionReference:
-            "TX-CONFLICT-001"
+            testTransactionReference("TX-CONFLICT-001")
         };
 
         await submitMerchantSettlement(
@@ -643,7 +651,7 @@ describe(
           submitMerchantSettlement({
             ...input,
             transactionReference:
-              "TX-CONFLICT-002"
+              testTransactionReference("TX-CONFLICT-002")
           })
         ).rejects.toThrow(
           "Merchant settlement idempotency key was already used for a different instruction"
@@ -676,7 +684,7 @@ describe(
             "duplicate-reference-a"
           ),
           transactionReference:
-            "TX-DUPLICATE-001"
+            testTransactionReference("TX-DUPLICATE-001")
         });
 
         await expect(
@@ -686,7 +694,7 @@ describe(
               "duplicate-reference-b"
             ),
             transactionReference:
-              "TX-DUPLICATE-001"
+              testTransactionReference("TX-DUPLICATE-001")
           })
         ).rejects.toThrow(
           "Merchant settlement transaction reference has already been submitted"
@@ -731,7 +739,7 @@ describe(
             "concurrent"
           ),
           transactionReference:
-            "TX-CONCURRENT-001",
+            testTransactionReference("TX-CONCURRENT-001"),
           actorUserId:
             "day15-concurrent-actor"
         };
@@ -808,7 +816,7 @@ describe(
               "audit"
             ),
             transactionReference:
-              "TX-AUDIT-001",
+              testTransactionReference("TX-AUDIT-001"),
             actorUserId:
               "day15-test-merchant-user"
           });
@@ -871,7 +879,7 @@ describe(
               "authorization-boundary"
             ),
             transactionReference:
-              "TX-BOUNDARY-001",
+              testTransactionReference("TX-BOUNDARY-001"),
             receiptUrl:
               "https://example.test/boundary.jpg"
           });
@@ -936,7 +944,7 @@ describe(
               "overdue-submission"
             ),
             transactionReference:
-              "TX-OVERDUE-SUBMISSION-001"
+              testTransactionReference("TX-OVERDUE-SUBMISSION-001")
           });
 
         expect(

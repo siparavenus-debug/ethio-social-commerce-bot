@@ -68,6 +68,7 @@ type View =
   | "Merchants"
   | "Merchant Onboarding"
   | "Invitation Deliveries"
+  | "Billing Telegram Deliveries"
   | "Billing Work"
   | "Plans"
   | "Overdue"
@@ -75,6 +76,45 @@ type View =
   | "Audit"
   | "Operators";
 
+type BillingTelegramDeliveryStatus =
+  | "PENDING"
+  | "PROCESSING"
+  | "SENDING"
+  | "SENT"
+  | "FAILED"
+  | "SUPPRESSED"
+  | "REVIEW_REQUIRED";
+
+type BillingTelegramAttempt = {
+  id: string;
+  attemptNumber: number;
+  outcome: string | null;
+  requestStartedAt: string | null;
+  responseReceivedAt: string | null;
+  createdAt: string;
+};
+
+type BillingTelegramDelivery = {
+  id: string;
+  merchantId: string;
+  notificationId: string;
+  eventId: string;
+  notificationStatus: string;
+  status: BillingTelegramDeliveryStatus;
+  attemptCount: number;
+  nextAttemptAt: string | null;
+  processingUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+  quarantined: boolean;
+  quarantineCreatedAt: string | null;
+  attempts: BillingTelegramAttempt[];
+};
+
+type BillingTelegramDeliveryPage = {
+  deliveries: BillingTelegramDelivery[];
+  nextCursor: string | null;
+};
 type BillingWorkTab =
   | "draft"
   | "awaiting-payment"
@@ -207,7 +247,7 @@ const transitions: Record<string, string[]> = { TRIAL: ["ACTIVE", "CANCELLED"], 
 const statuses = Object.keys(transitions);
 const field = (name: string, label: string, type = "text", optional = false): Field => ({ name, label, type, optional });
 const dateFields = (start: string, end: string): Field[] => [field(start, "Period start (local time)", "datetime-local"), field(end, "Period end (local time)", "datetime-local")];
-const display = (value: unknown): string => value == null ? "—" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
+const display = (value: unknown): string => value == null ? "â€”" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
 const label = (key: string) => key.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
 
 function rowMerchantId(
@@ -238,7 +278,7 @@ function billingWorkRows(
         "name" in merchant &&
         typeof merchant.name === "string"
         ? merchant.name
-        : "—";
+        : "â€”";
 
     const invoiceNumber =
       invoice &&
@@ -248,7 +288,7 @@ function billingWorkRows(
         ? invoice.invoiceNumber
         : typeof row.invoiceNumber === "string"
           ? row.invoiceNumber
-          : "—";
+          : "â€”";
 
     return {
       ...row,
@@ -270,7 +310,7 @@ function ModalBackdrop({ close, label }: { close: () => void; label: string }) {
 }
 
 function RecordModal({ row, close }: { row: Row; close: () => void }) {
-  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close record dialog backdrop" /><section className="pa-modal pa-record-modal" role="dialog" aria-modal="true"><div className="pa-modal-head"><div><p className="pa-eyebrow">FULL RECORD</p><h2>{String(row.name || row.invoiceNumber || row.id)}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><dl className="pa-record-grid">{Object.entries(row).map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{typeof v === "object" && v !== null ? <pre>{JSON.stringify(v, null, 2)}</pre> : display(v)}</dd></div>)}</dl></section></div>;
+  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close record dialog backdrop" /><section className="pa-modal pa-record-modal" role="dialog" aria-modal="true"><div className="pa-modal-head"><div><p className="pa-eyebrow">FULL RECORD</p><h2>{String(row.name || row.invoiceNumber || row.id)}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">Ã—</button></div><dl className="pa-record-grid">{Object.entries(row).map(([k, v]) => <div key={k}><dt>{label(k)}</dt><dd>{typeof v === "object" && v !== null ? <pre>{JSON.stringify(v, null, 2)}</pre> : display(v)}</dd></div>)}</dl></section></div>;
 }
 
 function Table({ rows, columns, actions }: { rows: Row[]; columns: string[]; actions?: (row: Row) => ReactNode }) {
@@ -306,7 +346,7 @@ function ActionForm({ action, busy, submit, close }: { action: Action; busy: boo
       await submit(action.transform ? action.transform(values) : values);
     } catch (e) { setError(e instanceof Error ? e.message : "Action failed"); }
   }
-  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close action dialog backdrop" /><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">×</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name} htmlFor={`${formId}-${f.name}`}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select id={`${formId}-${f.name}`} name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea id={`${formId}-${f.name}`} name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input id={`${formId}-${f.name}`} name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submitting…" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
+  return <div className="pa-modal-backdrop"><ModalBackdrop close={close} label="Close action dialog backdrop" /><section className="pa-modal pa-action-modal" role="dialog" aria-modal="true" aria-label={action.title}><div className="pa-modal-head"><div><p className="pa-eyebrow">PLATFORM ACTION</p><h2>{action.title}</h2></div><button type="button" className="pa-icon-button" onClick={close} aria-label="Close">Ã—</button></div><p>{action.note || "Review these details before submitting. The server validates this operation."}</p><form onSubmit={onSubmit}><fieldset disabled={busy}>{action.fields.map(f => <label key={f.name} htmlFor={`${formId}-${f.name}`}>{f.label}{f.optional ? " (optional)" : ""}{f.options ? <select id={`${formId}-${f.name}`} name={f.name} defaultValue={String(f.value ?? f.options[0])}>{f.options.map(v => <option key={v}>{v}</option>)}</select> : f.type === "json" ? <textarea id={`${formId}-${f.name}`} name={f.name} required={!f.optional} defaultValue={f.value == null ? "" : JSON.stringify(f.value, null, 2)} /> : <input id={`${formId}-${f.name}`} name={f.name} type={f.type || "text"} step="any" min={f.type === "number" ? "0" : undefined} required={!f.optional} defaultValue={f.value == null ? "" : String(f.value)} />}</label>)}{error && <p role="alert" className="pa-error">{error}</p>}<div className="pa-buttons"><button type="submit">{busy ? "Submittingâ€¦" : "Confirm and submit"}</button><button type="button" onClick={close}>Cancel</button></div></fieldset></form></section></div>;
 }
 
 export default function PlatformApp() {
@@ -326,6 +366,16 @@ export default function PlatformApp() {
     invitationDeliveryStatus,
     setInvitationDeliveryStatus
   ] = useState("REVIEW_REQUIRED");
+  const [billingTelegramStatus, setBillingTelegramStatus] =
+    useState("REVIEW_REQUIRED");
+  const [billingTelegramMerchantId, setBillingTelegramMerchantId] =
+    useState("");
+  const [billingTelegramCursor, setBillingTelegramCursor] =
+    useState<string | null>(null);
+  const [billingTelegramNextCursor, setBillingTelegramNextCursor] =
+    useState<string | null>(null);
+  const [billingTelegramDeliveries, setBillingTelegramDeliveries] =
+    useState<BillingTelegramDelivery[]>([]);
   const [merchants, setMerchants] = useState<Merchant[]>([]);
   const [onboardingApplications, setOnboardingApplications] =
     useState<MerchantOnboardingApplication[]>([]);
@@ -376,7 +426,7 @@ export default function PlatformApp() {
   const session = useRef(0);
   const logout = useCallback(() => {
     session.current++; try { sessionStorage.removeItem(PLATFORM_SESSION_KEY); } catch { /* Memory session still clears. */ }
-    setToken(""); setUser(null); setChecking(false); setRows([]); setMerchants([]); setOnboardingApplications([]); setPlans([]); setMerchant(null); setSelected(""); setAction(null); setNotice(""); setBusy(false);
+    setToken(""); setUser(null); setChecking(false); setRows([]); setBillingTelegramDeliveries([]); setBillingTelegramCursor(null); setBillingTelegramNextCursor(null); setMerchants([]); setOnboardingApplications([]); setPlans([]); setMerchant(null); setSelected(""); setAction(null); setNotice(""); setBusy(false);
   }, []);
   const fail = useCallback((e: unknown) => {
     if (e instanceof PlatformApiError && e.status === 401) logout();
@@ -553,7 +603,7 @@ export default function PlatformApp() {
     void revision;
     if (!user || !token) return;
     const controller = new AbortController();
-    setLoading(true); setError(""); setRows([]); setOnboardingApplications([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
+    setLoading(true); setError(""); setRows([]); setBillingTelegramDeliveries([]); setBillingTelegramNextCursor(null); setOnboardingApplications([]); setMerchant(null); setRevenueSummary(null); setOverdueSummary(null);
     async function load() {
       const [m, p] = await Promise.all([
         platformRequest<{ merchants: Merchant[] }>("/merchants", token, "GET", undefined, controller.signal),
@@ -595,7 +645,39 @@ export default function PlatformApp() {
           );
 
           data = result.deliveries;
-        } else if (view === "Billing Work") {
+        } else if (view === "Billing Telegram Deliveries") {
+          const query = new URLSearchParams({
+            limit: "50"
+          });
+
+          if (billingTelegramStatus !== "ALL") {
+            query.set("status", billingTelegramStatus);
+          }
+
+          if (billingTelegramMerchantId.trim()) {
+            query.set(
+              "merchantId",
+              billingTelegramMerchantId.trim()
+            );
+          }
+
+          if (billingTelegramCursor) {
+            query.set("cursor", billingTelegramCursor);
+          }
+
+          const result =
+            await platformRequest<BillingTelegramDeliveryPage>(
+              `/billing/telegram/deliveries?${query.toString()}`,
+              token,
+              "GET",
+              undefined,
+              controller.signal
+            );
+
+          if (!controller.signal.aborted) {
+            setBillingTelegramDeliveries(result.deliveries);
+            setBillingTelegramNextCursor(result.nextCursor);
+          }        } else if (view === "Billing Work") {
         const billingWorkRoutes: Record<
           BillingWorkTab,
           {
@@ -835,6 +917,9 @@ export default function PlatformApp() {
     selected,
     ledger,
     invitationDeliveryStatus,
+    billingTelegramStatus,
+    billingTelegramMerchantId,
+    billingTelegramCursor,
     billingWorkTab,
     revenuePeriodMode,
     revenueMonth,
@@ -977,7 +1062,7 @@ export default function PlatformApp() {
     }
 
     setAction({
-      title: `Edit application — ${application.name}`,
+      title: `Edit application â€” ${application.name}`,
       path: `/merchant-onboarding/${encodeURIComponent(application.id)}`,
       method: "PATCH",
       fields: [
@@ -1017,7 +1102,7 @@ export default function PlatformApp() {
     }
 
     setAction({
-      title: `Approve application — ${application.name}`,
+      title: `Approve application â€” ${application.name}`,
       path: `/merchant-onboarding/${encodeURIComponent(application.id)}/approve`,
       method: "POST",
       fields: [],
@@ -1041,7 +1126,7 @@ export default function PlatformApp() {
     }
 
     setAction({
-      title: `Reject application — ${application.name}`,
+      title: `Reject application â€” ${application.name}`,
       path: `/merchant-onboarding/${encodeURIComponent(application.id)}/reject`,
       method: "POST",
       fields: [
@@ -1065,7 +1150,7 @@ export default function PlatformApp() {
     }
 
     setAction({
-      title: `Discard application — ${application.name}`,
+      title: `Discard application â€” ${application.name}`,
       path: `/merchant-onboarding/${encodeURIComponent(application.id)}/discard`,
       method: "POST",
       fields: [
@@ -1078,7 +1163,7 @@ export default function PlatformApp() {
     });
   }
   const merchantPath = `/merchants/${encodeURIComponent(selected)}`;
-  if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform session…</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button type="submit">{busy ? "Signing in…" : "Sign in"}</button></fieldset></form>}{token && !checking && <button type="button" onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
+  if (!user) return <main className="pa-root"><section className="pa-login pa-card"><p className="pa-eyebrow">ETHIO COMMERCE / PLATFORM</p><h1>Platform administration</h1><p>Sign in with your platform operator account.</p>{error && <p role="alert" className="pa-error">{error}</p>}{checking ? <p role="status">Validating platform sessionâ€¦</p> : <form onSubmit={login}><fieldset disabled={busy}><label>Email<input name="email" type="email" autoComplete="username" required /></label><label>Password<input name="password" type="password" autoComplete="current-password" required /></label><button type="submit">{busy ? "Signing inâ€¦" : "Sign in"}</button></fieldset></form>}{token && !checking && <button type="button" onClick={logout}>Clear session and sign in again</button>}<p><a href="/">Merchant dashboard</a></p></section></main>;
   return <div className="pa-root"><header className="pa-header"><div><p className="pa-eyebrow">ETHIO COMMERCE</p><h1>Platform administration</h1></div><div>{user.displayName || user.email}<div className="pa-buttons">
     <button
       type="button"
@@ -1132,7 +1217,7 @@ export default function PlatformApp() {
               }
               aria-label="Close"
             >
-              ×
+              Ã—
             </button>
           </div>
 
@@ -1169,7 +1254,7 @@ export default function PlatformApp() {
               <div className="pa-buttons">
                 <button type="submit">
                   {busy
-                    ? "Changing password…"
+                    ? "Changing passwordâ€¦"
                     : "Change password"}
                 </button>
 
@@ -1193,6 +1278,9 @@ export default function PlatformApp() {
     "Merchants",
     "Merchant Onboarding",
     "Invitation Deliveries",
+    ...(user.role !== "STAFF"
+      ? ["Billing Telegram Deliveries" as View]
+      : []),
     "Billing Work",
         ...(user.role === "OWNER" ? ["Operators" as View] : []),
         ...(user.role !== "STAFF"
@@ -1218,9 +1306,9 @@ export default function PlatformApp() {
       ))}
     </nav>
     <main>
-      {view === "Merchants" && selected ? <div className="pa-detail-header"><button type="button" className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>← Back to merchants</button><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
+      {view === "Merchants" && selected ? <div className="pa-detail-header"><button type="button" className="pa-back-button" onClick={() => { setSelected(""); setAction(null); setRows([]); }}>â† Back to merchants</button><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div> : <div className="pa-title"><div><h2>{view}</h2><p>{view === "Revenue" ? "Paid invoices, as recorded by the server. Amounts retain their original currency." : view === "Overdue" ? "Invoices marked OVERDUE by the server." : view === "Audit" ? "Latest 100 platform audit entries." : "Manage platform accounts and billing."}</p></div><button type="button" disabled={busy || loading} onClick={() => setRevision(v => v + 1)}>Refresh</button></div>}
       {error && <p role="alert" className="pa-error">{error}</p>}{notice && <p role="status" className="pa-success">{notice}</p>}{action && <ActionForm key={action.title + action.path} action={action} busy={busy} submit={submit} close={() => setAction(null)} />}
-      {loading ? <p role="status">Loading records…</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
+      {loading ? <p role="status">Loading recordsâ€¦</p> : error ? <p>Use Refresh to retry loading current records.</p> : <>
         {view === "Merchants" && !selected && <>
           <div className="pa-merchant-toolbar">
             <label className="pa-search">Find a merchant<input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, phone, address, status or plan" /></label>
@@ -1262,7 +1350,7 @@ export default function PlatformApp() {
               }
             }
             return textMatch && statusMatch && planMatch && billingMatch && createdMatch;
-          }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "—"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "—"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "—"}</td><td>{m.currency || m.subscription?.currency || "—"}</td><td><button type="button" disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
+          }).map(m => <tr key={m.id}><td><strong>{m.name}</strong><span className="pa-subtle pa-code">{m.id}</span></td><td><span className={`pa-status pa-status-${String(m.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{m.subscription?.status || "No subscription"}</span></td><td>{m.subscription?.plan?.name || "â€”"}<span className="pa-subtle">{m.subscription?.plan?.code || ""}</span></td><td>{display(m.subscription?.billingInterval)}<span className="pa-subtle">{display(m.subscription?.priceSnapshot)} {m.subscription?.currency || m.currency || ""}</span></td><td>{m.subscription?.currentPeriodStart ? new Date(String(m.subscription.currentPeriodStart)).toLocaleDateString() : "â€”"}<span className="pa-subtle">to {m.subscription?.currentPeriodEnd ? new Date(String(m.subscription.currentPeriodEnd)).toLocaleDateString() : "â€”"}</span></td><td>{m.createdAt ? new Date(m.createdAt).toLocaleDateString() : "â€”"}</td><td>{m.currency || m.subscription?.currency || "â€”"}</td><td><button type="button" disabled={busy} onClick={() => { setSelected(m.id); setLedger("invoices"); setAction(null); }}>Manage</button></td></tr>)}</tbody></table></div></>}
         {view === "Merchant Onboarding" && (
   <section className="pa-card">
   <div className="pa-buttons">
@@ -1405,7 +1493,7 @@ export default function PlatformApp() {
           "name" in merchant &&
           typeof merchant.name === "string"
             ? merchant.name
-            : "—";
+            : "â€”";
 
         return {
           ...row,
@@ -1423,9 +1511,124 @@ export default function PlatformApp() {
       ]}
     />
   </section>
-)}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
+)}{view === "Billing Telegram Deliveries" && user.role !== "STAFF" && (
+  <section className="pa-card">
+    <div className="pa-section-heading">
+      <div>
+        <h3>Billing Telegram Notification Deliveries</h3>
+        <p>
+          Read-only delivery records. SENT means Telegram API
+          acceptance, not confirmed human receipt.
+          REVIEW_REQUIRED and uncertain attempts require
+          investigation; they are not automatically safe to retry.
+        </p>
+      </div>
+    </div>
+
+    <div className="pa-buttons">
+      <label>
+        Delivery status
+        <select
+          aria-label="Billing Telegram delivery status"
+          value={billingTelegramStatus}
+          onChange={event => {
+            setBillingTelegramStatus(event.target.value);
+            setBillingTelegramCursor(null);
+          }}
+        >
+          {[
+            "ALL",
+            "REVIEW_REQUIRED",
+            "PENDING",
+            "PROCESSING",
+            "SENDING",
+            "SENT",
+            "FAILED",
+            "SUPPRESSED"
+          ].map(status => (
+            <option key={status} value={status}>
+              {status.replace(/_/g, " ")}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label>
+        Merchant ID
+        <input
+          aria-label="Billing Telegram merchant ID"
+          value={billingTelegramMerchantId}
+          onChange={event => {
+            setBillingTelegramMerchantId(event.target.value);
+            setBillingTelegramCursor(null);
+          }}
+          placeholder="Optional merchant ID"
+        />
+      </label>
+    </div>
+
+    <p className="pa-subtle">
+      Showing up to 50 matching records per page.
+      Quarantined deliveries require investigation.
+      No delivery actions are available.
+    </p>
+
+    <Table
+      rows={billingTelegramDeliveries.map(delivery => ({
+        id: delivery.id,
+        merchantId: delivery.merchantId,
+        notificationId: delivery.notificationId,
+        eventId: delivery.eventId,
+        status: delivery.status,
+        notificationStatus: delivery.notificationStatus,
+        attemptCount: delivery.attemptCount,
+        quarantined: delivery.quarantined ? "Yes" : "No",
+        quarantineCreatedAt: delivery.quarantineCreatedAt,
+        recentAttempts: delivery.attempts.map(attempt =>
+          `#${attempt.attemptNumber}: ${attempt.outcome ?? "Unknown"}; ` +
+          `request started: ${attempt.requestStartedAt ?? "Not started"}; ` +
+          `response received: ${attempt.responseReceivedAt ?? "Not recorded"}`
+        ).join("; "),
+        nextAttemptAt: delivery.nextAttemptAt,
+        updatedAt: delivery.updatedAt
+      }))}
+      columns={[
+        "merchantId",
+        "notificationId",
+        "eventId",
+        "status",
+        "notificationStatus",
+        "attemptCount",
+        "quarantined",
+        "quarantineCreatedAt",
+        "recentAttempts",
+        "nextAttemptAt",
+        "updatedAt"
+      ]}
+    />
+
+    <div className="pa-buttons">
+      <button
+        type="button"
+        disabled={!billingTelegramCursor || loading}
+        onClick={() => setBillingTelegramCursor(null)}
+      >
+        First page
+      </button>
+
+      <button
+        type="button"
+        disabled={!billingTelegramNextCursor || loading}
+        onClick={() =>
+          setBillingTelegramCursor(billingTelegramNextCursor)
+        }
+      >
+        Next page
+      </button>
+    </div>
+  </section>)}{view === "Merchants" && selected && merchant && <section className="pa-merchant-detail"><div className="pa-merchant-hero"><div><p className="pa-eyebrow">MERCHANT ACCOUNT</p><h2>{merchant.name}</h2><p className="pa-code">{merchant.id}</p></div><span className={`pa-status pa-status-${String(merchant.subscription?.status || "none").toLowerCase().replace(/_/g, "-")}`}>{merchant.subscription?.status || "No subscription"}</span></div><section className="pa-card"><div className="pa-section-heading"><div><h3>Subscription</h3><p>Current server-authoritative subscription snapshot.</p></div>{user.role !== "STAFF" &&
           merchant.subscription &&
-          !!transitions[merchant.subscription.status]?.length && <button type="button" disabled={busy} onClick={() => setAction({ title: `Change subscription status — ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: merchant.subscription ? transitions[merchant.subscription.status] : [] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "—" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "—"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "—"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "—"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button type="button" disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription — ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
+          !!transitions[merchant.subscription.status]?.length && <button type="button" disabled={busy} onClick={() => setAction({ title: `Change subscription status â€” ${merchant.name}`, path: `${merchantPath}/subscription/status`, method: "PATCH", fields: [{ name: "nextStatus", label: "Next status", options: merchant.subscription ? transitions[merchant.subscription.status] : [] }] })}>Change status</button>}</div>{merchant.subscription ? <div className="pa-metric-grid"><div><span>Status</span><strong>{merchant.subscription.status}</strong></div><div><span>Plan</span><strong>{merchant.subscription.plan.name}</strong><small>{merchant.subscription.plan.code}</small></div><div><span>Billing interval</span><strong>{display(merchant.subscription.billingInterval)}</strong></div><div><span>Price snapshot</span><strong>{display(merchant.subscription.priceSnapshot)} {merchant.subscription.currency || ""}</strong></div><div><span>Commission rate</span><strong>{merchant.subscription.commissionRateSnapshot == null ? "â€”" : `${Number(merchant.subscription.commissionRateSnapshot) * 100}%`}</strong></div><div><span>Currency</span><strong>{merchant.subscription.currency || merchant.currency || "â€”"}</strong></div><div><span>Period start</span><strong>{merchant.subscription.currentPeriodStart ? new Date(String(merchant.subscription.currentPeriodStart)).toLocaleDateString() : "â€”"}</strong></div><div><span>Period end</span><strong>{merchant.subscription.currentPeriodEnd ? new Date(String(merchant.subscription.currentPeriodEnd)).toLocaleDateString() : "â€”"}</strong></div></div> : <><p>No subscription.</p>{user.role !== "STAFF" && (<button type="button" disabled={busy || !plans.some(p => p.isActive)} onClick={() => setAction({ title: `Initialize subscription â€” ${merchant.name}`, path: `${merchantPath}/subscription`, method: "POST", fields: [{ name: "planId", label: "Plan ID", options: plans.filter(p => p.isActive).map(p => p.id) }, { name: "billingInterval", label: "Billing interval", options: ["MONTHLY", "ANNUAL"] }, { name: "status", label: "Initial status", options: statuses }, ...dateFields("currentPeriodStart", "currentPeriodEnd"), field("trialEndsAt", "Trial end (local time)", "datetime-local", true)] })}>Initialize subscription</button>)}</>}</section>
 
           <section className="pa-card">
             <div className="pa-section-heading">
@@ -1443,7 +1646,7 @@ export default function PlatformApp() {
                     disabled={busy}
                     onClick={() =>
                       setAction({
-                        title: `Suspend account — ${merchant.name}`,
+                        title: `Suspend account â€” ${merchant.name}`,
                         path: `${merchantPath}/account/status`,
                         method: "PATCH",
                         fields: [
@@ -1467,7 +1670,7 @@ export default function PlatformApp() {
                     disabled={busy}
                     onClick={() =>
                       setAction({
-                        title: `Reinstate account — ${merchant.name}`,
+                        title: `Reinstate account â€” ${merchant.name}`,
                         path: `${merchantPath}/account/status`,
                         method: "PATCH",
                         fields: [
@@ -1496,7 +1699,7 @@ export default function PlatformApp() {
                   <div>
                     <span>Suspension reason</span>
                     <strong>
-                      {merchant.accountSuspensionReason || "—"}
+                      {merchant.accountSuspensionReason || "â€”"}
                     </strong>
                   </div>
                   <div>
@@ -1506,7 +1709,7 @@ export default function PlatformApp() {
                         ? new Date(
                           merchant.accountSuspendedAt
                         ).toLocaleString()
-                        : "—"}
+                        : "â€”"}
                     </strong>
                   </div>
                 </>
@@ -1514,7 +1717,7 @@ export default function PlatformApp() {
             </div>
           </section>
 
-          <section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Generate draft invoice — ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button type="button" key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
+          <section className="pa-card">  <div className="pa-section-heading">    <div>      <h3>Merchant Contact</h3>      <p>Business contact information maintained by the merchant.</p>    </div>  </div>  <div className="pa-metric-grid">    <div><span>Phone</span><strong>{merchant.phone || "-"}</strong></div>    <div><span>Alternate phone</span><strong>{merchant.alternatePhone || "-"}</strong></div>    <div><span>Address</span><strong>{merchant.address || "-"}</strong></div>  </div></section><section className="pa-card"><div className="pa-section-heading"><div><h3>Billing</h3><p>Invoices, commissions and settlement evidence.</p></div>{ledger === "invoices" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Generate draft invoice â€” ${merchant.name}`, path: `${merchantPath}/billing/invoices`, method: "POST", note: "Enter the invoice period explicitly. To include a subscription charge, supply all three optional subscription fields. Totals are calculated and persisted by the server.", fields: [field("invoiceNumber", "Invoice number"), ...dateFields("periodStart", "periodEnd"), field("dueAt", "Due date (local time)", "datetime-local", true), field("subscriptionId", "Subscription ID", "text", true), ...dateFields("billingPeriodStart", "billingPeriodEnd").map(f => ({ ...f, optional: true }))], transform: values => { const { subscriptionId, billingPeriodStart, billingPeriodEnd, ...rest } = values; if (subscriptionId || billingPeriodStart || billingPeriodEnd) { if (!subscriptionId || !billingPeriodStart || !billingPeriodEnd) throw new Error("Supply subscription ID and both subscription billing dates."); return { ...rest, subscriptionCharge: { subscriptionId, billingPeriodStart, billingPeriodEnd } }; } return rest; } })}>Generate draft invoice</button>}</div><div className="pa-tabs">{["invoices", "commissions", "settlements"].map(v => <button type="button" key={v} disabled={busy} aria-pressed={ledger === v} onClick={() => { setLedger(v); setAction(null); }}>{label(v)}</button>)}</div><Table rows={rows} columns={ledger === "invoices" ? ["invoiceNumber", "status", "totalAmount", "currency", "dueAt"] : ledger === "commissions" ? ["orderId", "commissionAmount", "adjustmentAmount", "netCommissionAmount", "currency", "status"] : ["invoiceId", "amount", "currency", "status", "transactionReference"]} actions={r => <>{ledger === "invoices" && r.status === "DRAFT" && <button type="button" disabled={busy} onClick={() => setAction({ title: `Open invoice ${r.invoiceNumber}`, path: `${merchantPath}/billing/invoices/${encodeURIComponent(r.id)}/open`, method: "POST", fields: [], note: `Open persisted invoice for ${r.totalAmount} ${r.currency}?` })}>Open invoice</button>}{ledger === "settlements" && <>{(
             r.hasReceiptEvidence === true ||
             (
               typeof r.receiptUrl === "string" &&

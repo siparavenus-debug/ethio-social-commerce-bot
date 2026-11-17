@@ -341,8 +341,15 @@ describe("B3.6 Unit 2B invoice lifecycle billing events", () => {
           try {
             findManySpy.mockImplementation(
               ((args: Parameters<typeof tx.merchantInvoice.findMany>[0]) =>
-                tx.merchantInvoice.findMany(args)) as
-                typeof prisma.merchantInvoice.findMany
+                tx.merchantInvoice.findMany({
+                  ...args,
+                  where: {
+                    AND: [
+                      args?.where ?? {},
+                      { id: invoiceId }
+                    ]
+                  }
+                })) as typeof prisma.merchantInvoice.findMany
             );
 
             transactionSpy.mockImplementation(
@@ -529,9 +536,22 @@ describe("B3.6 Unit 2B invoice lifecycle billing events", () => {
 
           try {
             findManySpy.mockImplementation(
-              ((args: Parameters<typeof tx.merchantInvoice.findMany>[0]) =>
-                tx.merchantInvoice.findMany(args)) as
-                typeof prisma.merchantInvoice.findMany
+              ((
+                args: Parameters<
+                  typeof tx.merchantInvoice.findMany
+                >[0]
+              ) =>
+                tx.merchantInvoice.findMany({
+                  ...args,
+                  where: {
+                    AND: [
+                      args?.where ?? {},
+                      {
+                        id: invoiceId
+                      }
+                    ]
+                  }
+                })) as typeof prisma.merchantInvoice.findMany
             );
 
             transactionSpy.mockImplementation(

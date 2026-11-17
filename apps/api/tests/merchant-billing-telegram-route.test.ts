@@ -351,7 +351,12 @@ describe("B3.1 billing Telegram OWNER authorization", () => {
 
     expect(body.linked).toBe(true);
     expect(body.destination.id).toBe(destination.id);
-    expect(body.destination.chatId).toBe(destination.chatId);
+    expect(body.destination.maskedTelegramAccount)
+      .toBe("••••9012");
+    expect(body.destination).not.toHaveProperty("chatId");
+    expect(body.destination).not.toHaveProperty(
+      "telegramUserId"
+    );
     expect(body.destination.notificationsEnabled).toBe(true);
     expect(response.headers.get("cache-control"))
       .toBe("no-store");

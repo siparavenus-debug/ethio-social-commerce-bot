@@ -797,7 +797,7 @@ describe("B3.5 database-backed billing Telegram redemption", () => {
       await prisma.platformBillingNotificationAudit.findMany({
         where: {
           merchantId: merchant.id,
-          action: "BILLING_TELEGRAM_DESTINATION_LINKED",
+          action: "BILLING_TELEGRAM_DESTINATION_REPLACED",
           entityId: result.value.destinationId
         }
       });
@@ -1507,7 +1507,7 @@ describe("B3.5 database-backed billing Telegram redemption", () => {
       await prisma.platformBillingNotificationAudit.findMany({
         where: {
           merchantId: merchant.id,
-          action: "BILLING_TELEGRAM_DESTINATION_LINKED"
+          action: "BILLING_TELEGRAM_DESTINATION_REPLACED"
         }
       });
 

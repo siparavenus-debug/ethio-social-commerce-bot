@@ -17,6 +17,7 @@ const billingTelegramB3Tests = [
 
 const billingB53ConcurrencyTest =
   "**/invoice-lifecycle-concurrency-b53.test.ts";
+
 const billingB54MaterializerTest = "**/platform-billing-notification-materializer-b54.test.ts";
 const billingB55PreSendTest = "**/platform-billing-notification-pre-send-b55.test.ts";
 const billingB55AttemptFenceTest = "**/platform-billing-notification-attempt-fence-b55.test.ts";
@@ -42,7 +43,11 @@ export default defineConfig({
 
     ...(suite === "billing-b53-concurrency"
       ? {
-          include: [billingB53ConcurrencyTest, billingB54MaterializerTest, billingB55PreSendTest, billingB55AttemptFenceTest, billingB62ClaimTest, billingB63IntegrationTest, billingB64OutcomeTest, billingB65RecoveryTest, billingB66RuntimeTest, billingB635FinalizationTest]
+          include: [billingB53ConcurrencyTest, billingB54MaterializerTest, billingB55PreSendTest, billingB55AttemptFenceTest, billingB62ClaimTest, billingB63IntegrationTest, billingB64OutcomeTest, billingB65RecoveryTest, billingB66RuntimeTest, billingB635FinalizationTest, "**/platform-billing-notification-deliveries-route.test.ts", "**/platform-billing-notification-pre-send-cleanup-b6imp1.test.ts","**/platform-billing-notification-pre-send-reconciliation-db.test.ts",
+        "**/platform-billing-notification-transport-context-b6imp2a.test.ts",
+        "**/platform-billing-bot-credential-verification-b6imp2b.test.ts",
+        "**/platform-billing-notification-request-start-integration-b6imp2c.test.ts",
+        "**/platform-billing-notification-send-capability-b6imp2e.test.ts"]
         }
       : suite === "bootstrap-concurrency"
         ? {
@@ -59,7 +64,19 @@ export default defineConfig({
       "node_modules/**",
       ...(suite === "billing-b53-concurrency"
         ? []
-        : [billingB53ConcurrencyTest, billingB54MaterializerTest]),
+        : [
+            billingB53ConcurrencyTest,
+            billingB54MaterializerTest,
+            "**/platform-billing-notification-pre-send-reconciliation-db.test.ts"
+          ]),
+      ...(suite === "billing-telegram-b3"
+        ? []
+        : [
+            "**/merchant-billing-telegram-db.test.ts",
+            "**/merchant-billing-telegram-link-token.test.ts",
+            "**/merchant-billing-telegram-redemption-db.test.ts",
+            "**/merchant-billing-telegram-preferences-db.test.ts"
+          ]),
       ...(suite === "bootstrap-concurrency"
         ? [bootstrapTest]
         : [

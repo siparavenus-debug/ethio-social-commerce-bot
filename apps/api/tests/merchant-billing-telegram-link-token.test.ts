@@ -65,25 +65,35 @@ describe("B3.2 secure billing Telegram link tokens", () => {
   });
 
   afterAll(async () => {
-    if (merchantId) {
-      await prisma.platformTelegramLinkToken.deleteMany({
-        where: { merchantId }
-      });
+    if (!merchantId || !ownerId) {
+      return;
     }
 
-    if (ownerId) {
-      await prisma.merchantUser.deleteMany({
-        where: { id: ownerId }
-      });
+    if (process.env.API_TEST_SUITE !== "billing-telegram-b3") {
+      throw new Error("B3 isolated test suite required during teardown");
     }
 
-    if (merchantId) {
-      await prisma.merchant.deleteMany({
-        where: { id: merchantId }
-      });
+    const database = await prisma.$queryRaw<
+      Array<{ name: string }>
+    >`SELECT current_database() AS name`;
+
+    if (
+      database[0]?.name !==
+      "ethio_commerce_b2_migration_test"
+    ) {
+      throw new Error("Refusing teardown outside isolated database");
+    }
+
+    // Audit records are append-only.
+    // Preserve fixture records pending an approved cleanup strategy.
+    const owner = await prisma.merchantUser.findUnique({
+      where: { id: ownerId }
+    });
+
+    if (owner?.merchantId !== merchantId) {
+      throw new Error("B3 token fixture ownership mismatch");
     }
   });
-
   it("generates a 32-byte random token and stores only its hash", async () => {
     const result = await createBillingTelegramLinkToken(
       merchantId,
@@ -112,6 +122,27 @@ describe("B3.2 secure billing Telegram link tokens", () => {
     expect(record?.merchantId).toBe(merchantId);
     expect(record?.createdByUserId).toBe(ownerId);
     expect(record?.createdByTokenVersion).toBe(0);
+    const audits =
+      await prisma.platformBillingNotificationAudit.findMany({
+        where: {
+          merchantId,
+          action: "BILLING_TELEGRAM_LINK_TOKEN_CREATED",
+          entityId: record!.id
+        }
+      });
+
+    expect(audits).toHaveLength(1);
+    expect(audits[0]?.actorType).toBe("MERCHANT_OWNER");
+    expect(audits[0]?.actorMerchantUserId).toBe(ownerId);
+    expect(audits[0]?.actorPlatformUserId).toBeNull();
+    expect(audits[0]?.entityType).toBe("PlatformTelegramLinkToken");
+    expect(audits[0]?.sanitizedMetadata).toEqual({
+      expiresAt: result.expiresAt.toISOString()
+    });
+
+    const metadata = JSON.stringify(audits[0]?.sanitizedMetadata);
+    expect(metadata).not.toContain(result.token);
+    expect(metadata).not.toContain(hashToken(result.token));
 
     const ttl = result.expiresAt.getTime() - Date.now();
 

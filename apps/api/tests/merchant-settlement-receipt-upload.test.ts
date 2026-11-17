@@ -1,5 +1,6 @@
 import {
-  createHash
+  createHash,
+  randomUUID
 } from "node:crypto";
 
 import {
@@ -97,7 +98,7 @@ import {
 } from "../src/services/auth.js";
 
 const testPrefix =
-  "settlement-receipt-upload";
+  `sru-${randomUUID().slice(0, 8)}`;
 
 let server:
   Server | null = null;
@@ -120,10 +121,35 @@ async function cleanup():
       }
     });
 
-  const merchantIds =
+  const candidateMerchantIds =
     merchants.map(
-      (merchant) =>
-        merchant.id
+      (merchant) => merchant.id
+    );
+
+  const protectedEvents =
+    candidateMerchantIds.length > 0
+      ? await prisma.platformBillingEvent.findMany({
+          where: {
+            merchantId: {
+              in: candidateMerchantIds
+            }
+          },
+          select: {
+            merchantId: true
+          }
+        })
+      : [];
+
+  const protectedMerchantIds =
+    new Set(
+      protectedEvents.map(
+        (event) => event.merchantId
+      )
+    );
+
+  const merchantIds =
+    candidateMerchantIds.filter(
+      (id) => !protectedMerchantIds.has(id)
     );
 
   await prisma.platformUser.deleteMany({
@@ -235,7 +261,7 @@ async function createFixture(
         merchantId:
           merchant.id,
         invoiceNumber:
-          `INV-RECEIPT-${suffix}`,
+          `INV-${testPrefix}-${suffix}`,
         periodStart:
           new Date(
             "2026-09-01T00:00:00.000Z"
@@ -354,12 +380,12 @@ function createSettlementForm(
 
   form.set(
     "idempotencyKey",
-    `receipt-${suffix}`
+    `receipt-${testPrefix}-${suffix}`
   );
 
   form.set(
     "transactionReference",
-    `TX-RECEIPT-${suffix}`
+    `TX-RECEIPT-${testPrefix}-${suffix}`
   );
 
   form.set(

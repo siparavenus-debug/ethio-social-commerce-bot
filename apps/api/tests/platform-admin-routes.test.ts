@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
     Server
 } from "node:http";
@@ -58,7 +59,7 @@ import {
 import { kMaxLength } from "node:buffer";
 
 const testPrefix =
-    "platform-admin-routes";
+    `par-${randomUUID().slice(0, 8)}`;
 
 let server:
     Server | null = null;
@@ -81,10 +82,35 @@ async function cleanup():
             }
         });
 
-    const testMerchantIds =
+        const candidateMerchantIds =
         testMerchants.map(
-            (merchant) =>
-                merchant.id
+            (merchant) => merchant.id
+        );
+
+    const protectedEvents =
+        candidateMerchantIds.length > 0
+            ? await prisma.platformBillingEvent.findMany({
+                where: {
+                    merchantId: {
+                        in: candidateMerchantIds
+                    }
+                },
+                select: {
+                    merchantId: true
+                }
+            })
+            : [];
+
+    const protectedMerchantIds =
+        new Set(
+            protectedEvents.map(
+                (event) => event.merchantId
+            )
+        );
+
+    const testMerchantIds =
+        candidateMerchantIds.filter(
+            (id) => !protectedMerchantIds.has(id)
         );
 
     await prisma.platformAuditLog.deleteMany({
@@ -116,11 +142,8 @@ async function cleanup():
 
     await prisma.auditLog.deleteMany({
         where: {
-            merchant: {
-                name: {
-                    startsWith:
-                        testPrefix
-                }
+            merchantId: {
+                in: testMerchantIds
             }
         }
     });
@@ -263,9 +286,8 @@ async function cleanup():
 
     await prisma.merchant.deleteMany({
         where: {
-            name: {
-                startsWith:
-                    testPrefix
+            id: {
+                in: testMerchantIds
             }
         }
     });
@@ -275,8 +297,7 @@ async function cleanup():
             OR: [
                 {
                     code: {
-                        startsWith:
-                            testPrefix
+                        startsWith: testPrefix
                     }
                 },
                 {
@@ -285,7 +306,10 @@ async function cleanup():
                             testPrefix.toUpperCase()
                     }
                 }
-            ]
+            ],
+            subscriptions: {
+                none: {}
+            }
         }
     });
 

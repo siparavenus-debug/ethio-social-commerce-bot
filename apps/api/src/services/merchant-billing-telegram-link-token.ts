@@ -93,7 +93,7 @@ export async function createBillingTelegramLinkToken(
                 }
             });
 
-            await tx.platformTelegramLinkToken.create({
+            const createdToken = await tx.platformTelegramLinkToken.create({
                 data: {
                     merchantId,
                     createdByUserId: ownerUserId,
@@ -101,6 +101,20 @@ export async function createBillingTelegramLinkToken(
                         ownerTokenVersion,
                     tokenHash,
                     expiresAt
+                }
+            });
+            await tx.platformBillingNotificationAudit.create({
+                data: {
+                    merchantId,
+                    actorType: "MERCHANT_OWNER",
+                    actorMerchantUserId: ownerUserId,
+                    actorPlatformUserId: null,
+                    action: "BILLING_TELEGRAM_LINK_TOKEN_CREATED",
+                    entityType: "PlatformTelegramLinkToken",
+                    entityId: createdToken.id,
+                    sanitizedMetadata: {
+                        expiresAt: createdToken.expiresAt
+                    }
                 }
             });
         },

@@ -158,7 +158,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
     expect(before).toEqual({
       eligible: true,
-      sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
     });
 
     await prisma.platformBillingDeliveryQuarantine.create({
@@ -289,7 +292,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
     expect(decision).toEqual({
       eligible: true,
-      sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
     });
   });
 
@@ -353,7 +359,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
       expect(await validate(notification.delivery.id)).toEqual({
         eligible: true,
-        sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
       });
     }
   );
@@ -451,7 +460,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
                 }
               : {
                   eligible: true,
-                  sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
                 };
 
       expect(await validate(notification.delivery.id)).toEqual(expected);
@@ -805,7 +817,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
     expect(await validate(deliveryId)).toEqual({
       eligible: true,
-      sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
     });
 
     await prisma.merchantInvoice.update({
@@ -888,7 +903,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
     expect(await validate(deliveryId)).toEqual({
       eligible: true,
-      sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
     });
 
     await prisma.merchantBillingTelegramDestination.update({
@@ -971,7 +989,10 @@ describe("B5.5-I1 pre-send eligibility", () => {
 
     expect(await validate(notification.delivery.id)).toEqual({
       eligible: true,
-      sendAuthorized: false
+sendAuthorized: false,
+destinationId: expect.any(String),
+platformBotId: expect.any(String),
+botIdentityId: expect.any(String)
     });
   });
 });

@@ -4,7 +4,13 @@
 } from "@ethio-commerce/database";
 
 export type BillingPreSendDecision =
-  | { eligible: true; sendAuthorized: false }
+  | {
+      eligible: true;
+      sendAuthorized: false;
+      destinationId: string;
+      platformBotId: string;
+      botIdentityId: string;
+    }
   | {
       eligible: false;
       disposition: "SUPPRESS" | "DEFER" | "REVIEW_REQUIRED";
@@ -89,6 +95,14 @@ async function validatePlatformBillingEligibility(
   if (!destination) {
     return deny("SUPPRESS", "DESTINATION_MISSING");
   }
+
+  const eligible = (): BillingPreSendDecision => ({
+    eligible: true,
+    sendAuthorized: false,
+    destinationId: destination.id,
+    platformBotId: destination.platformBotId,
+    botIdentityId: destination.platformBot.botIdentityId
+  });
 
   if (
     destination.merchantId !== event.merchantId ||
@@ -230,7 +244,7 @@ async function validatePlatformBillingEligibility(
         );
       }
 
-      return { eligible: true, sendAuthorized: false };
+      return eligible();
     }
 
     case "INVOICE_FIRST_OVERDUE":
@@ -300,7 +314,7 @@ async function validatePlatformBillingEligibility(
         }
       }
 
-      return { eligible: true, sendAuthorized: false };
+      return eligible();
     }
 
     case "SETTLEMENT_SUBMITTED":
@@ -323,9 +337,9 @@ async function validatePlatformBillingEligibility(
           ? "REVIEW_REQUIRED"
           : "REJECTED";
 
-      return settlement.status === expected
-        ? { eligible: true, sendAuthorized: false }
-        : deny("SUPPRESS", "SETTLEMENT_STATUS_CHANGED");
+          return settlement.status === expected
+          ? eligible()
+          : deny("SUPPRESS", "SETTLEMENT_STATUS_CHANGED");
     }
 
     case "SUBSCRIPTION_SUSPENDED":

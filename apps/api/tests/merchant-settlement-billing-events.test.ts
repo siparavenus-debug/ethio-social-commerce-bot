@@ -127,7 +127,11 @@ describe("B3.6 Unit 2B settlement billing events", () => {
 
             for (const event of events) {
               expect(event.merchantId).toBe(merchantId);
-              expect(event.notification).toBeNull();
+              expect(event.notification).toMatchObject({
+                status: "SUPPRESSED",
+                terminalReason: "NO_NOTIFICATION_MAPPING",
+                delivery: null
+              });
             }
           } finally {
             transactionSpy.mockRestore();
@@ -793,7 +797,11 @@ describe("B3.6 Unit 2B settlement billing events", () => {
 
             const events = await tx.platformBillingEvent.findMany({
               where: { merchantId },
-              include: { notification: true }
+              include: {
+                notification: {
+                  include: { delivery: true }
+                }
+              }
             });
 
             expect(events).toHaveLength(1);
@@ -803,7 +811,11 @@ describe("B3.6 Unit 2B settlement billing events", () => {
               type: "SETTLEMENT_REJECTED",
               sourceId: settlementId,
               occurrenceKey: `SETTLEMENT_REJECTED:${settlementId}`,
-              notification: null
+              notification: {
+                status: "SUPPRESSED",
+                terminalReason: "NO_ELIGIBLE_OPT_IN",
+                delivery: null
+              }
             });
 
             completed = true;
@@ -939,7 +951,11 @@ describe("B3.6 Unit 2B settlement billing events", () => {
 
             const events = await tx.platformBillingEvent.findMany({
               where: { merchantId },
-              include: { notification: true }
+              include: {
+                notification: {
+                  include: { delivery: true }
+                }
+              }
             });
 
             expect(events).toHaveLength(1);
@@ -949,7 +965,11 @@ describe("B3.6 Unit 2B settlement billing events", () => {
               type: "SETTLEMENT_SUBMITTED",
               sourceId: settlementId,
               occurrenceKey: `SETTLEMENT_SUBMITTED:${settlementId}`,
-              notification: null
+              notification: {
+                status: "SUPPRESSED",
+                terminalReason: "NO_ELIGIBLE_OPT_IN",
+                delivery: null
+              }
             });
 
             completed = true;

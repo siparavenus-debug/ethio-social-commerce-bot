@@ -70,6 +70,7 @@ import {
   encryptMerchantInvitation
 } from "../services/merchant-invitation-encryption.js";
 
+import platformBillingNotificationDeliveriesRouter from "./platform-billing-notification-deliveries.js";
 const router = Router();
 
 const MAX_PHONE_LENGTH = 50;
@@ -109,6 +110,8 @@ function normalizeRouteParam(
 }
 
 router.use(requirePlatformAuth);
+
+router.use(platformBillingNotificationDeliveriesRouter);
 
 /*
  * Platform administration is intentionally separate

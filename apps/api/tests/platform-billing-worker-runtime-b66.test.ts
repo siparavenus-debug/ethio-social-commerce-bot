@@ -83,4 +83,28 @@ describe("B6.6 worker runtime budget", () => {
       )
     ).toBe(false);
   });
+
+  it("keeps operational recovery and sending disabled by default", async () => {
+    const { readFile } = await import("node:fs/promises");
+
+    const worker = await readFile(
+      new URL(
+        "../src/scripts/process-platform-billing-notifications.ts",
+        import.meta.url
+      ),
+      "utf8"
+    );
+
+    expect(worker).toContain(
+      "sendingEnabled: false"
+    );
+
+    expect(worker).toContain(
+      "processingEnabled: false"
+    );
+
+    expect(worker).not.toMatch(
+      /^\s*await runRecovery\(\)/m
+    );
+  });
 });
